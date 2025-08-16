@@ -8,6 +8,8 @@ Plantillas de prompts utilizadas por el clasificador de documentos.
 import json
 from typing import Dict
 
+
+
 def PROMPT_CLASIFICACION(textos_archivos: Dict[str, str]) -> str:
     """
     Genera el prompt para clasificar documentos fiscales colombianos.
@@ -34,10 +36,10 @@ INSTRUCCIONES:
 4. Una COTIZACION es una propuesta comercial o presupuesto
 5. ANEXO es cualquier otro documento de soporte
 6. El anexo concepto de contrato, contiene SOLO informacion del contrato, como el OBJETO
-7. EL DOCUMENTO " SOPORTE EN ADQUISICIONES EFECTUADAS A NO OBLIGADOS A FACTURAR " ES EQUIVALENTE A UNA " FACTURA "
+7. EL DOCUMENTO "SOPORTE EN ADQUISICIONES EFECTUADAS A NO OBLIGADOS A FACTURAR" ES EQUIVALENTE A UNA "FACTURA"
 
 **DETECCIÓN DE FACTURACIÓN EXTRANJERA:**
-7. Verifica si se trata de FACTURACIÓN EXTRANJERA analizando:
+8. Verifica si se trata de FACTURACIÓN EXTRANJERA analizando:
    - Si el proveedor tiene domicilio o dirección fuera de Colombia
    - Si aparecen monedas extranjeras (USD, EUR, etc.)
    - Si el NIT/RUT es de otro país
@@ -45,7 +47,7 @@ INSTRUCCIONES:
    - Si la factura viene de empresas extranjeras
 
 **DETECCIÓN DE CONSORCIOS:**
-8. Verifica si se trata de un CONSORCIO analizando:
+9. Verifica si se trata de un CONSORCIO analizando:
    - Si en la factura aparece la palabra "CONSORCIO" en el nombre del proveedor
    - Si menciona "consorciados" o "miembros del consorcio"
    - Si aparecen porcentajes de participación entre empresas
@@ -89,7 +91,7 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
     constantes_art383 = obtener_constantes_articulo_383()
     
     return f"""
-    Eres un experto contador colombiano especializado en retención en la fuente. 
+    Eres un experto contador colombiano especializado en retención en la fuente que trabaja para la FIDUCIARIA FIDUCOLDEX (las FIDUCIARIA Tiene varios NITS administrados), tu trabajo es aplicar las retenciones a las empresas (terceros) que emiten las FACTURAS. 
     
     CONCEPTOS DE RETEFUENTE QUE DEBES IDENTIFICAR (con base mínima y tarifa exacta):
     {json.dumps(conceptos_dict, indent=2, ensure_ascii=False)}
@@ -346,6 +348,7 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
     conceptos_simplificados = {k: v for i, (k, v) in enumerate(conceptos_dict.items()) if i < 20}
     
     return f"""
+      Eres un experto contador colombiano especializado en retención en la fuente que trabaja para la FIDUCIARIA FIDUCOLDEX (las FIDUCIARIA Tiene varios NITS administrados), tu trabajo es aplicar las retenciones a las empresas (terceros) que emiten las FACTURAS.
     ANALIZA ESTE CONSORCIO Y CALCULA RETENCIONES POR CONSORCIADO.
     
     CONCEPTOS RETEFUENTE (usa NOMBRE EXACTO):
@@ -565,7 +568,6 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
         "observaciones": []
     }}
     """
-
 def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexos_texto: str, 
                                        cotizaciones_texto: str, anexo_contrato: str, 
                                        conceptos_extranjeros_dict: dict, paises_convenio: list, 
@@ -807,3 +809,551 @@ def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, ane
         "observaciones": []
     }}
     """
+def PROMPT_ANALISIS_ESTAMPILLA(factura_texto: str, rut_texto: str, anexos_texto: str, 
+                               cotizaciones_texto: str, anexo_contrato: str, configuracion_estampilla: dict) -> str:
+    """
+    Genera el prompt para analizar contratos de estampilla pro universidad nacional.
+    
+    Args:
+        factura_texto: Texto extraído de la factura principal
+        rut_texto: Texto del RUT (si está disponible)
+        anexos_texto: Texto de anexos adicionales
+        cotizaciones_texto: Texto de cotizaciones
+        anexo_contrato: Texto del anexo de concepto de contrato
+        configuracion_estampilla: Configuración de estampilla desde config.py
+        
+    Returns:
+        str: Prompt formateado para enviar a Gemini
+    """
+    
+    return f"""
+Eres un experto contador colombiano especializado en ESTAMPILLA PRO UNIVERSIDAD NACIONAL.
+
+
+CONFIGURACIÓN DE ESTAMPILLA UNIVERSIDAD NACIONAL:
+
+NITs VÁLIDOS (solo estos NITs aplican estampilla):
+{json.dumps(configuracion_estampilla['nits_validos'], indent=2, ensure_ascii=False)}
+
+TERCEROS QUE ADMINISTRAN RECURSOS PÚBLICOS:
+{json.dumps(configuracion_estampilla['terceros_recursos_publicos'], indent=2, ensure_ascii=False)}
+
+OBJETOS DE CONTRATO QUE APLICAN:
+{json.dumps(configuracion_estampilla['objetos_contrato'], indent=2, ensure_ascii=False)}
+
+RANGOS UVT Y TARIFAS:
+{json.dumps(configuracion_estampilla['rangos_uvt'], indent=2, ensure_ascii=False)}
+
+UVT 2025: ${configuracion_estampilla['uvt_2025']:,}
+
+DOCUMENTOS DISPONIBLES:
+
+FACTURA (DOCUMENTO PRINCIPAL):
+{factura_texto}
+
+RUT (si está disponible):
+{rut_texto if rut_texto else "NO DISPONIBLE"}
+
+ANEXOS (DETALLES ADICIONALES):
+{anexos_texto if anexos_texto else "NO DISPONIBLES"}
+
+COTIZACIONES (PROPUESTAS COMERCIALES):
+{cotizaciones_texto if cotizaciones_texto else "NO DISPONIBLES"}
+
+ANEXO CONCEPTO CONTRATO (OBJETO DEL CONTRATO):
+{anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
+
+INSTRUCCIONES CRÍTICAS:
+
+1. **IDENTIFICACIÓN DEL TERCERO**:
+   - Busca el nombre exacto del tercero/beneficiario en la factura
+   - Verifica si aparece en la lista de terceros que administran recursos públicos
+   - Busca indicadores de consorcio (palabra "CONSORCIO" en el nombre)
+   - Si es consorcio, identifica consorciados y porcentajes de participación
+
+2. **OBJETO DEL CONTRATO**:
+   - Analiza la descripción del servicio/producto en la factura
+   - Revisa anexos y cotizaciones para detalles del objeto
+   - Clasifica según los tipos: contrato_obra, interventoria, servicios_conexos_obra
+   - Busca palabras clave específicas para cada tipo
+
+3. **VALOR DEL CONTRATO**:
+   - Identifica el valor total del contrato (puede ser diferente al valor de la factura)
+   - Si solo aparece un porcentaje (ej: "20% del contrato por $50,000,000"), calcula el va   lor total
+   - Convierte a UVT: valor_pesos / {configuracion_estampilla['uvt_2025']}
+   - Si no puedes identificar el valor, marca como null
+
+4. **VALIDACIONES**:
+   - ¿El tercero administra recursos públicos?
+   - ¿El objeto es obra, interventoría o servicios conexos?
+   - ¿Se puede identificar el valor del contrato?
+   - ¿Hay información suficiente para aplicar estampilla?
+
+RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
+{{
+    "tercero_identificado": {{
+        "nombre": "NOMBRE EXACTO DEL TERCERO",
+        "es_consorcio": true/false,
+        "administra_recursos_publicos": true/false,
+        "consorciados": [
+            {{
+                "nombre": "NOMBRE CONSORCIADO",
+                "participacion_porcentaje": 0.0
+            }}
+        ]
+    }},
+    "objeto_contrato": {{
+        "tipo": "contrato_obra" | "interventoria" | "servicios_conexos_obra" | "no_identificado",
+        "aplica_estampilla": true/false,
+        "palabras_clave_encontradas": ["palabra1", "palabra2"],
+        "descripcion": "DESCRIPCIÓN DEL OBJETO DEL CONTRATO"
+    }},
+    "valor_contrato": {{
+        "valor_total_pesos": 0.0,
+        "valor_total_uvt": 0.0,
+        "metodo_identificacion": "directo" | "porcentaje_calculado" | "no_identificado",
+        "texto_referencia": "TEXTO DE DONDE SE EXTRAJO EL VALOR"
+    }},
+    "observaciones": [
+        "Observación 1",
+        "Observación 2"
+    ]
+}}
+"""
+
+def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_texto: str, anexos_texto: str, 
+                                                       cotizaciones_texto: str, anexo_contrato: str, 
+                                                       nit_administrativo: str) -> str:
+    """
+    🚀 PROMPT INTEGRADO OPTIMIZADO - OBRA PÚBLICA + ESTAMPILLA UNIVERSIDAD
+    
+    Analiza documentos para detectar y calcular AMBOS impuestos simultáneamente:
+    - Estampilla Pro Universidad Nacional (tarifas por rangos UVT)
+    - Contribución a Obra Pública del 5% (tarifa fija)
+    
+    Desde 2025, ambos impuestos aplican para los MISMOS NITs administrativos.
+    
+    Args:
+        factura_texto: Texto extraído de la factura principal
+        rut_texto: Texto del RUT (si está disponible)
+        anexos_texto: Texto de anexos adicionales
+        cotizaciones_texto: Texto de cotizaciones
+        anexo_contrato: Texto del anexo de concepto de contrato
+        nit_administrativo: NIT de la entidad administrativa
+        
+    Returns:
+        str: Prompt optimizado para análisis integrado con Gemini
+    """
+    
+    # Importar configuración desde config.py
+    from config import (
+        UVT_2025,
+        NITS_ESTAMPILLA_UNIVERSIDAD,
+        TERCEROS_RECURSOS_PUBLICOS,
+        OBJETOS_CONTRATO_ESTAMPILLA,
+        OBJETOS_CONTRATO_OBRA_PUBLICA,
+        RANGOS_ESTAMPILLA_UNIVERSIDAD,
+        obtener_configuracion_impuestos_integrada
+    )
+    
+    config_integrada = obtener_configuracion_impuestos_integrada()
+    
+    return f"""
+🏛️ ANÁLISIS INTEGRADO: ESTAMPILLA PRO UNIVERSIDAD NACIONAL + CONTRIBUCIÓN OBRA PÚBLICA 5%
+==================================================================================
+
+Eres un experto contador colombiano especializado en IMPUESTOS ESPECIALES INTEGRADOS que trabaja para la FIDUCIARIA FIDUCOLDEX (las FIDUCIARIA Tiene varios NITS administrados), tu trabajo es aplicar las retenciones a las empresas (terceros) que emiten las FACTURAS.
+DESDE 2025, ambos impuestos aplican para los MISMOS NITs administrativos.
+
+CONFIGURACIÓN ACTUAL:
+🔹 NIT Administrativo: {nit_administrativo} 
+🔹 UVT 2025: ${UVT_2025:,} pesos colombianos
+🔹 NITs válidos (Solo estos Nits aplican AMBOS impuestos): {list(NITS_ESTAMPILLA_UNIVERSIDAD.keys())} 
+
+TERCEROS QUE ADMINISTRAN RECURSOS PÚBLICOS (COMPARTIDO):
+{chr(10).join([f"  ✓ {tercero}" for tercero in TERCEROS_RECURSOS_PUBLICOS.keys()])}
+
+IMPUESTO 1 - ESTAMPILLA PRO UNIVERSIDAD NACIONAL:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 OBJETOS QUE APLICAN:
+  a) CONTRATO DE OBRA: construcción, mantenimiento, instalación
+  b) INTERVENTORÍA: interventoría, interventoria  
+  c) SERVICIOS CONEXOS: estudios, asesorías técnicas, gerencia de obra/proyectos, diseño.
+  
+💰 TARIFAS POR RANGOS UVT:
+{chr(10).join([f"  • {rango['desde_uvt']:,} a {rango['hasta_uvt']:,} UVT: {rango['tarifa']*100}%" if rango['hasta_uvt'] != float('inf') else f"  • Más de {rango['desde_uvt']:,} UVT: {rango['tarifa']*100}%" for rango in RANGOS_ESTAMPILLA_UNIVERSIDAD])}
+
+IMPUESTO 2 - CONTRIBUCIÓN A OBRA PÚBLICA 5%:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 OBJETOS QUE APLICAN:
+  SOLO CONTRATO DE OBRA: construcción, mantenimiento, instalación
+  ⚠️ NO aplica para interventoría ni servicios conexos
+  
+💰 TARIFA FIJA: 5% del valor de la factura sin IVA
+
+DOCUMENTOS DISPONIBLES:
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+FACTURA PRINCIPAL:
+{factura_texto}
+
+RUT DEL TERCERO:
+{rut_texto if rut_texto else "NO DISPONIBLE"}
+
+ANEXOS ADICIONALES:
+{anexos_texto if anexos_texto else "NO DISPONIBLES"}
+
+COTIZACIONES:
+{cotizaciones_texto if cotizaciones_texto else "NO DISPONIBLES"}
+
+ANEXO CONCEPTO CONTRATO:
+{anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
+
+INSTRUCCIONES CRÍTICAS:
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+1.  DETECCIÓN AUTOMÁTICA DE IMPUESTOS:
+   • Analiza si el objeto del contrato aplica para ESTAMPILLA (obra + interventoría + servicios conexos)
+   • Analiza si el objeto del contrato aplica para OBRA PÚBLICA (SOLO obra)
+   • Marca qué impuestos aplican según la lógica
+
+2.  IDENTIFICACIÓN DEL TERCERO:
+   • Busca el nombre EXACTO del tercero/beneficiario en la FACTURA
+   • Verifica si administra recursos públicos (lista TERCEROS QUE ADMINISTRAN RECURSOS PÚBLICOS (COMPARTIDO):), sino administra recursos publicos NO se liquidan ninguno de los dos impuestos 
+   • Si es consorcio, identifica consorciados y porcentajes
+   • CRÍTICO: Nombres deben coincidir EXACTAMENTE con la lista
+
+3.  ANÁLISIS DEL OBJETO DEL CONTRATO:
+
+   Identifica si el tipo de contrato se clasifica en SOLO UNO de estos tipos:
+   Busca palabras clave:
+   • Obra: {OBJETOS_CONTRATO_ESTAMPILLA['contrato_obra']['palabras_clave']}
+   • Interventoría: {OBJETOS_CONTRATO_ESTAMPILLA['interventoria']['palabras_clave']}
+   • Servicios conexos: estudios, asesorías, gerencia, diseño, planos.
+   si no clasifica en alguno de estos tipos, NO aplican los dos impuestos.
+
+4.  IDENTIFICACIÓN DE VALORES CRÍTICOS:
+
+   • Para ESTAMPILLA: 
+     - Valor TOTAL del CONTRATO (determina tarifa UVT) 
+     **De Algunas FACTURAS puedes identificar eL porcentaje del VALOR DEL CONTRATO, EJEMPLO factura : segundo pago del 20% del contrato por 50,000,000, con ese porcentaje OBLIGATORIAMENTE CALCULA el valor total del contrato total contrato calculado  = 50,000,000/0.2  =  $250,000,000)**
+     
+      ⚠️ Si NO se identifica valor del contrato → "Preliquidación sin finalizar"
+      
+     - Valor de la FACTURA sin IVA (para cálculo final)
+      FÓRMULA: Estampilla = Valor factura (sin IVA) x Porcentaje tarifa aplicable
+      
+
+   • Para OBRA PÚBLICA: 
+     - Valor de la FACTURA sin IVA (para cálculo directo)
+     ⚠️ FÓRMULA: Contribución = Valor factura (sin IVA) x 5%
+     ⚠️ Si NO se identifica valor de factura → "Preliquidación sin finalizar"
+     
+   • Para CONSORCIOS: 
+     - Identificar porcentaje de participación de cada consorciado
+     - Fórmula: Impuesto = Valor factura sin IVA x Tarifa x % participación
+
+5. 🏢 MANEJO DE CONSORCIOS:
+   • Si el tercero incluye "CONSORCIO" o "UNIÓN TEMPORAL"
+   • Busca participación de cada consorciado
+   • Normaliza porcentajes si no suman 100%
+
+ESTRATEGIA DE ANÁLISIS:
+━━━━━━━━━━━━━━━━━━━━━━
+1. Revisar FACTURA para información básica
+2. Si la factura es general, revisar ANEXOS para detalles
+3. COTIZACIONES pueden tener descripción específica
+4. ANEXO CONTRATO tiene el objeto exacto del contrato
+5. RUT puede tener información del tercero
+
+LÓGICA DE DETECCIÓN Y ESTADOS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Si es  OBRA → Aplican AMBOS impuestos (estampilla + obra pública)
+• Si es INTERVENTORÍA → Aplica SOLO estampilla
+• Si es SERVICIOS CONEXOS → Aplica SOLO estampilla
+• Si NO se identifica objeto → Ningún impuesto aplica, estado: "Preliquidación sin finalizar"
+• Si NO se identifica valor → Estado: "Preliquidación sin finalizar"
+
+🗒 ESTADOS REQUERIDOS:
+• "Preliquidado" → Cuando todos los requisitos se cumplen
+• "No aplica el impuesto" → Cuando tercero o objeto no aplican
+• "Preliquidación sin finalizar" → Cuando falta información crítica
+
+RESPONDE ÚNICAMENTE EN FORMATO JSON SIN TEXTO ADICIONAL:
+{{
+    "deteccion_automatica": {{
+        "aplica_estampilla_universidad": true/false,
+        "aplica_contribucion_obra_publica": true/false,
+        "procesamiento_paralelo": true/false,
+        "razon_deteccion": "Explicación de por qué aplican o no"
+    }},
+    "tercero_identificado": {{
+        "nombre": "NOMBRE EXACTO DEL TERCERO",
+        "es_consorcio": true/false,
+        "administra_recursos_publicos": true/false,
+        "consorciados": [
+            {{
+                "nombre": "NOMBRE CONSORCIADO",
+                "porcentaje_participacion": 0.0
+            }}
+        ]
+    }},
+    "objeto_contrato": {{
+        "descripcion_identificada": "DESCRIPCIÓN DEL OBJETO",
+        "clasificacion_estampilla": "contrato_obra|interventoria|servicios_conexos_obra|no_identificado",
+        "clasificacion_obra_publica": "contrato_obra|no_aplica",
+        "palabras_clave_estampilla": ["palabra1", "palabra2"],
+        "palabras_clave_obra_publica": ["palabra1", "palabra2"]
+    }},
+    "valores_identificados": {{
+        "estampilla_universidad": {{
+            "valor_contrato_pesos": 0.0,  // Valor TOTAL del contrato (determina tarifa UVT)
+            "valor_contrato_uvt": 0.0,    // valor_contrato_pesos / {UVT_2025}
+            "valor_factura_sin_iva": 0.0, // Valor de la FACTURA sin IVA (para cálculo final)
+            "metodo_identificacion": "directo|porcentaje_calculado|no_identificado",
+            "texto_referencia": "TEXTO DONDE SE ENCONTRÓ"
+        }},
+        "contribucion_obra_publica": {{
+            "valor_factura_sin_iva": 0.0, // Valor de la FACTURA sin IVA
+            "metodo_identificacion": "directo|calculado|no_identificado",
+            "texto_referencia": "TEXTO DONDE SE ENCONTRÓ"
+        }}
+    }},
+    "observaciones": [
+        "Observación 1",
+        "Observación 2"
+    ]
+}}
+
+🔥 CRÍTICO - CONDICIONES EXACTAS: 
+• ESTAMPILLA: Si NO se identifica objeto del contrato → "Preliquidación sin finalizar"
+• ESTAMPILLA: Si NO se identifica valor del contrato → "Preliquidación sin finalizar"
+• OBRA PÚBLICA: Si NO se identifica objeto (solo obra) → "Preliquidación sin finalizar"
+• OBRA PÚBLICA: Si NO se identifica valor factura → "Preliquidación sin finalizar"
+• Solo marca como válido si el tercero aparece EXACTAMENTE en la lista
+• Para obra pública, SOLO aplica si es contrato de obra (no interventoría)
+• Para estampilla, aplica para obra + interventoría + servicios conexos
+• Si hay dudas sobre valores, especifica en observaciones
+• CONSORCIOS: Fórmula = Valor factura sin IVA x Tarifa x % participación
+• Si encuentras UN PORCENTAJE del VALOR del contrato en la FACTURA, OBLIGATORIAMENTE CALCULA el valor total del contrato COMO EL SIGUIENTE EJEMPLO -> FACTURA MENCIONA : 20% del contrato por $50,000,000 -> CALCULA -> total contrato = 50,000,000/0.2  =  $250,000,000)
+    """
+
+# ===============================
+# ✅ NUEVO PROMPT: ANÁLISIS DE IVA Y RETEIVA
+# ===============================
+
+def PROMPT_ANALISIS_IVA(factura_texto: str, rut_texto: str, anexos_texto: str, 
+                        cotizaciones_texto: str, anexo_contrato: str) -> str:
+    """
+    Genera el prompt para análisis especializado de IVA y ReteIVA.
+    
+    Args:
+        factura_texto: Texto extraído de la factura principal
+        rut_texto: Texto del RUT (si está disponible)
+        anexos_texto: Texto de anexos adicionales
+        cotizaciones_texto: Texto de cotizaciones
+        anexo_contrato: Texto del anexo de concepto de contrato
+        
+    Returns:
+        str: Prompt formateado para enviar a Gemini
+    """
+    # Importar configuraciones de IVA
+    from config import obtener_configuracion_iva
+    # Obtener configuración de IVA
+    config_iva = obtener_configuracion_iva()
+    
+    return f"""
+Eres un experto contador colombiano especializado en IVA y ReteIVA que trabaja para FIDUCIARIA FIDUCOLDEX.
+Tu tarea es analizar documentos para determinar:
+
+1. 💰 IDENTIFICACIÓN Y EXTRACCIÓN DEL IVA
+2. 📝 VALIDACIÓN DE RESPONSABILIDAD DE IVA EN EL RUT
+3. 🌍 DETERMINACIÓN DE FUENTE DE INGRESO (NACIONAL/EXTRANJERA)
+4. 📊 CÁLCULO DE RETEIVA
+
+CONFIGURACIÓN DE BIENES Y SERVICIOS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+BIENES QUE NO CAUSAN IVA:
+{json.dumps(config_iva['bienes_no_causan_iva'], indent=2, ensure_ascii=False)}
+
+BIENES EXENTOS DE IVA:
+{json.dumps(config_iva['bienes_exentos_iva'], indent=2, ensure_ascii=False)}
+
+SERVICIOS EXCLUIDOS DE IVA:
+{json.dumps(config_iva['servicios_excluidos_iva'], indent=2, ensure_ascii=False)}
+
+CONFIGURACIÓN RETEIVA:
+{json.dumps(config_iva['config_reteiva'], indent=2, ensure_ascii=False)}
+
+DOCUMENTOS DISPONIBLES:
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+FACTURA (DOCUMENTO PRINCIPAL):
+{factura_texto}
+
+RUT (si está disponible):
+{rut_texto if rut_texto else "NO DISPONIBLE"}
+
+ANEXOS (DETALLES ADICIONALES):
+{anexos_texto if anexos_texto else "NO DISPONIBLES"}
+
+COTIZACIONES (PROPUESTAS COMERCIALES):
+{cotizaciones_texto if cotizaciones_texto else "NO DISPONIBLES"}
+
+ANEXO CONCEPTO CONTRATO (OBJETO DEL CONTRATO):
+{anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
+
+INSTRUCCIONES CRÍTICAS:
+━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. 💰 **IDENTIFICACIÓN DEL IVA EN LA FACTURA**:
+   • Analiza el texto de la factura para identificar si menciona IVA
+   
+   • **ESCENARIO 1**: La factura menciona la totalidad del IVA → Extraer porcentaje y valor
+   • **ESCENARIO 2**: La factura menciona IVA de varios conceptos → Sumar todos los IVAs
+   • **ESCENARIO 3**: La factura menciona IVA del 0% o no menciona IVA → Validar exención/exclusión
+
+2. 📝 **VALIDACIÓN DE RESPONSABILIDAD DE IVA EN EL RUT**:
+   • Buscar en "RESPONSABILIDADES, CALIDADES Y ATRIBUTOS"
+   • Código 48: "Impuesto sobre las ventas – IVA" → ES RESPONSABLE DE IVA
+   • Código 49: "No responsable de IVA" → NO ES RESPONSABLE DE IVA
+   • Código 53: "Persona Jurídica No Responsable de IVA" → NO ES RESPONSABLE DE IVA
+   
+   **SI EL TERCERO NO ES RESPONSABLE DE IVA**:
+   • NO SE CALCULA RETEIVA, NI IVA
+   • Especificar: "Según el RUT el tercero NO ES RESPONSABLE DE IVA"
+   
+   **SI EL RUT NO ESTA DISPONIBLE, O SI NO SE PUEDE IDENTIFICAR LA RESPONSABILIDAD EN EL RUT**:
+    • Revisa los anexos y cotizaciones para identificar si el tercero es responsable de IVA   
+    
+   **SI NO SE PUEDE IDENTIFICAR RESPONSABILIDAD**:
+   • Especificar: "No se identificó la responsabilidad (RUT no disponible/no menciona)"
+   • NO se puede liquidar
+
+3. 🔍 **VALIDACIÓN DE CONCEPTOS EXENTOS/EXCLUIDOS**:
+
+   **IMPORTANTE** : LA VALIDACION DE CONCEPTOS SOLO LA REALIZAS SI IDENTIFICAS EN LA FACTURA QUE EL IVA ES DEL 0% O NO MENCIONA IVA
+   
+   SI EL IVA ES DEL 0% O NO MENCIONA IVA:
+   • Identificar el CONCEPTO O BIEN FACTURADO
+   • Validar contra las listas de bienes/servicios exentos/excluidos
+   
+   **SI LUEGO DE VALIDAR EL CONCEPTO NO DEBE APLICAR IVA**:
+   • Mensaje: "NO APLICA IVA, EL VALOR DEL IVA = 0"
+   • Observaciones: Explicar por qué no aplica IVA
+   
+   **SI EL CONCEPTO SÍ DEBE APLICAR IVA** (pero la factura muestra 0%):
+   • Mensaje: "Preliquidación Sin Finalizar"
+   • Observaciones: Explicar por qué SÍ aplica IVA
+
+4. 🌍 **DETERMINACIÓN DE FUENTE DE INGRESO**:
+   Validar si es FUENTE NACIONAL o EXTRANJERA:
+   
+   **PREGUNTAS DE VALIDACIÓN**:
+   • ¿El servicio tiene uso o beneficio económico en Colombia?
+   • ¿La actividad (servicio) se ejecutó total o parcialmente en Colombia?
+   • ¿El servicio corresponde a asistencia técnica, consultoría o know-how usado en Colombia?
+   • ¿El bien vendido o utilizado está ubicado en Colombia?
+   
+   **REGLA**: Si CUALQUIERA es SÍ → FUENTE NACIONAL | Si TODAS son NO → FUENTE EXTRANJERA
+
+5. 📉 **VALIDACIÓN ESPECIAL PARA FACTURACIÓN EXTRANJERA**:
+   • Si es fuente extranjera, el IVA debe ser del 19%
+   • Si aparece IVA diferente al 19% EN LA FACTURA → "Liquidación sin finalizar"
+   • Observaciones: Mencionar la inconsistencia
+
+6. 🎆 **CASO ESPECIAL - INCONSISTENCIA RUT vs FACTURA**:
+   • Si RUT o los ANEXOS dicen "NO responsable de IVA" pero la factura muestra IVA:
+   • Resultado: "Preliquidación sin finalizar"
+   • Observaciones: "En el RUT/ANEXOS se identificó que el tercero no es responsable de IVA según el RUT aunque la factura muestra un IVA"
+
+7. 📊 **CÁLCULO DE RETEIVA**:
+   • **Fuente Nacional**: ReteIVA = Valor IVA x 15%
+   • **Fuente Extranjera**: ReteIVA = Valor IVA x 100%
+   • GEMINI solo debe analizar el porcentaje, el cálculo manual se hace en liquidador_iva.py
+
+ESTADOS POSIBLES:
+━━━━━━━━━━━━━━━━━━
+• **"Preliquidado"** → Todos los requisitos se cumplen
+• **"NO APLICA IVA, EL VALOR DEL IVA = 0"** → Tercero no responsable o concepto exento
+• **"Preliquidación Sin Finalizar"** → Inconsistencias o falta información
+
+RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
+{{
+    "analisis_iva": {{
+        "iva_identificado": {{
+            "tiene_iva": true/false,
+            "valor_iva_total": 0.0,
+            "porcentaje_iva": 0.0,
+            "detalle_conceptos_iva": [
+                {{
+                    "concepto": "Nombre del concepto",
+                    "valor_iva": 0.0,
+                    "porcentaje": 0.0
+                }}
+            ],
+            "metodo_identificacion": "total_factura|suma_conceptos|iva_cero|no_mencionado"
+        }},
+        "responsabilidad_iva_rut": {{
+            "rut_disponible": true/false,
+            "es_responsable_iva": true/false/null,
+            "codigo_encontrado": "48|49|53|no_encontrado",
+            "texto_referencia": "Texto del RUT donde se encontró"
+        }},
+        "concepto_facturado": {{
+            "descripcion": "Descripción del concepto/bien facturado",
+            "aplica_iva": true/false,
+            "razon_exencion_exclusion": "Explicación si no aplica IVA",
+            "categoria": "no_causa_iva|exento|excluido|gravado"
+        }}
+    }},
+    "analisis_fuente_ingreso": {{
+        "validaciones_fuente": {{
+            "uso_beneficio_colombia": true/false,
+            "ejecutado_en_colombia": true/false,
+            "asistencia_tecnica_colombia": true/false,
+            "bien_ubicado_colombia": true/false
+        }},
+        "es_fuente_nacional": true/false,
+        "validacion_iva_extranjero": {{
+            "es_extranjero": true/false,
+            "iva_esperado_19": true/false,
+            "iva_encontrado": 0.0
+        }}
+    }},
+    "calculo_reteiva": {{
+        "aplica_reteiva": true/false,
+        "porcentaje_reteiva": "15%|100%",
+        "tarifa_decimal": 0.15,
+        "valor_reteiva_calculado": 0.0,
+        "metodo_calculo": "fuente_nacional|fuente_extranjera"
+    }},
+    "estado_liquidacion": {{
+        "estado": "Preliquidado|NO APLICA IVA, EL VALOR DEL IVA = 0|Preliquidación Sin Finalizar",
+        "observaciones": [
+            "Observación 1",
+            "Observación 2"
+        ]
+    }}
+}}
+
+🔥 CRÍTICO: 
+• Si tercero no responsable de IVA → "NO APLICA IVA, EL VALOR DEL IVA = 0"
+• Si concepto exento/excluido y factura muestra IVA=0 → "NO APLICA IVA, EL VALOR DEL IVA = 0"
+• Si concepto gravado pero factura muestra IVA=0 → "Preliquidación Sin Finalizar"
+• Si es extranjero y IVA ≠ 19% → "Preliquidación Sin Finalizar"
+• Solo proceder con ReteIVA si el IVA fue identificado correctamente
+
+    """
+
+if __name__ == '__main__':
+    
+   
+    import sys
+    import os
+    # Asegurar que el directorio raíz esté en sys.path
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    # Llamada correcta: la función acepta 5 argumentos
+    prompt = PROMPT_ANALISIS_IVA("hola", "rut", "anexo", "cotizacion", "anexo")
+    print(prompt)

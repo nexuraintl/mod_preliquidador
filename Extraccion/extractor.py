@@ -59,7 +59,6 @@ class ProcesadorArchivos:
     Extrae texto de diferentes tipos de archivos usando las mejores técnicas
     disponibles para cada formato.
     
-    CORRECCIÓN: Maneja correctamente PDF → Imagen → OCR
     """
     
     def __init__(self):
@@ -160,7 +159,7 @@ INFORMACIÓN DEL ARCHIVO:
 - Caracteres extraídos: {len(texto_extraido)}
 
 METADATOS ADICIONALES:
-{json.dumps(metadatos or {}, indent=2, ensure_ascii=False)}
+{json.dumps(metadatos o{r }, indent=2, ensure_ascii=False)}
 
 ============================================
 TEXTO EXTRAÍDO:
@@ -285,7 +284,7 @@ FIN DE LA EXTRACCIÓN
                         fmt='JPEG',
                         thread_count=1,  # Evitar problemas de concurrencia
                         first_page=1,
-                        last_page=100  # Limitar a 100 páginas máximo
+                        last_page=1000  # Limitar a 1000 páginas máximo
                     )
                     
                     # Convertir cada página a bytes
@@ -316,7 +315,7 @@ FIN DE LA EXTRACCIÓN
                         return []
                     
                     # Limitar número de páginas
-                    max_pages = min(pdf_document.page_count, 100)
+                    max_pages = min(pdf_document.page_count, 1000)
                     logger.info(f"📄 Procesando {max_pages} de {pdf_document.page_count} páginas")
                     
                     # Convertir cada página
@@ -339,7 +338,7 @@ FIN DE LA EXTRACCIÓN
                     logger.error(f"❌ Error con PyMuPDF: {e}")
             
             # Si llegamos aquí, ambos métodos fallaron
-            logger.error(f"❌ Todos los métodos de conversión fallaron")
+            logger.error(f"❌ Todos los métodos de conversión PDF a imagen  fallaron")
             logger.error(f"   pdf2image disponible: {PDF2IMAGE_DISPONIBLE}")
             logger.error(f"   PyMuPDF disponible: {PYMUPDF_DISPONIBLE}")
             
@@ -548,7 +547,7 @@ FIN DE LA EXTRACCIÓN
     
     async def _aplicar_ocr_a_imagen(self, imagen_bytes: bytes, descripcion: str = "imagen") -> str:
         """
-        Aplica OCR a una imagen específica.
+        Aplica OCR a una imagen específica de  manera directa.
         
         Args:
             imagen_bytes: Bytes de la imagen
@@ -626,11 +625,11 @@ FIN DE LA EXTRACCIÓN
                     nombre_archivo, texto_extraido, metodo, metadatos
                 )
                 
-                logger.info(f"✅ OCR exitoso: {len(texto_extraido)} caracteres extraídos")
+                logger.info(f" OCR exitoso: {len(texto_extraido)} caracteres extraídos")
                 return texto_extraido
             else:
                 no_texto_msg = "No se detectó texto en la imagen"
-                logger.warning(f"⚠️ {no_texto_msg}")
+                logger.warning(f" {no_texto_msg}")
                 
                 # Guardar resultado vacío
                 self._guardar_texto_extraido(
@@ -642,7 +641,7 @@ FIN DE LA EXTRACCIÓN
                 
         except Exception as e:
             error_msg = f"Error en OCR con Google Vision: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -701,14 +700,14 @@ FIN DE LA EXTRACCIÓN
                 nombre_archivo, texto_final, "EXCEL", metadatos
             )
             
-            logger.info(f"✅ Excel procesado: {len(texto_final)} caracteres extraídos")
-            logger.info(f"📊 Hojas: {total_hojas}, Filas: {total_filas}")
+            logger.info(f" Excel procesado: {len(texto_final)} caracteres extraídos")
+            logger.info(f" Hojas: {total_hojas}, Filas: {total_filas}")
             
             return texto_final
             
         except Exception as e:
             error_msg = f"Error procesando Excel: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -769,14 +768,14 @@ FIN DE LA EXTRACCIÓN
                 nombre_archivo, texto_final, "WORD", metadatos
             )
             
-            logger.info(f"✅ Word procesado: {len(texto_final)} caracteres extraídos")
-            logger.info(f"📄 Párrafos: {total_parrafos}, Tablas: {total_tablas}")
+            logger.info(f" Word procesado: {len(texto_final)} caracteres extraídos")
+            logger.info(f" Párrafos: {total_parrafos}, Tablas: {total_tablas}")
             
             return texto_final
             
         except Exception as e:
             error_msg = f"Error procesando Word: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -853,15 +852,15 @@ FIN DE LA EXTRACCIÓN
         """
         textos_extraidos = {}
         
-        logger.info(f"📁 Procesando {len(archivos)} archivos con guardado automático")
-        logger.info(f"💾 Carpeta de guardado: {self.carpeta_fecha}")
+        logger.info(f" Procesando {len(archivos)} archivos con guardado automático")
+        logger.info(f" Carpeta de guardado: {self.carpeta_fecha}")
         
         for archivo in archivos:
             try:
                 # Validar archivo
                 validacion = self.validar_archivo(archivo)
                 if not validacion["valido"]:
-                    logger.error(f"❌ Archivo inválido {archivo.filename}: {validacion['error']}")
+                    logger.error(f" Archivo inválido {archivo.filename}: {validacion['error']}")
                     textos_extraidos[archivo.filename] = f"ERROR: {validacion['error']}"
                     continue
                 
@@ -869,10 +868,10 @@ FIN DE LA EXTRACCIÓN
                 texto = await self.procesar_archivo(archivo)
                 textos_extraidos[archivo.filename] = texto
                 
-                logger.info(f"✅ Archivo procesado y guardado: {archivo.filename}")
+                logger.info(f" Archivo procesado y guardado: {archivo.filename}")
                 
             except Exception as e:
-                logger.error(f"❌ Error procesando archivo {archivo.filename}: {e}")
+                logger.error(f" Error procesando archivo {archivo.filename}: {e}")
                 textos_extraidos[archivo.filename] = f"ERROR PROCESANDO: {str(e)}"
                 
                 # Guardar también los errores de procesamiento
@@ -881,8 +880,8 @@ FIN DE LA EXTRACCIÓN
                     "PROCESAMIENTO_ERROR", {"error": str(e)}
                 )
         
-        logger.info(f"🎉 Procesamiento completado: {len(textos_extraidos)} archivos")
-        logger.info(f"📂 Todos los textos extraídos guardados en: {self.carpeta_fecha}")
+        logger.info(f" Procesamiento completado: {len(textos_extraidos)} archivos")
+        logger.info(f" Todos los textos extraídos guardados en: {self.carpeta_fecha}")
         
         return textos_extraidos
     

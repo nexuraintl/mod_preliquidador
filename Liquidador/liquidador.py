@@ -41,7 +41,6 @@ class DeduccionArticulo383(BaseModel):
 class CondicionesArticulo383(BaseModel):
     es_persona_natural: bool = False
     concepto_aplicable: bool = False
-    es_primer_pago: bool = False  # NUEVO CAMPO
     planilla_seguridad_social: bool = False
     cuenta_cobro: bool = False
 
@@ -163,48 +162,19 @@ class LiquidadorRetencion:
             analisis.articulo_383.aplica and 
             analisis.articulo_383.condiciones_cumplidas.es_persona_natural and
             analisis.articulo_383.condiciones_cumplidas.concepto_aplicable and
+            analisis.articulo_383.condiciones_cumplidas.planilla_seguridad_social and
             analisis.articulo_383.condiciones_cumplidas.cuenta_cobro):
             
-            # NUEVA LÓGICA: Validación condicional de planilla según primer pago
-            condiciones = analisis.articulo_383.condiciones_cumplidas
+            logger.info("Aplicando Artículo 383 - Tarifas progresivas para persona natural")
+            resultado_art383 = self._calcular_retencion_articulo_383(analisis)
             
-            # Si es primer pago, la planilla no es obligatoria
-            if condiciones.es_primer_pago:
-                if condiciones.planilla_seguridad_social:
-                    logger.info("Primer pago con planilla de seguridad social - Aplicando Artículo 383")
-                else:
-                    logger.info("Primer pago sin planilla de seguridad social - Aún aplicando Artículo 383")
-                    mensajes_error.append("Primer pago detectado: La planilla de seguridad social no se encontró dentro de los anexos")
-                    mensajes_error.append("Se omite esta validación por ser el primer pago según Art. 383")
-                
-                # Aplicar Art. 383 independientemente de la planilla
-                logger.info("Aplicando Artículo 383 - Tarifas progresivas para persona natural (primer pago)")
-                resultado_art383 = self._calcular_retencion_articulo_383(analisis)
-                
-                if resultado_art383["puede_liquidar"]:
-                    return resultado_art383["resultado"]
-                else:
-                    mensajes_error.extend(resultado_art383["mensajes_error"])
-                    mensajes_error.append("Aplicando tarifa convencional por fallos en Art. 383")
-                    logger.warning("Fallback a tarifa convencional por errores en Art. 383")
-            
-            # Si NO es primer pago, la planilla SÍ es obligatoria
-            elif condiciones.planilla_seguridad_social:
-                logger.info("Aplicando Artículo 383 - Tarifas progresivas para persona natural")
-                resultado_art383 = self._calcular_retencion_articulo_383(analisis)
-                
-                if resultado_art383["puede_liquidar"]:
-                    return resultado_art383["resultado"]
-                else:
-                    mensajes_error.extend(resultado_art383["mensajes_error"])
-                    mensajes_error.append("Aplicando tarifa convencional por fallos en Art. 383")
-                    logger.warning("Fallback a tarifa convencional por errores en Art. 383")
-            
+            if resultado_art383["puede_liquidar"]:
+                return resultado_art383["resultado"]
             else:
-                # No es primer pago y falta planilla -> no aplicar Art. 383
-                mensajes_error.append("Art. 383 no aplica: Falta planilla de seguridad social (requerida para pagos posteriores al primero)")
-                mensajes_error.append("Aplicando tarifas convencionales")
-                logger.info("Art. 383 no aplica: Falta planilla para pago posterior al primero")
+                # Si falla el cálculo del Art. 383, continuar con cálculo tradicional
+                mensajes_error.extend(resultado_art383["mensajes_error"])
+                mensajes_error.append("Aplicando tarifa convencional por fallos en Art. 383")
+                logger.warning("Fallback a tarifa convencional por errores en Art. 383")
         
         elif analisis.articulo_383 and not analisis.articulo_383.aplica:
             # Explicar por qué no aplica Art. 383
@@ -215,12 +185,10 @@ class LiquidadorRetencion:
                 razones_no_aplica.append("no es persona natural")
             if not condiciones.concepto_aplicable:
                 razones_no_aplica.append("concepto no aplica para Art. 383")
+            if not condiciones.planilla_seguridad_social:
+                razones_no_aplica.append("falta planilla de seguridad social")
             if not condiciones.cuenta_cobro:
                 razones_no_aplica.append("falta cuenta de cobro")
-            
-            # Solo mencionar planilla si NO es primer pago
-            if not condiciones.es_primer_pago and not condiciones.planilla_seguridad_social:
-                razones_no_aplica.append("falta planilla de seguridad social")
             
             if razones_no_aplica:
                 mensajes_error.append(f"Art. 383 no aplica: {', '.join(razones_no_aplica)}")
@@ -576,8 +544,8 @@ class LiquidadorRetencion:
             parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             sys.path.insert(0, parent_dir)
             
-            # Importar conceptos desde main
-            from main import CONCEPTOS_RETEFUENTE
+            # Importar conceptos desde config
+            from config import CONCEPTOS_RETEFUENTE
             logger.info(f"Conceptos cargados desde main: {len(CONCEPTOS_RETEFUENTE)}")
             return CONCEPTOS_RETEFUENTE
             

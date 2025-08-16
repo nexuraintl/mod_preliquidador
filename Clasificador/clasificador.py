@@ -33,7 +33,9 @@ from .prompt_clasificador import (
     PROMPT_ANALISIS_FACTURA, 
     PROMPT_ANALISIS_CONSORCIO,
     PROMPT_ANALISIS_FACTURA_EXTRANJERA,
-    PROMPT_ANALISIS_CONSORCIO_EXTRANJERO
+    PROMPT_ANALISIS_CONSORCIO_EXTRANJERO,
+    PROMPT_ANALISIS_ESTAMPILLA,
+    PROMPT_ANALISIS_IVA  # ✅ NUEVO PROMPT IVA
 )
 
 # Importar procesador de consorcios
@@ -121,21 +123,20 @@ class ProcesadorGemini:
         
         # Configurar modelo con configuración estándar
         self.modelo = genai.GenerativeModel(
-            'gemini-2.0-flash',
+            'gemini-2.5-flash',
             generation_config=genai.types.GenerationConfig(
                 temperature=0.4,
-                max_output_tokens=2048,
-                candidate_count=1
-            )
+                max_output_tokens=65536,
+                candidate_count=1       
+                )
         )
         
         # Configuración especial para consorcios (más tokens)
         self.modelo_consorcio = genai.GenerativeModel(
-            'gemini-2.5-flash-lite',
+            'gemini-2.5-flash',
             generation_config=genai.types.GenerationConfig(
-                temperature=0.8,  # Menos temperatura para más consistencia
-                max_output_tokens=65536,  # 4x más tokens para consorcios grandes
-                candidate_count=1
+                temperature=0.7,  # Menos temperatura para más consistencia
+                max_output_tokens=65536,  # 4x más tokens para consorcios grandescandidate_count=1
             )
         )
         
@@ -177,7 +178,7 @@ class ProcesadorGemini:
             clasificacion = resultado.get("clasificacion", resultado)  # Fallback para formato anterior
             es_consorcio = self.procesador_consorcios.detectar_consorcio(resultado)
             
-            # NUEVA FUNCIONALIDAD: Detectar facturación extranjera
+            # Detectar facturación extranjera
             es_facturacion_extranjera = resultado.get("es_facturacion_extranjera", False)
             indicadores_extranjera = resultado.get("indicadores_extranjera", [])
             
@@ -190,7 +191,7 @@ class ProcesadorGemini:
             if es_facturacion_extranjera and indicadores_extranjera:
                 logger.info(f"Indicadores extranjera: {indicadores_extranjera}")
             
-            # Modificar la respuesta para incluir detección extranjera
+            
             return clasificacion, es_consorcio, es_facturacion_extranjera
             
         except json.JSONDecodeError as e:
@@ -361,15 +362,7 @@ class ProcesadorGemini:
             respuesta = await self._llamar_gemini(prompt, usar_modelo_consorcio=True)
             logger.info(f"Respuesta análisis consorcio: {respuesta}...")
             
-            # Validar si la respuesta está truncada
-            if self._es_respuesta_truncada(respuesta):
-                logger.warning("Respuesta de consorcio truncada, intentando con prompt reducido")
-                # Intentar con menos documentos anexos
-                prompt_reducido = PROMPT_ANALISIS_CONSORCIO(
-                    factura_texto[:2000], rut_texto[:1000] if rut_texto else "", 
-                    "", "", "", conceptos_dict
-                )
-                respuesta = await self._llamar_gemini(prompt_reducido, usar_modelo_consorcio=True)
+            # ✅ ELIMINADO: Código de fallback truncado - NUNCA REDUCIR LA CALIDAD
             
             # Limpiar respuesta
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
@@ -407,9 +400,122 @@ class ProcesadorGemini:
             logger.error(f"Error en análisis de consorcio: {e}")
             return self._consorcio_fallback(str(e))
     
+    async def analizar_estampilla(self, documentos_clasificados: Dict[str, Dict]) -> Dict[str, Any]:
+        """
+        Análisis integrado de impuestos especiales (estampilla + obra pública)
+        
+        Args:
+            documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
+            
+        Returns:
+            Dict[str, Any]: Análisis completo integrado
+            
+        Raises:
+            ValueError: Si hay error en el procesamiento
+        """
+        logger.info("🏦 Analizando IMPUESTOS ESPECIALES INTEGRADOS con Gemini")
+        logger.info("✅ Impuestos: ESTAMPILLA_UNIVERSIDAD + CONTRIBUCION_OBRA_PUBLICA")
+        
+        # Importar liquidador integrado
+        try:
+            from Liquidador.liquidador_estampilla import LiquidadorEstampilla
+            liquidador = LiquidadorEstampilla()
+        except ImportError:
+            logger.error("No se pudo importar LiquidadorEstampilla")
+            raise ValueError("Error cargando liquidador de impuestos especiales")
+        
+        # Combinar todo el texto de los documentos
+        texto_completo = ""
+        for nombre_archivo, info in documentos_clasificados.items():
+            texto_completo += f"\n\n--- {info['categoria']}: {nombre_archivo} ---\n{info['texto']}"
+        
+        logger.info(f"✅ Analizando impuestos especiales con TEXTO COMPLETO: {len(texto_completo):,} caracteres (sin límites)")
+        
+        try:
+            # Extraer documentos por categoría
+            factura_texto = ""
+            rut_texto = ""
+            anexos_texto = ""
+            cotizaciones_texto = ""
+            anexo_contrato = ""
+            
+            for nombre_archivo, info in documentos_clasificados.items():
+                if info["categoria"] == "FACTURA":
+                    factura_texto = info["texto"]
+                elif info["categoria"] == "RUT":
+                    rut_texto = info["texto"]
+                elif info["categoria"] == "ANEXO":
+                    anexos_texto += f"\n\n--- ANEXO: {nombre_archivo} ---\n{info['texto']}"
+                elif info["categoria"] == "COTIZACION":
+                    cotizaciones_texto += f"\n\n--- COTIZACIÓN: {nombre_archivo} ---\n{info['texto']}"
+                elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
+                    anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
+            
+            # ✅ CORREGIDO: Usar método que SÍ existe con parámetros correctos
+            prompt = liquidador.obtener_prompt_integrado_desde_clasificador(
+                factura_texto=factura_texto,
+                rut_texto=rut_texto,
+                anexos_texto=anexos_texto,
+                cotizaciones_texto=cotizaciones_texto,
+                anexo_contrato=anexo_contrato,
+                nit_administrativo="" # Se puede obtener del contexto si es necesario
+            )
+            
+            # Llamar a Gemini
+            respuesta = await self._llamar_gemini(prompt)
+            logger.info(f"Respuesta análisis impuestos especiales: {respuesta[:500]}...")
+            
+            # Limpiar respuesta
+            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
+            
+            # Parsear JSON
+            resultado = json.loads(respuesta_limpia)
+            
+            # Guardar respuesta de análisis en Results
+            await self._guardar_respuesta("analisis_impuestos_especiales.json", resultado)
+            
+            # Procesar resultado según detección automática
+            deteccion = resultado.get("deteccion_automatica", {})
+            aplica_estampilla = deteccion.get("aplica_estampilla_universidad", False)
+            aplica_obra_publica = deteccion.get("aplica_contribucion_obra_publica", False)
+            procesamiento_paralelo = deteccion.get("procesamiento_paralelo", False)
+            
+            # Estructurar respuesta integrada
+            respuesta_integrada = {
+                "analisis_gemini": resultado,
+                "deteccion_automatica": {
+                    "aplica_estampilla_universidad": aplica_estampilla,
+                    "aplica_contribucion_obra_publica": aplica_obra_publica,
+                    "procesamiento_paralelo": procesamiento_paralelo,
+                    "impuestos_detectados": [
+                        impuesto for impuesto, aplica in [
+                            ("ESTAMPILLA_UNIVERSIDAD", aplica_estampilla),
+                            ("CONTRIBUCION_OBRA_PUBLICA", aplica_obra_publica)
+                        ] if aplica
+                    ]
+                },
+                "tercero_identificado": resultado.get("tercero_identificado", {}),
+                "estampilla_universidad": resultado.get("estampilla_universidad", {}) if aplica_estampilla else None,
+                "contribucion_obra_publica": resultado.get("contribucion_obra_publica", {}) if aplica_obra_publica else None,
+                "observaciones": resultado.get("observaciones", [])
+            }
+            
+            logger.info(f"✅ Análisis de impuestos especiales completado exitosamente")
+            logger.info(f"📊 Impuestos detectados: {respuesta_integrada['deteccion_automatica']['impuestos_detectados']}")
+            
+            return respuesta_integrada
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parseando JSON de impuestos especiales: {e}")
+            logger.error(f"Respuesta problemática: {respuesta}")
+            raise ValueError(f"Error parseando respuesta de Gemini para impuestos especiales: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error en análisis de impuestos especiales: {e}")
+            raise ValueError(f"Error analizando impuestos especiales: {str(e)}")
+    
     async def _llamar_gemini(self, prompt: str, usar_modelo_consorcio: bool = False) -> str:
         """
-        Realiza llamada a Gemini con manejo de errores y timeout.
+        Realiza llamada a Gemini con manejo de errores y timeout MEJORADO.
         
         Args:
             prompt: Prompt para enviar a Gemini
@@ -424,7 +530,16 @@ class ProcesadorGemini:
         try:
             # Seleccionar modelo según el caso
             modelo_a_usar = self.modelo_consorcio if usar_modelo_consorcio else self.modelo
-            timeout_segundos = 60.0 if usar_modelo_consorcio else 30.0
+            
+            # ✅ CORREGIDO: Timeout escalonado según complejidad
+            if usar_modelo_consorcio:
+                timeout_segundos = 120.0  # 2 minutos para consorcios grandes
+            elif "impuestos_especiales" in prompt.lower() or "estampilla" in prompt.lower():
+                timeout_segundos = 90.0   # 90s para análisis de impuestos especiales
+            else:
+                timeout_segundos = 60.0   # 60s para análisis estándar (antes 30s)
+            
+            logger.info(f" Llamando a Gemini con timeout de {timeout_segundos}s")
             
             # Crear tarea con timeout
             loop = asyncio.get_event_loop()
@@ -449,13 +564,16 @@ class ProcesadorGemini:
             if not texto_respuesta:
                 raise ValueError("Gemini devolvió texto vacío")
                 
+            logger.info(f"✅ Respuesta de Gemini recibida: {len(texto_respuesta):,} caracteres")
             return texto_respuesta
             
         except asyncio.TimeoutError:
-            logger.error("Timeout llamando a Gemini (30s)")
-            raise ValueError("Gemini tardó demasiado en responder")
+            # ✅ MEJORADO: Mensaje específico con timeout usado
+            error_msg = f"Gemini tardó más de {timeout_segundos}s en responder"
+            logger.error(f"❌ Timeout llamando a Gemini ({timeout_segundos}s)")
+            raise ValueError(error_msg)
         except Exception as e:
-            logger.error(f"Error llamando a Gemini: {e}")
+            logger.error(f"❌ Error llamando a Gemini: {e}")
             raise ValueError(f"Error de Gemini: {str(e)}")
     
     def _limpiar_respuesta_json(self, respuesta: str) -> str:
@@ -499,40 +617,7 @@ class ProcesadorGemini:
             logger.error(f"Error limpiando JSON: {e}")
             return respuesta
     
-    def _es_respuesta_truncada(self, respuesta: str) -> bool:
-        """
-        Detecta si una respuesta de Gemini está truncada.
-        
-        Args:
-            respuesta: Respuesta de Gemini
-            
-        Returns:
-            bool: True si parece truncada, False si no
-        """
-        indicadores_truncado = [
-            '...',  # Tres puntos al final
-            '..."',  # Tres puntos antes de comillas
-            ', ...',  # Coma seguida de tres puntos
-            '"..."',  # Tres puntos entre comillas
-        ]
-        
-        # Verificar si termina con algún indicador de truncado
-        respuesta_limpia = respuesta.strip()
-        for indicador in indicadores_truncado:
-            if respuesta_limpia.endswith(indicador):
-                return True
-        
-        # Verificar si no tiene cierre de JSON completo
-        conteo_llaves_abiertas = respuesta.count('{')
-        conteo_llaves_cerradas = respuesta.count('}')
-        if conteo_llaves_abiertas > conteo_llaves_cerradas:
-            return True
-        
-        # Verificar si termina abruptamente dentro de un string
-        if respuesta_limpia.endswith('":') or respuesta_limpia.endswith('": '):
-            return True
-        
-        return False
+    # ✅ ELIMINADA: Función _es_respuesta_truncada - Ya no necesaria con modelo mejorado
     
     def _clasificacion_fallback(self, textos_archivos: Dict[str, str]) -> Dict[str, str]:
         """
@@ -555,7 +640,7 @@ class ProcesadorGemini:
                 resultado[nombre_archivo] = "RUT"
             elif 'cotiz' in nombre_lower or 'presupuesto' in nombre_lower:
                 resultado[nombre_archivo] = "COTIZACION"
-            elif 'contrato' in nombre_lower and 'concepto' in nombre_lower:
+            elif 'contrato' in nombre_lower :
                 resultado[nombre_archivo] = "ANEXO CONCEPTO DE CONTRATO"
             else:
                 resultado[nombre_archivo] = "ANEXO"
@@ -600,30 +685,24 @@ class ProcesadorGemini:
             dict: Conceptos formateados para Gemini
         """
         try:
-            # Importar conceptos desde config global (main.py)
-            import sys
-            sys.path.append('..')
+            # ✅ OPCIÓN A: Importar directamente CONCEPTOS_RETEFUENTE desde config.py
+            from config import CONCEPTOS_RETEFUENTE
             
-            # Intentar importar desde main
-            try:
-                from config import obtener_conceptos, obtener_tarifa_concepto
-                conceptos = obtener_conceptos()
+            conceptos_dict = {}
+            for concepto, datos in CONCEPTOS_RETEFUENTE.items():
+                conceptos_dict[concepto] = {
+                    "base_minima_pesos": datos["base_pesos"],
+                    "tarifa_retencion_porcentaje": datos["tarifa_retencion"] * 100  # Convertir a porcentaje
+                }
+            
+            logger.info(f" CONCEPTOS_RETEFUENTE importados exitosamente desde confi.py: {len(conceptos_dict)} conceptos")
+            return conceptos_dict
                 
-                conceptos_dict = {}
-                for concepto in conceptos:
-                    tarifa = obtener_tarifa_concepto(concepto)
-                    conceptos_dict[concepto] = {
-                        "base_minima_pesos": 0,  # Se obtendría del Excel
-                        "tarifa_retencion_porcentaje": tarifa
-                    }
-                
-                return conceptos_dict
-                
-            except ImportError:
-                # Fallback: usar conceptos hardcodeados
-                logger.warning("No se pudo importar config, usando conceptos hardcodeados")
-                return self._conceptos_hardcodeados()
-                
+        except ImportError as e:
+            logger.warning(f"⚠️ No se pudo importar desde config.py: {e}")
+            # Fallback: usar conceptos hardcodeados
+            logger.warning("⚠️ Usando conceptos hardcodeados como fallback")
+            return self._conceptos_hardcodeados()
         except Exception as e:
             logger.error(f"Error obteniendo conceptos: {e}")
             return self._conceptos_hardcodeados()
@@ -657,27 +736,42 @@ class ProcesadorGemini:
             contenido: Contenido a guardar
         """
         try:
-            # Crear carpeta por fecha si no existe
+            # ✅ CORREGIDO: Usar rutas absolutas para evitar errores de subpath
+            directorio_base = Path.cwd()  # Directorio actual del proyecto
             fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-            carpeta_results = Path("../Results") / fecha_hoy
+            
+            # Crear carpeta Results en el directorio base
+            carpeta_results = directorio_base / "Results" / fecha_hoy
             carpeta_results.mkdir(parents=True, exist_ok=True)
             
-            # Guardar archivo
-            ruta_archivo = carpeta_results / nombre_archivo
+            # Generar timestamp para nombre único
+            timestamp = datetime.now().strftime("%H-%M-%S")
+            nombre_base = nombre_archivo.replace('.json', '')
+            nombre_final = f"{nombre_base}_{timestamp}.json"
+            
+            # Guardar archivo con ruta absoluta
+            ruta_archivo = carpeta_results / nombre_final
+            
             with open(ruta_archivo, "w", encoding="utf-8") as f:
                 json.dump(contenido, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"Respuesta guardada en {ruta_archivo}")
+            logger.info(f"✅ Respuesta guardada en {ruta_archivo}")
             
         except Exception as e:
-            logger.error(f"Error guardando respuesta: {e}")
-            # Intentar guardar en directorio actual como fallback
+            logger.error(f"❌ Error guardando respuesta: {e}")
+            # Fallback mejorado: usar directorio actual
             try:
-                with open(nombre_archivo, "w", encoding="utf-8") as f:
+                timestamp = datetime.now().strftime("%H-%M-%S")
+                nombre_fallback = f"fallback_{nombre_archivo.replace('.json', '')}_{timestamp}.json"
+                ruta_fallback = Path.cwd() / nombre_fallback
+                
+                with open(ruta_fallback, "w", encoding="utf-8") as f:
                     json.dump(contenido, f, indent=2, ensure_ascii=False)
-                logger.info(f"Respuesta guardada en directorio actual: {nombre_archivo}")
+                
+                logger.info(f"✅ Respuesta guardada en fallback: {ruta_fallback}")
+                
             except Exception as e2:
-                logger.error(f"Error guardando fallback: {e2}")
+                logger.error(f"❌ Error guardando fallback: {e2}")
     
     def _obtener_conceptos_completos(self) -> dict:
         """
@@ -687,26 +781,16 @@ class ProcesadorGemini:
             dict: Conceptos con estructura completa {concepto: {base_pesos, tarifa_retencion}}
         """
         try:
-            # 🔧 CORREGIDO: Importar desde main.py donde están definidos
-            import sys
-            sys.path.append('..')
-            
-            # Intentar importar CONCEPTOS_RETEFUENTE desde main.py
-            try:
-                from main import CONCEPTOS_RETEFUENTE
-                logger.info(f"✅ CONCEPTOS_RETEFUENTE importados exitosamente: {len(CONCEPTOS_RETEFUENTE)} conceptos")
-                return CONCEPTOS_RETEFUENTE
-            except ImportError as e:
-                logger.warning(f"⚠️ No se pudo importar desde main.py: {e}")
-                # Fallback: intentar desde config por compatibilidad
-                try:
-                    from config import CONCEPTOS_RETEFUENTE
-                    logger.info("✅ CONCEPTOS_RETEFUENTE importados desde config.py")
-                    return CONCEPTOS_RETEFUENTE
-                except ImportError:
-                    logger.warning("⚠️ No se pudo importar CONCEPTOS_RETEFUENTE, usando hardcodeados")
-                    return self._conceptos_completos_hardcodeados()
+            # ✅ OPCIÓN A: Importar directamente CONCEPTOS_RETEFUENTE desde config.py
+            from config import CONCEPTOS_RETEFUENTE
+            logger.info(f" CONCEPTOS_RETEFUENTE importados exitosamente desde config.py: {len(CONCEPTOS_RETEFUENTE)} conceptos")
+            return CONCEPTOS_RETEFUENTE
                 
+        except ImportError as e:
+            logger.warning(f" No se pudo importar desde config.py: {e}")
+            # Fallback: usar conceptos hardcodeados
+            logger.warning(" Usando conceptos completos hardcodeados como fallback")
+            return self._conceptos_completos_hardcodeados()
         except Exception as e:
             logger.error(f"Error obteniendo conceptos completos: {e}")
             return self._conceptos_completos_hardcodeados()
@@ -884,5 +968,227 @@ class ProcesadorGemini:
                 "Verifique porcentajes de participación en anexos"
             ],
             "tipo_procesamiento": "CONSORCIO_FALLBACK",
+            "error": error_msg
+        }
+    
+    # ===============================
+    # ✅ NUEVA FUNCIONALIDAD: ANÁLISIS DE IVA Y RETEIVA
+    # ===============================
+    
+    async def analizar_iva(self, documentos_clasificados: Dict[str, Dict]) -> Dict[str, Any]:
+        """
+        Nueva funcionalidad: Análisis especializado de IVA y ReteIVA.
+        
+        Args:
+            documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
+            
+        Returns:
+            Dict[str, Any]: Análisis completo de IVA y ReteIVA
+            
+        Raises:
+            ValueError: Si hay error en el procesamiento
+        """
+        logger.info(" Analizando IVA y ReteIVA con Gemini")
+        
+        try:
+            # Extraer documentos por categoría
+            factura_texto = ""
+            rut_texto = ""
+            anexos_texto = ""
+            cotizaciones_texto = ""
+            anexo_contrato = ""
+            
+            for nombre_archivo, info in documentos_clasificados.items():
+                if info["categoria"] == "FACTURA":
+                    factura_texto = info["texto"]
+                    logger.info(f" Factura encontrada para análisis IVA: {nombre_archivo}")
+                elif info["categoria"] == "RUT":
+                    rut_texto = info["texto"]
+                    logger.info(f" RUT encontrado para análisis IVA: {nombre_archivo}")
+                elif info["categoria"] == "ANEXO":
+                    anexos_texto += f"\n\n--- ANEXO: {nombre_archivo} ---\n{info['texto']}"
+                elif info["categoria"] == "COTIZACION":
+                    cotizaciones_texto += f"\n\n--- COTIZACIÓN: {nombre_archivo} ---\n{info['texto']}"
+                elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
+                    anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
+            
+            if not factura_texto:
+                raise ValueError("No se encontró una FACTURA en los documentos para análisis de IVA")
+            
+            # Generar prompt especializado de IVA
+            prompt = PROMPT_ANALISIS_IVA(
+                factura_texto=factura_texto,
+                rut_texto=rut_texto,
+                anexos_texto=anexos_texto,
+                cotizaciones_texto=cotizaciones_texto,
+                anexo_contrato=anexo_contrato
+            )
+            
+            # Llamar a Gemini
+            respuesta = await self._llamar_gemini(prompt)
+            logger.info(f"🧠 Respuesta análisis IVA: {respuesta[:500]}...")
+            
+            # Limpiar respuesta
+            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
+            
+            # Parsear JSON
+            resultado = json.loads(respuesta_limpia)
+            
+            # Guardar respuesta de análisis en Results
+            await self._guardar_respuesta("analisis_iva_reteiva.json", resultado)
+            
+            # Validar estructura mínima requerida
+            campos_requeridos = ["analisis_iva", "analisis_fuente_ingreso", "calculo_reteiva", "estado_liquidacion"]
+            for campo in campos_requeridos:
+                if campo not in resultado:
+                    logger.warning(f"⚠️ Campo '{campo}' no encontrado en respuesta de IVA")
+                    resultado[campo] = self._obtener_campo_iva_default(campo)
+            
+            # Extraer información clave para logging
+            iva_data = resultado.get("analisis_iva", {})
+            estado_data = resultado.get("estado_liquidacion", {})
+            
+            iva_identificado = iva_data.get("iva_identificado", {})
+            valor_iva = iva_identificado.get("valor_iva_total", 0.0)
+            estado = estado_data.get("estado", "No definido")
+            
+            logger.info(f"✅ Análisis IVA completado: Valor IVA=${valor_iva:,.2f}, Estado={estado}")
+            
+            return resultado
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Error parseando JSON de análisis IVA: {e}")
+            logger.error(f"Respuesta problemática: {respuesta}")
+            return self._iva_fallback("Error parseando respuesta JSON de Gemini")
+        except Exception as e:
+            logger.error(f"❌ Error en análisis de IVA: {e}")
+            return self._iva_fallback(str(e))
+    
+    def _obtener_campo_iva_default(self, campo: str) -> Dict[str, Any]:
+        """
+        Obtiene valores por defecto para campos faltantes en análisis de IVA.
+        
+        Args:
+            campo: Nombre del campo faltante
+            
+        Returns:
+            Dict con estructura por defecto
+        """
+        defaults = {
+            "analisis_iva": {
+                "iva_identificado": {
+                    "tiene_iva": False,
+                    "valor_iva_total": 0.0,
+                    "porcentaje_iva": 0.0,
+                    "detalle_conceptos_iva": [],
+                    "metodo_identificacion": "no_identificado"
+                },
+                "responsabilidad_iva_rut": {
+                    "rut_disponible": False,
+                    "es_responsable_iva": None,
+                    "codigo_encontrado": "no_encontrado",
+                    "texto_referencia": "No disponible"
+                },
+                "concepto_facturado": {
+                    "descripcion": "No identificado",
+                    "aplica_iva": False,
+                    "razon_exencion_exclusion": "No determinado",
+                    "categoria": "no_identificado"
+                }
+            },
+            "analisis_fuente_ingreso": {
+                "validaciones_fuente": {
+                    "uso_beneficio_colombia": False,
+                    "ejecutado_en_colombia": False,
+                    "asistencia_tecnica_colombia": False,
+                    "bien_ubicado_colombia": False
+                },
+                "es_fuente_nacional": True,
+                "validacion_iva_extranjero": {
+                    "es_extranjero": False,
+                    "iva_esperado_19": False,
+                    "iva_encontrado": 0.0
+                }
+            },
+            "calculo_reteiva": {
+                "aplica_reteiva": False,
+                "porcentaje_reteiva": "0%",
+                "tarifa_decimal": 0.0,
+                "valor_reteiva_calculado": 0.0,
+                "metodo_calculo": "no_aplica"
+            },
+            "estado_liquidacion": {
+                "estado": "Error en procesamiento",
+                "observaciones": ["Campo faltante en respuesta de Gemini"]
+            }
+        }
+        
+        return defaults.get(campo, {})
+    
+    def _iva_fallback(self, error_msg: str = "Error procesando IVA") -> Dict[str, Any]:
+        """
+        Respuesta de emergencia cuando falla el procesamiento de IVA.
+        
+        Args:
+            error_msg: Mensaje de error
+            
+        Returns:
+            Dict[str, Any]: Respuesta básica de IVA
+        """
+        logger.warning(f"Usando fallback de IVA: {error_msg}")
+        
+        return {
+            "analisis_iva": {
+                "iva_identificado": {
+                    "tiene_iva": False,
+                    "valor_iva_total": 0.0,
+                    "porcentaje_iva": 0.0,
+                    "detalle_conceptos_iva": [],
+                    "metodo_identificacion": "error"
+                },
+                "responsabilidad_iva_rut": {
+                    "rut_disponible": False,
+                    "es_responsable_iva": None,
+                    "codigo_encontrado": "error",
+                    "texto_referencia": "Error en procesamiento"
+                },
+                "concepto_facturado": {
+                    "descripcion": "Error en identificación",
+                    "aplica_iva": False,
+                    "razon_exencion_exclusion": error_msg,
+                    "categoria": "error"
+                }
+            },
+            "analisis_fuente_ingreso": {
+                "validaciones_fuente": {
+                    "uso_beneficio_colombia": False,
+                    "ejecutado_en_colombia": False,
+                    "asistencia_tecnica_colombia": False,
+                    "bien_ubicado_colombia": False
+                },
+                "es_fuente_nacional": True,
+                "validacion_iva_extranjero": {
+                    "es_extranjero": False,
+                    "iva_esperado_19": False,
+                    "iva_encontrado": 0.0
+                }
+            },
+            "calculo_reteiva": {
+                "aplica_reteiva": False,
+                "porcentaje_reteiva": "0%",
+                "tarifa_decimal": 0.0,
+                "valor_reteiva_calculado": 0.0,
+                "metodo_calculo": "error"
+            },
+            "estado_liquidacion": {
+                "estado": "Error en procesamiento",
+                "observaciones": [
+                    f"Error procesando IVA: {error_msg}",
+                    "Por favor revise manualmente los documentos",
+                    "Verifique responsabilidad de IVA en el RUT",
+                    "Valide conceptos facturados y aplicabilidad de IVA"
+                ]
+            },
+            "tipo_procesamiento": "IVA_FALLBACK",
             "error": error_msg
         }
