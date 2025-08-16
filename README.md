@@ -894,22 +894,14 @@ Results/YYYY-MM-DD/
 
 ### **👥 Equipo de Desarrollo**
 - **Autor Principal**: Miguel Angel Jaramillo Durango
-- **Email**: [email@ejemplo.com](mailto:email@ejemplo.com)
-- **GitHub**: [@usuario](https://github.com/usuario)
+- **Email**: mjaramillopriv@gmail.com
+- **GitHub**: @AngelDev-04
 
 ### **🐛 Reportar Issues**
-- **GitHub Issues**: [https://github.com/usuario/preliquidador-integrado/issues](https://github.com/usuario/preliquidador-integrado/issues)
+- **GitHub Issues**: https://github.com/AngelDev-04/FIDUCOLDEX/issues
 - **Template de Bug**: Usar plantilla predefinida
 - **Template de Feature**: Usar plantilla de nueva funcionalidad
 
-### **💬 Comunidad**
-- **Discord**: [https://discord.gg/preliquidador](https://discord.gg/preliquidador)
-- **Telegram**: [@preliquidador_soporte](https://t.me/preliquidador_soporte)
-- **Documentation**: [https://docs.preliquidador.com](https://docs.preliquidador.com)
-
----
-
-## 🏆 **RECONOCIMIENTOS**
 
 ### **🙏 Agradecimientos**
 - **Google Gemini AI** - Por la potencia de análisis de documentos
