@@ -35,9 +35,13 @@ cryptography==41.0.7
 # Opcional: para mejor performance
 aiofiles==23.2.0
 
+# Procesamiento de emails
+extract-msg==0.48.4
+
 # NUEVAS DEPENDENCIAS v2.0:
 # =======================================
 # pdf2image: Convierte páginas PDF a imágenes para OCR
 # PyMuPDF: Alternativa para conversión PDF → Imagen
+# extract-msg: Procesa archivos .msg de Outlook
 # Nota: pdf2image requiere poppler-utils en Linux/Mac
 #       En Windows se incluye automáticamente

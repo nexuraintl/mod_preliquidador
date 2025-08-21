@@ -115,12 +115,10 @@ class LiquidadorRetencion:
         mensajes_error = []
         puede_liquidar = True
         
-        # VALIDACIÓN 1: Facturación exterior
+        # VALIDACIÓN 1: Facturación exterior - Usar función especializada
         if analisis.es_facturacion_exterior:
-            logger.info("Facturación exterior detectada - NO aplica retención")
-            return self._crear_resultado_no_liquidable(
-                ["Esta facturación es fuera de Colombia - NO aplica retención en la fuente"]
-            )
+            logger.info("Facturación exterior detectada - Redirigiendo a función especializada")
+            return self.liquidar_factura_extranjera(analisis)
         
         # VALIDACIÓN 2: Naturaleza del tercero
         resultado_validacion = self._validar_naturaleza_tercero(analisis.naturaleza_tercero)
@@ -599,11 +597,30 @@ class LiquidadorRetencion:
         Returns:
             ResultadoLiquidacion: Resultado con valores en cero y explicación
         """
+        # 🔧 FIX: Generar concepto descriptivo en lugar de "N/A"
+        concepto_descriptivo = "No aplica retención"
+        
+        # Determinar concepto específico basado en el mensaje de error
+        if mensajes_error:
+            primer_mensaje = mensajes_error[0].lower()
+            if "responsable de iva" in primer_mensaje:
+                concepto_descriptivo = "No aplica - tercero no responsable de IVA"
+            elif "autorretenedor" in primer_mensaje:
+                concepto_descriptivo = "No aplica - tercero es autorretenedor"
+            elif "simple" in primer_mensaje:
+                concepto_descriptivo = "No aplica - régimen simple de tributación"
+            elif "extranjera" in primer_mensaje or "exterior" in primer_mensaje:
+                concepto_descriptivo = "No aplica - facturación extranjera"
+            elif "base" in primer_mensaje and "mínimo" in primer_mensaje:
+                concepto_descriptivo = "No aplica - base inferior al mínimo"
+            elif "concepto" in primer_mensaje and "identificado" in primer_mensaje:
+                concepto_descriptivo = "No aplica - conceptos no identificados"
+        
         return ResultadoLiquidacion(
             valor_base_retencion=0,
             valor_retencion=0,
             tarifa_aplicada=0,
-            concepto_aplicado="N/A",
+            concepto_aplicado=concepto_descriptivo,  # 🔧 FIX: Concepto descriptivo
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=False,
             mensajes_error=mensajes_error
@@ -627,18 +644,19 @@ class LiquidadorRetencion:
         logger.info(f"Liquidando factura nacional para NIT: {nit_administrativo}")
         return self.calcular_retencion(analisis_factura)
     
-    def liquidar_factura_extranjera(self, analisis_factura: AnalisisFactura, nit_administrativo: str) -> ResultadoLiquidacion:
+    def liquidar_factura_extranjera(self, analisis_factura: AnalisisFactura, nit_administrativo: str = "") -> ResultadoLiquidacion:
         """
         Función especializada para liquidar facturas extranjeras.
         
         Args:
             analisis_factura: Análisis de la factura extranjera de Gemini
-            nit_administrativo: NIT de la entidad administrativa
+            nit_administrativo: NIT de la entidad administrativa (opcional)
             
         Returns:
             ResultadoLiquidacion: Resultado del cálculo de retención extranjera
         """
-        logger.info(f"Liquidando factura extranjera para NIT: {nit_administrativo}")
+        nit_log = nit_administrativo if nit_administrativo else "[No especificado]"
+        logger.info(f"Liquidando factura extranjera para NIT: {nit_log}")
         
         # Para facturas extranjeras, el análisis de Gemini ya determinó si aplica retención
         # y calculó el valor basado en las tarifas de pagos al exterior
@@ -657,7 +675,7 @@ class LiquidadorRetencion:
         
         # Tomar el primer concepto identificado (para extranjeras normalmente es uno)
         concepto_principal = analisis_factura.conceptos_identificados[0]
-        
+
         # Verificar si el concepto tiene tarifa aplicada (viene del prompt extranjero)
         if hasattr(concepto_principal, 'tarifa_aplicada') and concepto_principal.tarifa_aplicada > 0:
             valor_base = concepto_principal.base_gravable or analisis_factura.valor_total or 0

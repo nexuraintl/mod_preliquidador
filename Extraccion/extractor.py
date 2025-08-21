@@ -27,6 +27,17 @@ from PIL import Image
 import pandas as pd
 from docx import Document
 
+# Procesamiento de emails
+import email
+from email.utils import parsedate_to_datetime, parseaddr
+from email.header import decode_header
+try:
+    import extract_msg
+    EXTRACT_MSG_DISPONIBLE = True
+except ImportError:
+    EXTRACT_MSG_DISPONIBLE = False
+    logging.warning("extract-msg no disponible - archivos .msg limitados")
+
 # Nuevas dependencias para PDF → Imagen
 try:
     import pdf2image
@@ -69,7 +80,7 @@ class ProcesadorArchivos:
         logger.info("ProcesadorArchivos inicializado con guardado automático")
     
     def _verificar_dependencias_pdf(self):
-        """Verifica y reporta las dependencias disponibles para PDF → Imagen"""
+        """Verifica y reporta las dependencias disponibles para PDF → Imagen y emails"""
         if PDF2IMAGE_DISPONIBLE:
             logger.info("✅ pdf2image disponible para conversión PDF → Imagen")
         elif PYMUPDF_DISPONIBLE:
@@ -77,6 +88,13 @@ class ProcesadorArchivos:
         else:
             logger.warning("⚠️ Sin dependencias para PDF → Imagen. OCR fallback limitado")
             logger.warning("   Instala: pip install pdf2image PyMuPDF")
+        
+        # Verificar dependencias de email
+        if EXTRACT_MSG_DISPONIBLE:
+            logger.info("✅ extract-msg disponible para archivos .msg")
+        else:
+            logger.warning("⚠️ extract-msg no disponible. Archivos .msg limitados")
+            logger.warning("   Instala: pip install extract-msg")
     
     def _configurar_vision(self):
         """
@@ -159,7 +177,7 @@ INFORMACIÓN DEL ARCHIVO:
 - Caracteres extraídos: {len(texto_extraido)}
 
 METADATOS ADICIONALES:
-{json.dumps(metadatos o{r }, indent=2, ensure_ascii=False)}
+{json.dumps(metadatos or {}, indent=2, ensure_ascii=False)}
 
 ============================================
 TEXTO EXTRAÍDO:
@@ -396,6 +414,9 @@ FIN DE LA EXTRACCIÓN
         
         elif extension in ['.docx', '.doc']:
             return await self.extraer_texto_word(contenido, archivo.filename)
+        
+        elif extension in ['.msg', '.eml']:
+            return await self.extraer_texto_emails(contenido, archivo.filename)
         
         else:
             raise ValueError(f"Tipo de archivo no soportado: {extension}")
@@ -785,6 +806,511 @@ FIN DE LA EXTRACCIÓN
             
             return error_msg
     
+    async def extraer_texto_emails(self, contenido: bytes, nombre_archivo: str = "email") -> str:
+        """
+        Extrae texto y metadatos de archivos de email (.msg y .eml).
+        GUARDA AUTOMÁTICAMENTE el texto extraído con formato estructurado.
+        
+        Args:
+            contenido: Contenido binario del archivo de email
+            nombre_archivo: Nombre del archivo original para guardado
+            
+        Returns:
+            str: Texto extraído con metadatos del email formateado
+        """
+        try:
+            extension = Path(nombre_archivo).suffix.lower()
+            
+            if extension == '.msg':
+                return await self._procesar_msg(contenido, nombre_archivo)
+            elif extension == '.eml':
+                return await self._procesar_eml(contenido, nombre_archivo)
+            else:
+                error_msg = f"Extensión de email no soportada: {extension}"
+                logger.error(f"❌ {error_msg}")
+                
+                # Guardar error
+                self._guardar_texto_extraido(
+                    nombre_archivo, error_msg, "EMAIL_ERROR", 
+                    {"error": "Extensión no soportada", "extension": extension}
+                )
+                
+                return error_msg
+                
+        except Exception as e:
+            error_msg = f"Error procesando email: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            
+            # Guardar error
+            self._guardar_texto_extraido(
+                nombre_archivo, error_msg, "EMAIL_ERROR", 
+                {"error": str(e)}
+            )
+            
+            return error_msg
+    
+    async def _procesar_msg(self, contenido: bytes, nombre_archivo: str) -> str:
+        """
+        Procesa archivos .msg usando extract-msg.
+        
+        Args:
+            contenido: Contenido binario del archivo .msg
+            nombre_archivo: Nombre del archivo para logging
+            
+        Returns:
+            str: Texto extraído formateado del email
+        """
+        if not EXTRACT_MSG_DISPONIBLE:
+            error_msg = "Librería extract-msg no disponible. Instale con: pip install extract-msg"
+            logger.error(f"❌ {error_msg}")
+            
+            self._guardar_texto_extraido(
+                nombre_archivo, error_msg, "MSG_ERROR", 
+                {"error": "extract-msg no instalado"}
+            )
+            
+            return error_msg
+        
+        try:
+            # Crear archivo temporal para extract-msg
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.msg', delete=False) as temp_file:
+                temp_file.write(contenido)
+                temp_path = temp_file.name
+            
+            try:
+                # Extraer con extract-msg
+                msg = extract_msg.Message(temp_path)
+                
+                # Extraer metadatos
+                asunto = msg.subject or "[Sin asunto]"
+                remitente = self._formatear_direccion(msg.sender)
+                destinatarios = self._extraer_destinatarios_msg(msg)
+                fecha = self._formatear_fecha(msg.date)
+                cuerpo = self._extraer_cuerpo_msg(msg)
+                adjuntos = self._listar_adjuntos_msg(msg)
+                
+                # Formatear texto final
+                texto_formateado = self._formatear_email(
+                    asunto, remitente, destinatarios, fecha, cuerpo, adjuntos, "MSG"
+                )
+                
+                # Preparar metadatos
+                metadatos = {
+                    "tipo_archivo": "MSG",
+                    "asunto": asunto,
+                    "remitente": remitente,
+                    "destinatarios": destinatarios,
+                    "fecha": fecha,
+                    "adjuntos_detectados": len(adjuntos),
+                    "tamaño_archivo_bytes": len(contenido),
+                    "metodo": "extract-msg"
+                }
+                
+                # Guardar texto extraído
+                self._guardar_texto_extraido(
+                    nombre_archivo, texto_formateado, "EMAIL_MSG", metadatos
+                )
+                
+                logger.info(f"✅ Email .msg procesado: {len(texto_formateado)} caracteres")
+                logger.info(f"📧 Asunto: {asunto[:50]}...")
+                
+                return texto_formateado
+                
+            finally:
+                # Limpiar archivo temporal
+                import os
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            error_msg = f"Error procesando archivo .msg: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            
+            self._guardar_texto_extraido(
+                nombre_archivo, error_msg, "MSG_ERROR", 
+                {"error": str(e)}
+            )
+            
+            return error_msg
+    
+    async def _procesar_eml(self, contenido: bytes, nombre_archivo: str) -> str:
+        """
+        Procesa archivos .eml usando la librería email estándar.
+        
+        Args:
+            contenido: Contenido binario del archivo .eml
+            nombre_archivo: Nombre del archivo para logging
+            
+        Returns:
+            str: Texto extraído formateado del email
+        """
+        try:
+            # Decodificar contenido a string
+            contenido_str = self._decodificar_email(contenido)
+            
+            # Parsear email
+            msg = email.message_from_string(contenido_str)
+            
+            # Extraer metadatos
+            asunto = self._decodificar_header(msg.get('Subject', '[Sin asunto]'))
+            remitente = self._decodificar_header(msg.get('From', '[Remitente desconocido]'))
+            destinatarios = self._extraer_destinatarios_eml(msg)
+            fecha = self._formatear_fecha_eml(msg.get('Date'))
+            cuerpo = self._extraer_cuerpo_eml(msg)
+            adjuntos = self._listar_adjuntos_eml(msg)
+            
+            # Formatear texto final
+            texto_formateado = self._formatear_email(
+                asunto, remitente, destinatarios, fecha, cuerpo, adjuntos, "EML"
+            )
+            
+            # Preparar metadatos
+            metadatos = {
+                "tipo_archivo": "EML",
+                "asunto": asunto,
+                "remitente": remitente,
+                "destinatarios": destinatarios,
+                "fecha": fecha,
+                "adjuntos_detectados": len(adjuntos),
+                "tamaño_archivo_bytes": len(contenido),
+                "metodo": "email estándar"
+            }
+            
+            # Guardar texto extraído
+            self._guardar_texto_extraido(
+                nombre_archivo, texto_formateado, "EMAIL_EML", metadatos
+            )
+            
+            logger.info(f"✅ Email .eml procesado: {len(texto_formateado)} caracteres")
+            logger.info(f"📧 Asunto: {asunto[:50]}...")
+            
+            return texto_formateado
+            
+        except Exception as e:
+            error_msg = f"Error procesando archivo .eml: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            
+            self._guardar_texto_extraido(
+                nombre_archivo, error_msg, "EML_ERROR", 
+                {"error": str(e)}
+            )
+            
+            return error_msg
+    
+    def _decodificar_email(self, contenido: bytes) -> str:
+        """
+        Decodifica el contenido de un email manejando diferentes codificaciones.
+        """
+        codificaciones = ['utf-8', 'latin1', 'cp1252', 'iso-8859-1']
+        
+        for codificacion in codificaciones:
+            try:
+                return contenido.decode(codificacion)
+            except UnicodeDecodeError:
+                continue
+        
+        # Fallback con errores ignorados
+        return contenido.decode('utf-8', errors='ignore')
+    
+    def _decodificar_header(self, header_str: str) -> str:
+        """
+        Decodifica headers de email que pueden estar codificados.
+        """
+        if not header_str:
+            return ""
+        
+        try:
+            decoded_fragments = decode_header(header_str)
+            decoded_string = ""
+            
+            for fragment, encoding in decoded_fragments:
+                if isinstance(fragment, bytes):
+                    if encoding:
+                        try:
+                            decoded_string += fragment.decode(encoding)
+                        except:
+                            decoded_string += fragment.decode('utf-8', errors='ignore')
+                    else:
+                        decoded_string += fragment.decode('utf-8', errors='ignore')
+                else:
+                    decoded_string += fragment
+            
+            return decoded_string.strip()
+            
+        except Exception:
+            return header_str
+    
+    def _formatear_direccion(self, direccion: str) -> str:
+        """
+        Formatea una dirección de email para mostrar nombre y email.
+        """
+        if not direccion:
+            return "[Desconocido]"
+        
+        try:
+            nombre, email_addr = parseaddr(direccion)
+            if nombre and email_addr:
+                return f"{nombre} <{email_addr}>"
+            elif email_addr:
+                return email_addr
+            else:
+                return direccion
+        except:
+            return direccion
+    
+    def _extraer_destinatarios_msg(self, msg) -> str:
+        """
+        Extrae destinatarios de un mensaje .msg.
+        """
+        destinatarios = []
+        
+        # To
+        if hasattr(msg, 'to') and msg.to:
+            destinatarios.append(f"Para: {msg.to}")
+        
+        # CC
+        if hasattr(msg, 'cc') and msg.cc:
+            destinatarios.append(f"CC: {msg.cc}")
+        
+        # BCC
+        if hasattr(msg, 'bcc') and msg.bcc:
+            destinatarios.append(f"BCC: {msg.bcc}")
+        
+        return "; ".join(destinatarios) if destinatarios else "[Sin destinatarios]"
+    
+    def _extraer_destinatarios_eml(self, msg) -> str:
+        """
+        Extrae destinatarios de un mensaje .eml.
+        """
+        destinatarios = []
+        
+        # To
+        to_header = msg.get('To')
+        if to_header:
+            destinatarios.append(f"Para: {self._decodificar_header(to_header)}")
+        
+        # CC
+        cc_header = msg.get('Cc')
+        if cc_header:
+            destinatarios.append(f"CC: {self._decodificar_header(cc_header)}")
+        
+        # BCC
+        bcc_header = msg.get('Bcc')
+        if bcc_header:
+            destinatarios.append(f"BCC: {self._decodificar_header(bcc_header)}")
+        
+        return "; ".join(destinatarios) if destinatarios else "[Sin destinatarios]"
+    
+    def _formatear_fecha(self, fecha) -> str:
+        """
+        Formatea fecha de mensaje .msg.
+        """
+        if not fecha:
+            return "[Fecha desconocida]"
+        
+        try:
+            if hasattr(fecha, 'strftime'):
+                return fecha.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                return str(fecha)
+        except:
+            return str(fecha)
+    
+    def _formatear_fecha_eml(self, fecha_str: str) -> str:
+        """
+        Formatea fecha de mensaje .eml.
+        """
+        if not fecha_str:
+            return "[Fecha desconocida]"
+        
+        try:
+            fecha_obj = parsedate_to_datetime(fecha_str)
+            return fecha_obj.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            return fecha_str
+    
+    def _extraer_cuerpo_msg(self, msg) -> str:
+        """
+        Extrae el cuerpo del mensaje .msg.
+        """
+        cuerpo = ""
+        
+        try:
+            # Intentar texto plano primero
+            if hasattr(msg, 'body') and msg.body:
+                cuerpo = msg.body
+            # Fallback a HTML
+            elif hasattr(msg, 'htmlBody') and msg.htmlBody:
+                cuerpo = self._html_a_texto(msg.htmlBody)
+                cuerpo = f"[CONVERTIDO DE HTML]\n{cuerpo}"
+            else:
+                cuerpo = "[Sin contenido de mensaje]"
+                
+        except Exception as e:
+            cuerpo = f"[Error extrayendo cuerpo: {str(e)}]"
+        
+        return cuerpo.strip() if cuerpo else "[Mensaje vacío]"
+    
+    def _extraer_cuerpo_eml(self, msg) -> str:
+        """
+        Extrae el cuerpo del mensaje .eml.
+        """
+        cuerpo = ""
+        
+        try:
+            if msg.is_multipart():
+                # Buscar partes de texto
+                for part in msg.walk():
+                    content_type = part.get_content_type()
+                    
+                    if content_type == "text/plain":
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            charset = part.get_content_charset() or 'utf-8'
+                            try:
+                                cuerpo = payload.decode(charset)
+                                break  # Priorizar texto plano
+                            except:
+                                cuerpo = payload.decode('utf-8', errors='ignore')
+                                break
+                    
+                    elif content_type == "text/html" and not cuerpo:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            charset = part.get_content_charset() or 'utf-8'
+                            try:
+                                html_content = payload.decode(charset)
+                                cuerpo = self._html_a_texto(html_content)
+                                cuerpo = f"[CONVERTIDO DE HTML]\n{cuerpo}"
+                            except:
+                                html_content = payload.decode('utf-8', errors='ignore')
+                                cuerpo = self._html_a_texto(html_content)
+                                cuerpo = f"[CONVERTIDO DE HTML]\n{cuerpo}"
+            else:
+                # Mensaje simple
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    charset = msg.get_content_charset() or 'utf-8'
+                    try:
+                        cuerpo = payload.decode(charset)
+                    except:
+                        cuerpo = payload.decode('utf-8', errors='ignore')
+                        
+        except Exception as e:
+            cuerpo = f"[Error extrayendo cuerpo: {str(e)}]"
+        
+        return cuerpo.strip() if cuerpo else "[Mensaje vacío]"
+    
+    def _html_a_texto(self, html_content: str) -> str:
+        """
+        Convierte contenido HTML a texto plano simple.
+        """
+        try:
+            import re
+            
+            # Remover scripts y styles
+            html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+            html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+            
+            # Reemplazar saltos de línea HTML
+            html_content = re.sub(r'<br[^>]*>', '\n', html_content, flags=re.IGNORECASE)
+            html_content = re.sub(r'</p>', '\n\n', html_content, flags=re.IGNORECASE)
+            html_content = re.sub(r'</div>', '\n', html_content, flags=re.IGNORECASE)
+            
+            # Remover todas las etiquetas HTML
+            texto_limpio = re.sub(r'<[^>]+>', '', html_content)
+            
+            # Limpiar espacios múltiples y líneas vacías
+            texto_limpio = re.sub(r'\n\s*\n', '\n\n', texto_limpio)
+            texto_limpio = re.sub(r' +', ' ', texto_limpio)
+            
+            return texto_limpio.strip()
+            
+        except Exception:
+            # Fallback simple
+            import re
+            return re.sub(r'<[^>]+>', '', html_content)
+    
+    def _listar_adjuntos_msg(self, msg) -> list:
+        """
+        Lista los adjuntos de un mensaje .msg.
+        """
+        adjuntos = []
+        
+        try:
+            if hasattr(msg, 'attachments') and msg.attachments:
+                for attachment in msg.attachments:
+                    try:
+                        nombre = getattr(attachment, 'longFilename', None) or getattr(attachment, 'shortFilename', 'adjunto_sin_nombre')
+                        tamaño = getattr(attachment, 'size', 0)
+                        adjuntos.append(f"{nombre} ({tamaño} bytes)")
+                    except:
+                        adjuntos.append("adjunto_sin_info")
+        except Exception:
+            pass
+        
+        return adjuntos
+    
+    def _listar_adjuntos_eml(self, msg) -> list:
+        """
+        Lista los adjuntos de un mensaje .eml.
+        """
+        adjuntos = []
+        
+        try:
+            for part in msg.walk():
+                content_disposition = part.get('Content-Disposition', '')
+                
+                if content_disposition and 'attachment' in content_disposition:
+                    filename = part.get_filename()
+                    if filename:
+                        filename = self._decodificar_header(filename)
+                        tamaño = len(part.get_payload(decode=True) or b'')
+                        adjuntos.append(f"{filename} ({tamaño} bytes)")
+                    else:
+                        adjuntos.append("adjunto_sin_nombre")
+        except Exception:
+            pass
+        
+        return adjuntos
+    
+    def _formatear_email(self, asunto: str, remitente: str, destinatarios: str, 
+                        fecha: str, cuerpo: str, adjuntos: list, tipo: str) -> str:
+        """
+        Formatea toda la información del email en un texto estructurado.
+        """
+        separador = "=" * 60
+        
+        texto_formateado = f"""=== INFORMACIÓN DEL EMAIL ({tipo}) ===
+ASUNTO: {asunto}
+REMITENTE: {remitente}
+DESTINATARIOS: {destinatarios}
+FECHA: {fecha}
+
+{separador}
+=== CUERPO DEL EMAIL ===
+{separador}
+
+{cuerpo}
+
+{separador}
+=== ARCHIVOS ADJUNTOS ===
+{separador}
+"""
+        
+        if adjuntos:
+            for i, adjunto in enumerate(adjuntos, 1):
+                texto_formateado += f"\n{i}. {adjunto}"
+        else:
+            texto_formateado += "\n[Sin archivos adjuntos]"
+        
+        texto_formateado += f"\n\n{separador}\n=== FIN DEL EMAIL ===\n{separador}"
+        
+        return texto_formateado
+    
     def validar_archivo(self, archivo: UploadFile) -> Dict[str, Any]:
         """
         Valida si un archivo es procesable y retorna información sobre él.
@@ -796,7 +1322,7 @@ FIN DE LA EXTRACCIÓN
             Dict con información de validación
         """
         extensiones_soportadas = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.bmp', 
-                                '.tiff', '.xlsx', '.xls', '.docx', '.doc']
+                                '.tiff', '.xlsx', '.xls', '.docx', '.doc', '.msg', '.eml']
         
         if not archivo.filename:
             return {
@@ -828,6 +1354,14 @@ FIN DE LA EXTRACCIÓN
             tipo_procesamiento = "Procesamiento Excel"
         elif extension in ['.docx', '.doc']:
             tipo_procesamiento = "Procesamiento Word"
+        elif extension in ['.msg', '.eml']:
+            if extension == '.msg' and EXTRACT_MSG_DISPONIBLE:
+                tipo_procesamiento = "Procesamiento Email (.msg) con extract-msg"
+            elif extension == '.eml':
+                tipo_procesamiento = "Procesamiento Email (.eml) con email estándar"
+            else:
+                tipo_procesamiento = "Procesamiento Email (dependencias limitadas)"
+        
         
         return {
             "valido": True,
@@ -904,7 +1438,8 @@ FIN DE LA EXTRACCIÓN
                 "dependencias": {
                     "google_vision": self.vision_client is not None,
                     "pdf2image": PDF2IMAGE_DISPONIBLE,
-                    "pymupdf": PYMUPDF_DISPONIBLE
+                    "pymupdf": PYMUPDF_DISPONIBLE,
+                    "extract_msg": EXTRACT_MSG_DISPONIBLE
                 }
             }
             

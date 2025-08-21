@@ -1,4 +1,43 @@
-### ✅ **Últimas Optimizaciones v2.0.4 (2025-08-14)**
+### ✅ **Últimas Optimizaciones v2.2.0 (2025-08-18)**
+
+**Nueva Funcionalidad: 6 Estampillas Generales:**
+- 🆕 **Implementación completa**: Análisis e identificación de 6 estampillas generales para TODOS los NITs
+- 🎨 **Procultura**, 🏥 **Bienestar**, 👴 **Adulto Mayor**, 🎓 **Universidad Pedagógica**, 🔬 **Francisco José de Caldas**, ⚽ **Prodeporte**
+- ⚙️ **Procesamiento universal**: Aplica para todos los NITs administrativos sin configuración adicional
+- 🔄 **Análisis acumulativo**: Revisa TODOS los documentos y consolida información encontrada
+- 📊 **Estados específicos**: `preliquidacion_completa`, `preliquidacion_sin_finalizar`, `no_aplica_impuesto`
+- 🆕 **Solo identificación**: Módulo NO realiza cálculos, presenta información identificada por Gemini
+- ⚙️ **Integración completa**: Agregado en procesamiento paralelo e individual
+
+### ✅ **Últimas Optimizaciones v2.1.1 (2025-08-17)**
+
+**Corrección de Facturación Extranjera:**
+- 🐛 **Bug crítico corregido**: Sistema ahora procesa correctamente facturas extranjeras
+- 🔄 **Redirección inteligente**: `calcular_retencion()` redirige a función especializada para facturas internacionales
+- 🌍 **Funcionalidad completa**: Confirmado soporte para tarifas de pagos al exterior
+- 🔧 **Parámetro opcional**: Función `liquidar_factura_extranjera()` ya no requiere NIT obligatorio
+- 📚 **Documentación actualizada**: README y CHANGELOG reflejan funcionalidad de facturación internacional
+
+### ✅ **Optimizaciones Anteriores v2.1.0 (2025-08-16)**
+
+**Arquitectura Simplificada - Eliminación de Código Obsoleto:**
+- 🗑️ **Archivo obsoleto eliminado**: Removido `Clasificador/clasificacion_IVA.py` (clase `ClasificadorIVA` no utilizada)
+- 🔧 **Arquitectura IVA simplificada**: Solo función `analizar_iva()` en `clasificador.py` para análisis IVA/ReteIVA
+- 🧹 **Código más limpio**: Eliminada duplicación de lógica entre clase especializada e implementación integrada
+- ✅ **Funcionalidad preservada**: Análisis completo de IVA/ReteIVA se mantiene intacto desde el flujo principal
+- 📋 **Sin impacto**: Confirmado que eliminación no afecta funcionalidad del sistema
+
+### ✅ **Optimizaciones Anteriores v2.0.5 (2025-08-16)**
+
+**Soporte de Emails - Nueva Funcionalidad:**
+- 📧 **Archivos de email**: Soporte para extensiones .msg (Outlook) y .eml (estándar)
+- 📝 **Extracción completa**: ASUNTO, REMITENTE, DESTINATARIOS, FECHA, CUERPO del email
+- 📁 **Detección de adjuntos**: Lista archivos adjuntos sin procesarlos (metadata solamente)
+- 🔄 **Decodificación inteligente**: Manejo automático de diferentes codificaciones
+- 🆕 **Nueva dependencia**: extract-msg para procesamiento robusto de archivos .msg
+- 💾 **Guardado integrado**: Texto extraído guardado automáticamente en Results/
+
+### ✅ **Optimizaciones Anteriores v2.0.4 (2025-08-14)**
 
 **Frontend Eliminado - API REST Pura:**
 - 🗑️ **Frontend web**: Eliminada interfaz gráfica completa (carpeta `Static/`)
@@ -21,7 +60,7 @@
 - 📊 **Mejor organización**: Cada endpoint y archivo tiene propósito único y claro
 - 🔍 **Debug simplificado**: Menos rutas y archivos que monitorear y mantener
 
-# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v2.0
+# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v2.1.1
 
 > **Sistema automatizado de liquidación tributaria con Inteligencia Artificial**  
 > API REST pura para procesar facturas y calcular múltiples impuestos colombianos usando Google Gemini AI
@@ -57,13 +96,17 @@
 ### ✅ **Impuestos Soportados**
 - 🏛️ **Retención en la Fuente** - 43 conceptos con normativa exacta
 - 🎓 **Estampilla Pro Universidad Nacional** - Cálculo según tabla UVT
-- ⚡ **Procesamiento Paralelo** - Ambos impuestos simultáneamente
+- 🏢 **Contribución a Obra Pública 5%** - Tarifa fija para contratos de obra
+- 💰 **IVA y ReteIVA** - Identificación de IVA y cálculo de retención
+- 🆕 **6 Estampillas Generales** - Identificación de estampillas (Procultura, Bienestar, Adulto Mayor, Universidad Pedagógica, Francisco José de Caldas, Prodeporte)
+- ⚡ **Procesamiento Paralelo** - Múltiples impuestos simultáneamente
 
 ### 🧠 **Inteligencia Artificial**
 - **Google Gemini AI** para análisis de documentos
 - **Identificación automática** de conceptos tributarios
 - **Análisis de contratos** para estampilla universidad
 - **Detección de consorcios** y facturación extranjera
+- 🌍 **Facturación Internacional** - Soporte completo para facturas extranjeras con tarifas especiales
 
 ### 🏗️ **Arquitectura Moderna**
 - **Modular y escalable** - Fácil agregar nuevos impuestos
@@ -96,6 +139,7 @@ graph LR
 - 📄 PDF (texto y escaneos)
 - 📊 Excel (.xlsx, .xls) con preprocesamiento
 - 📝 Word (.docx, .doc)
+- 📧 **Emails (.msg, .eml)** - ✨ NUEVO v2.0.5
 - 🖼️ Imágenes (PNG, JPG) con OCR
 
 ### 💰 **2. Liquidación Tributaria Paralela**
@@ -117,7 +161,27 @@ graph TD
     H --> J
 ```
 
-### 📁 **3. Guardado Automático Organizado - ACTUALIZADO v2.3.2**
+### 🌍 **3. Facturación Internacional - CORREGIDO v2.1.1**
+
+**✅ Soporte Completo para Facturas Extranjeras:**
+- **🔄 Redirección inteligente**: Sistema detecta facturas extranjeras y usa función especializada
+- **📊 Tarifas internacionales**: Aplicación automática de tarifas para pagos al exterior
+- **🇳🇴 Normativa colombiana**: Cálculo exacto según convenios de doble tributación
+- **🔍 Análisis especializado**: Gemini identifica servicios, tecnología, regalías y otros conceptos extranjeros
+- **⚡ Procesamiento optimizado**: Flujo independiente sin conflictos con retención nacional
+
+**🔧 Corrección Implementada:**
+```python
+# ANTES: Rechazo automático
+if analisis.es_facturacion_exterior:
+    return "NO aplica retención"
+
+# AHORA: Redirección inteligente
+if analisis.es_facturacion_exterior:
+    return self.liquidar_factura_extranjera(analisis)
+```
+
+### 📁 **4. Guardado Automático Organizado - ACTUALIZADO v2.3.2**
 
 ```
 Results/
@@ -426,7 +490,73 @@ print(f"Valor estampilla: ${resultado['estampilla_universidad']['valor_estampill
 }
 ```
 
-### **🏢 Ejemplo 3: Consorcio**
+### **📧 Ejemplo 3: Procesamiento de Emails - NUEVO v2.0.5**
+
+**Input:**
+- NIT: `900123456`
+- Archivos: `cotizacion_servicios.msg`, `factura.pdf`
+
+**Texto extraído del email:**
+```
+=== INFORMACIÓN DEL EMAIL (MSG) ===
+ASUNTO: Cotización para servicios de consultoría
+REMITENTE: Juan Pérez <juan.perez@empresa.com>
+DESTINATARIOS: Para: contabilidad@universidad.edu.co
+FECHA: 2025-08-16 10:30:00
+
+============================================================
+=== CUERPO DEL EMAIL ===
+============================================================
+
+Estimados,
+
+Adjunto la cotización para los servicios de consultoría solicitados:
+- Valor: $5,000,000 COP
+- Plazo: 30 días
+- Incluye IVA
+
+Quedo atento a sus comentarios.
+
+Saludos,
+Juan Pérez
+
+============================================================
+=== ARCHIVOS ADJUNTOS ===
+============================================================
+
+1. cotizacion_detallada.pdf (245,680 bytes)
+2. terminos_condiciones.docx (128,945 bytes)
+
+============================================================
+=== FIN DEL EMAIL ===
+============================================================
+```
+
+**Response (con análisis del email + PDF adjunto procesado):**
+```json
+{
+  "procesamiento_paralelo": false,
+  "impuestos_procesados": ["RETENCION_FUENTE"],
+  "documentos_procesados": {
+    "cotizacion_servicios.msg": "EMAIL_MSG",
+    "factura.pdf": "PDF"
+  },
+  "retefuente": {
+    "aplica": true,
+    "valor_retencion": 200000,
+    "concepto": "Servicios generales (declarantes)",
+    "tarifa_retencion": 4.0,
+    "valor_factura": 5000000
+  },
+  "informacion_email": {
+    "asunto": "Cotización para servicios de consultoría",
+    "remitente": "juan.perez@empresa.com",
+    "adjuntos_detectados": 2
+  }
+}
+```
+
+### **🏢 Ejemplo 4: Consorcio**
 
 **Input:**
 - Archivos: `factura1.pdf`, `factura2.pdf`, `matriz_consorcio.xlsx`
@@ -853,10 +983,11 @@ SOFTWARE.
 2. **"NO APLICA IVA, EL VALOR DEL IVA = 0"** → Tercero no responsable o concepto exento
 3. **"Preliquidación Sin Finalizar"** → Inconsistencias o falta información
 
-### 📁 **Archivos Nuevos Creados**
+### 📁 **Archivos de IVA/ReteIVA (v2.1.0 Actualizado)**
 ```
 Clasificador/
-└── clasificacion_IVA.py      # Módulo especializado IVA con ClasificadorIVA
+└── clasificador.py           # Contiene función analizar_iva() integrada
+                              # (eliminado clasificacion_IVA.py obsoleto)
 
 Liquidador/
 └── liquidador_iva.py         # Liquidador especializado con LiquidadorIVA
@@ -916,7 +1047,7 @@ Results/YYYY-MM-DD/
 
 <div align="center">
 
-**🚀 Preliquidador Integrado v2.0 - API REST Pura**
+**🚀 Preliquidador Integrado v2.1 - API REST Pura**
 
 *Sistema automatizado de liquidación tributaria colombiana*
 

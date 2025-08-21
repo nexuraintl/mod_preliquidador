@@ -48,33 +48,38 @@ def configurar_logging():
     ✅ Formato profesional con timestamp
     ✅ Previene propagación conflictiva
     ✅ Configuración centralizada
+    ✅ FIX: Eliminación completa de handlers duplicados
     """
-    # Evitar duplicación de handlers
-    if not logging.getLogger().handlers:
-        # Crear handler único para stdout
-        handler = logging.StreamHandler(sys.stdout)
-        
-        # Formato profesional con timestamp
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        handler.setFormatter(formatter)
-        
-        # Configurar root logger
-        root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
-        root_logger.setLevel(logging.INFO)
-        
-        # Evitar propagación duplicada de frameworks
-        logging.getLogger("uvicorn").propagate = False
-        logging.getLogger("fastapi").propagate = False
-        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-        logging.getLogger("uvicorn.error").propagate = False
-        
-        print("✅ Logging profesional configurado - Sin duplicaciones")
-    else:
-        print("⚠️ Logging ya configurado, evitando duplicación")
+    # LIMPIEZA COMPLETA: Remover todos los handlers existentes
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+            handler.close()
+    
+    # CONFIGURACIÓN ÚNICA: Crear handler único para stdout
+    handler = logging.StreamHandler(sys.stdout)
+    
+    # Formato profesional con timestamp
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    
+    # Configurar root logger con handler único
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+    
+    # SILENCIAR FRAMEWORKS: Evitar propagación duplicada
+    logging.getLogger("uvicorn").propagate = False
+    logging.getLogger("fastapi").propagate = False
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").propagate = False
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    
+    print("✅ Logging CORREGIDO - Handlers duplicados eliminados")
 
 # Configurar logging profesional
 configurar_logging()
@@ -788,6 +793,11 @@ async def procesar_facturas_integrado(
                 tarea_iva = clasificador.analizar_iva(documentos_clasificados)
                 tareas_analisis.append(("iva_reteiva", tarea_iva))
             
+            # Tarea 4: Análisis de Estampillas Generales - 🆕 NUEVA FUNCIONALIDAD
+            # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
+            tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados)
+            tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
+            
             # Ejecutar todas las tareas en paralelo
             logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
             
@@ -847,7 +857,7 @@ async def procesar_facturas_integrado(
                         analisis_factura = resultados_analisis["retefuente"]
                         
                         # ✅ USAR FUNCIÓN SEGURA PARA PROCESAMIENTO PARALELO
-                        logger.info("🔄 Ejecutando liquidación segura en procesamiento paralelo...")
+                        logger.info(" Ejecutando liquidación segura en procesamiento paralelo...")
                         
                         # Crear estructura compatible
                         analisis_retefuente_data = {
@@ -866,32 +876,41 @@ async def procesar_facturas_integrado(
                             analisis_retefuente_data, nit_administrativo
                         )
                         
-                        # Crear objeto compatible con el código existente
-                        if resultado_retefuente_dict.get("calculo_exitoso", False):
-                            logger.info(f"✅ Retefuente paralela liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0):,.2f}")
+                        # 🔧 FIX: Manejar casos válidos sin retención correctamente
+                        if resultado_retefuente_dict.get("calculo_exitoso", False) or not resultado_retefuente_dict.get("error"):
+                            # Caso exitoso O caso válido sin retención
+                            valor_retencion = resultado_retefuente_dict.get('valor_retencion', 0.0)
+                            concepto = resultado_retefuente_dict.get("concepto", "")
+                            
+                            if valor_retencion > 0:
+                                logger.info(f"✅ Retefuente paralela liquidada: ${valor_retencion:,.2f}")
+                            else:
+                                logger.info(f"✅ Retefuente procesada (no aplica retención): {concepto}")
                             
                             # Crear objeto mock que simula ResultadoLiquidacion
                             resultado_retefuente = type('ResultadoLiquidacion', (object,), {
                                 'puede_liquidar': resultado_retefuente_dict.get("aplica", False),
-                                'valor_retencion': resultado_retefuente_dict.get("valor_retencion", 0.0),
-                                'concepto_aplicado': resultado_retefuente_dict.get("concepto", ""),
+                                'valor_retencion': valor_retencion,
+                                'concepto_aplicado': concepto,
                                 'tarifa_aplicada': resultado_retefuente_dict.get("tarifa_aplicada", 0.0),
                                 'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
                                 'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
                                 'mensajes_error': resultado_retefuente_dict.get("observaciones", [])
                             })()
                         else:
-                            logger.error(f"❌ Error en liquidación paralela: {resultado_retefuente_dict.get('error', 'Error desconocido')}")
+                            # Solo registrar como error si realmente hay un error técnico
+                            error_msg = resultado_retefuente_dict.get('error', 'Error técnico en liquidación')
+                            logger.error(f"❌ Error técnico en liquidación paralela: {error_msg}")
                             
-                            # Crear objeto con valores por defecto
+                            # Crear objeto con valores por defecto para errores técnicos
                             resultado_retefuente = type('ResultadoLiquidacion', (object,), {
                                 'puede_liquidar': False,
                                 'valor_retencion': 0.0,
-                                'concepto_aplicado': "Error en liquidación",
+                                'concepto_aplicado': "Error técnico en liquidación",
                                 'tarifa_aplicada': 0.0,
                                 'valor_base_retencion': 0.0,
                                 'fecha_calculo': datetime.now().isoformat(),
-                                'mensajes_error': [resultado_retefuente_dict.get('error', 'Error desconocido')]
+                                'mensajes_error': [error_msg]
                             })()
                     
                     # Convertir objeto ResultadoLiquidacion a diccionario para compatibilidad
@@ -959,6 +978,46 @@ async def procesar_facturas_integrado(
                     logger.error(f"❌ Error liquidando IVA/ReteIVA: {e}")
                     resultado_final["iva_reteiva"] = {"error": str(e), "aplica": False}
             
+            # Liquidar Estampillas Generales - 🆕 NUEVA LIQUIDACIÓN
+            if "estampillas_generales" in resultados_analisis:
+                try:
+                    from Liquidador.liquidador_estampillas_generales import (
+                        validar_formato_estampillas_generales, 
+                        presentar_resultado_estampillas_generales
+                    )
+                    
+                    analisis_estampillas = resultados_analisis["estampillas_generales"]
+                    
+                    # Validar formato de respuesta de Gemini
+                    validacion = validar_formato_estampillas_generales(analisis_estampillas)
+                    
+                    if validacion["formato_valido"]:
+                        logger.info("✅ Formato de estampillas generales válido")
+                        respuesta_validada = validacion["respuesta_validada"]
+                    else:
+                        logger.warning(f"⚠️ Formato de estampillas con errores: {len(validacion['errores'])} errores")
+                        logger.warning(f"Errores: {validacion['errores']}")
+                        respuesta_validada = validacion["respuesta_validada"]  # Usar respuesta corregida
+                    
+                    # Presentar resultado final
+                    resultado_estampillas = presentar_resultado_estampillas_generales(respuesta_validada)
+                    resultado_final.update(resultado_estampillas)
+                    
+                    # Log informativo
+                    resumen = resultado_estampillas.get("estampillas_generales", {}).get("resumen", {})
+                    completas = resumen.get("completas", 0)
+                    incompletas = resumen.get("incompletas", 0)
+                    
+                    logger.info(f"✅ Estampillas generales procesadas: {completas} completas, {incompletas} incompletas")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error liquidando estampillas generales: {e}")
+                    resultado_final["estampillas_generales"] = {
+                        "procesamiento_exitoso": False,
+                        "error": str(e),
+                        "observaciones_generales": ["Error procesando estampillas generales"]
+                    }
+            
             # Calcular resumen total
             valor_total_impuestos = 0.0
             
@@ -990,6 +1049,45 @@ async def procesar_facturas_integrado(
             logger.info(f"📄 Procesamiento individual: {impuestos_a_procesar[0]}")
             
             impuesto_unico = impuestos_a_procesar[0]
+            
+            # 🆕 EJECUTAR SIEMPRE ANÁLISIS DE ESTAMPILLAS GENERALES
+            # Las estampillas generales se analizan independientemente del impuesto principal
+            try:
+                logger.info("🎨 Ejecutando análisis de estampillas generales en procesamiento individual...")
+                analisis_estampillas_generales = await clasificador.analizar_estampillas_generales(documentos_clasificados)
+                
+                # Validar y presentar resultados de estampillas generales
+                from Liquidador.liquidador_estampillas_generales import (
+                    validar_formato_estampillas_generales, 
+                    presentar_resultado_estampillas_generales
+                )
+                
+                validacion_estampillas = validar_formato_estampillas_generales(analisis_estampillas_generales)
+                
+                if validacion_estampillas["formato_valido"]:
+                    logger.info("✅ Formato de estampillas generales válido en procesamiento individual")
+                    respuesta_estampillas_validada = validacion_estampillas["respuesta_validada"]
+                else:
+                    logger.warning(f"⚠️ Errores en formato de estampillas: {len(validacion_estampillas['errores'])}")
+                    respuesta_estampillas_validada = validacion_estampillas["respuesta_validada"]
+                
+                resultado_estampillas_individual = presentar_resultado_estampillas_generales(respuesta_estampillas_validada)
+                
+                # Log informativo
+                resumen_est = resultado_estampillas_individual.get("estampillas_generales", {}).get("resumen", {})
+                completas_est = resumen_est.get("completas", 0)
+                incompletas_est = resumen_est.get("incompletas", 0)
+                logger.info(f"✅ Estampillas generales (individual): {completas_est} completas, {incompletas_est} incompletas")
+                
+            except Exception as e:
+                logger.error(f"❌ Error en estampillas generales (individual): {e}")
+                resultado_estampillas_individual = {
+                    "estampillas_generales": {
+                        "procesamiento_exitoso": False,
+                        "error": str(e),
+                        "observaciones_generales": ["Error procesando estampillas generales en modo individual"]
+                    }
+                }
             
             if impuesto_unico == "RETENCION_FUENTE":
                 # Flujo original de retefuente mantenido
@@ -1030,32 +1128,41 @@ async def procesar_facturas_integrado(
                         analisis_retefuente_data, nit_administrativo
                     )
                     
-                    # Crear objeto compatible para el resto del código
-                    if resultado_retefuente_dict.get("calculo_exitoso", False):
-                        logger.info(f"✅ Retefuente individual liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0):,.2f}")
+                    # 🔧 FIX: Manejar casos válidos sin retención correctamente
+                    if resultado_retefuente_dict.get("calculo_exitoso", False) or not resultado_retefuente_dict.get("error"):
+                        # Caso exitoso O caso válido sin retención
+                        valor_retencion = resultado_retefuente_dict.get('valor_retencion', 0.0)
+                        concepto = resultado_retefuente_dict.get("concepto", "")
+                        
+                        if valor_retencion > 0:
+                            logger.info(f"✅ Retefuente individual liquidada: ${valor_retencion:,.2f}")
+                        else:
+                            logger.info(f"✅ Retefuente procesada (no aplica retención): {concepto}")
                         
                         # Crear objeto que simula ResultadoLiquidacion
                         resultado_liquidacion = type('ResultadoLiquidacion', (object,), {
                             'puede_liquidar': resultado_retefuente_dict.get("aplica", False),
-                            'valor_retencion': resultado_retefuente_dict.get("valor_retencion", 0.0),
-                            'concepto_aplicado': resultado_retefuente_dict.get("concepto", ""),
+                            'valor_retencion': valor_retencion,
+                            'concepto_aplicado': concepto,
                             'tarifa_aplicada': resultado_retefuente_dict.get("tarifa_aplicada", 0.0),
                             'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
                             'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
                             'mensajes_error': resultado_retefuente_dict.get("observaciones", [])
                         })()
                     else:
-                        logger.error(f"❌ Error en liquidación individual: {resultado_retefuente_dict.get('error', 'Error desconocido')}")
+                        # Solo registrar como error si realmente hay un error técnico
+                        error_msg = resultado_retefuente_dict.get('error', 'Error técnico en liquidación')
+                        logger.error(f"❌ Error técnico en liquidación individual: {error_msg}")
                         
-                        # Crear objeto con valores por defecto
+                        # Crear objeto con valores por defecto para errores técnicos
                         resultado_liquidacion = type('ResultadoLiquidacion', (object,), {
                             'puede_liquidar': False,
                             'valor_retencion': 0.0,
-                            'concepto_aplicado': "Error en liquidación",
+                            'concepto_aplicado': "Error técnico en liquidación",
                             'tarifa_aplicada': 0.0,
                             'valor_base_retencion': 0.0,
                             'fecha_calculo': datetime.now().isoformat(),
-                            'mensajes_error': [resultado_retefuente_dict.get('error', 'Error desconocido')]
+                            'mensajes_error': [error_msg]
                         })()
                     
                     # Convertir objeto ResultadoLiquidacion a dict
@@ -1079,6 +1186,9 @@ async def procesar_facturas_integrado(
                         "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
                         "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
                     }
+                    
+                    # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
+                    resultado_final.update(resultado_estampillas_individual)
             
             elif impuesto_unico == "IVA_RETEIVA":
                 # Procesamiento individual de IVA - ✅ NUEVO FLUJO
@@ -1096,6 +1206,9 @@ async def procesar_facturas_integrado(
                     "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
                     "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"}
                 }
+                
+                # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
+                resultado_final.update(resultado_estampillas_individual)
             
             else:
                 # Otros impuestos individuales (estampilla, obra pública)
@@ -1112,6 +1225,9 @@ async def procesar_facturas_integrado(
                     "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
                     "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
                 }
+                
+                # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
+                resultado_final.update(resultado_estampillas_individual)
         
         # =================================
         # PASO 6: CONSOLIDACIÓN Y GUARDADO FINAL

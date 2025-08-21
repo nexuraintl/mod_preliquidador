@@ -34,8 +34,8 @@ from .prompt_clasificador import (
     PROMPT_ANALISIS_CONSORCIO,
     PROMPT_ANALISIS_FACTURA_EXTRANJERA,
     PROMPT_ANALISIS_CONSORCIO_EXTRANJERO,
-    PROMPT_ANALISIS_ESTAMPILLA,
-    PROMPT_ANALISIS_IVA  # ✅ NUEVO PROMPT IVA
+    PROMPT_ANALISIS_IVA,  # ✅ NUEVO PROMPT IVA
+    PROMPT_ANALISIS_ESTAMPILLAS_GENERALES  # 🆕 NUEVO PROMPT ESTAMPILLAS GENERALES
 )
 
 # Importar procesador de consorcios
@@ -1191,4 +1191,193 @@ class ProcesadorGemini:
             },
             "tipo_procesamiento": "IVA_FALLBACK",
             "error": error_msg
+        }
+    
+    # ===============================
+    # 🆕 NUEVA FUNCIONALIDAD: ANÁLISIS DE ESTAMPILLAS GENERALES
+    # ===============================
+    
+    async def analizar_estampillas_generales(self, documentos_clasificados: Dict[str, Dict]) -> Dict[str, Any]:
+        """
+        🆕 Nueva funcionalidad: Análisis de 6 Estampillas Generales.
+        
+        Analiza documentos para identificar información de estampillas:
+        - Procultura
+        - Bienestar
+        - Adulto Mayor
+        - Prouniversidad Pedagógica
+        - Francisco José de Caldas
+        - Prodeporte
+        
+        Solo identificación, NO cálculos.
+        
+        Args:
+            documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
+            
+        Returns:
+            Dict[str, Any]: Análisis completo de estampillas generales
+            
+        Raises:
+            ValueError: Si hay error en el procesamiento
+        """
+        logger.info("🎨 Analizando 6 estampillas generales con Gemini")
+        
+        try:
+            # Extraer documentos por categoría
+            factura_texto = ""
+            rut_texto = ""
+            anexos_texto = ""
+            cotizaciones_texto = ""
+            anexo_contrato = ""
+            
+            for nombre_archivo, info in documentos_clasificados.items():
+                if info["categoria"] == "FACTURA":
+                    factura_texto = info["texto"]
+                    logger.info(f"📄 Factura encontrada para análisis estampillas: {nombre_archivo}")
+                elif info["categoria"] == "RUT":
+                    rut_texto = info["texto"]
+                    logger.info(f"🏛️ RUT encontrado para análisis estampillas: {nombre_archivo}")
+                elif info["categoria"] == "ANEXO":
+                    anexos_texto += f"\n\n--- ANEXO: {nombre_archivo} ---\n{info['texto']}"
+                elif info["categoria"] == "COTIZACION":
+                    cotizaciones_texto += f"\n\n--- COTIZACIÓN: {nombre_archivo} ---\n{info['texto']}"
+                elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
+                    anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
+            
+            if not factura_texto:
+                raise ValueError("No se encontró una FACTURA en los documentos para análisis de estampillas")
+            
+            # Generar prompt especializado de estampillas generales
+            prompt = PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(
+                factura_texto=factura_texto,
+                rut_texto=rut_texto,
+                anexos_texto=anexos_texto,
+                cotizaciones_texto=cotizaciones_texto,
+                anexo_contrato=anexo_contrato
+            )
+            
+            # Llamar a Gemini
+            respuesta = await self._llamar_gemini(prompt)
+            logger.info(f"🧠 Respuesta análisis estampillas: {respuesta[:500]}...")
+            
+            # Limpiar respuesta
+            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
+            
+            # Parsear JSON
+            resultado = json.loads(respuesta_limpia)
+            
+            # Guardar respuesta de análisis en Results
+            await self._guardar_respuesta("analisis_estampillas_generales.json", resultado)
+            
+            # Validar estructura mínima requerida
+            if "estampillas_generales" not in resultado:
+                logger.warning("⚠️ Campo 'estampillas_generales' no encontrado en respuesta")
+                resultado["estampillas_generales"] = self._obtener_estampillas_default()
+            
+            if "resumen_analisis" not in resultado:
+                logger.warning("⚠️ Campo 'resumen_analisis' no encontrado en respuesta")
+                resultado["resumen_analisis"] = self._obtener_resumen_default(resultado.get("estampillas_generales", []))
+            
+            # Extraer información clave para logging
+            estampillas_data = resultado.get("estampillas_generales", [])
+            resumen_data = resultado.get("resumen_analisis", {})
+            
+            total_identificadas = resumen_data.get("total_estampillas_identificadas", 0)
+            completas = resumen_data.get("estampillas_completas", 0)
+            incompletas = resumen_data.get("estampillas_incompletas", 0)
+            
+            logger.info(f"✅ Análisis estampillas completado: {total_identificadas} identificadas, {completas} completas, {incompletas} incompletas")
+            
+            return resultado
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Error parseando JSON de análisis estampillas: {e}")
+            logger.error(f"Respuesta problemática: {respuesta}")
+            return self._estampillas_fallback("Error parseando respuesta JSON de Gemini")
+        except Exception as e:
+            logger.error(f"❌ Error en análisis de estampillas: {e}")
+            return self._estampillas_fallback(str(e))
+    
+    def _obtener_estampillas_default(self) -> List[Dict[str, Any]]:
+        """
+        Obtiene estructura por defecto para las 6 estampillas generales.
+        
+        Returns:
+            List con estructura por defecto de las 6 estampillas
+        """
+        estampillas_nombres = [
+            "Procultura",
+            "Bienestar", 
+            "Adulto Mayor",
+            "Prouniversidad Pedagógica",
+            "Francisco José de Caldas",
+            "Prodeporte"
+        ]
+        
+        return [
+            {
+                "nombre_estampilla": nombre,
+                "porcentaje": None,
+                "valor": None,
+                "estado": "no_aplica_impuesto",
+                "texto_referencia": None,
+                "observaciones": "Error en procesamiento - no se pudo analizar"
+            }
+            for nombre in estampillas_nombres
+        ]
+    
+    def _obtener_resumen_default(self, estampillas: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Genera resumen por defecto basado en lista de estampillas.
+        
+        Args:
+            estampillas: Lista de estampillas procesadas
+            
+        Returns:
+            Dict con resumen por defecto
+        """
+        total = len(estampillas)
+        completas = sum(1 for e in estampillas if e.get("estado") == "preliquidacion_completa")
+        incompletas = sum(1 for e in estampillas if e.get("estado") == "preliquidacion_sin_finalizar")
+        no_aplican = sum(1 for e in estampillas if e.get("estado") == "no_aplica_impuesto")
+        
+        return {
+            "total_estampillas_identificadas": completas + incompletas,
+            "estampillas_completas": completas,
+            "estampillas_incompletas": incompletas,
+            "estampillas_no_aplican": no_aplican,
+            "documentos_revisados": ["FACTURA", "ANEXOS", "ANEXO_CONTRATO", "RUT"]
+        }
+    
+    def _estampillas_fallback(self, error_msg: str = "Error procesando estampillas") -> Dict[str, Any]:
+        """
+        Respuesta de emergencia cuando falla el procesamiento de estampillas.
+        
+        Args:
+            error_msg: Mensaje de error
+            
+        Returns:
+            Dict[str, Any]: Respuesta básica de estampillas
+        """
+        logger.warning(f"Usando fallback de estampillas: {error_msg}")
+        
+        estampillas_default = self._obtener_estampillas_default()
+        
+        return {
+            "estampillas_generales": estampillas_default,
+            "resumen_analisis": {
+                "total_estampillas_identificadas": 0,
+                "estampillas_completas": 0,
+                "estampillas_incompletas": 0,
+                "estampillas_no_aplican": 6,
+                "documentos_revisados": ["ERROR"]
+            },
+            "tipo_procesamiento": "ESTAMPILLAS_FALLBACK",
+            "error": error_msg,
+            "observaciones": [
+                f"Error procesando estampillas: {error_msg}",
+                "Por favor revise manualmente los documentos",
+                "Verifique si los documentos contienen información de estampillas",
+                "Busque menciones de: Procultura, Bienestar, Adulto Mayor, Universidad Pedagógica, Caldas, Prodeporte"
+            ]
         }

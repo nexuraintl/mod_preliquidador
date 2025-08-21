@@ -809,117 +809,7 @@ def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, ane
         "observaciones": []
     }}
     """
-def PROMPT_ANALISIS_ESTAMPILLA(factura_texto: str, rut_texto: str, anexos_texto: str, 
-                               cotizaciones_texto: str, anexo_contrato: str, configuracion_estampilla: dict) -> str:
-    """
-    Genera el prompt para analizar contratos de estampilla pro universidad nacional.
-    
-    Args:
-        factura_texto: Texto extraído de la factura principal
-        rut_texto: Texto del RUT (si está disponible)
-        anexos_texto: Texto de anexos adicionales
-        cotizaciones_texto: Texto de cotizaciones
-        anexo_contrato: Texto del anexo de concepto de contrato
-        configuracion_estampilla: Configuración de estampilla desde config.py
-        
-    Returns:
-        str: Prompt formateado para enviar a Gemini
-    """
-    
-    return f"""
-Eres un experto contador colombiano especializado en ESTAMPILLA PRO UNIVERSIDAD NACIONAL.
 
-
-CONFIGURACIÓN DE ESTAMPILLA UNIVERSIDAD NACIONAL:
-
-NITs VÁLIDOS (solo estos NITs aplican estampilla):
-{json.dumps(configuracion_estampilla['nits_validos'], indent=2, ensure_ascii=False)}
-
-TERCEROS QUE ADMINISTRAN RECURSOS PÚBLICOS:
-{json.dumps(configuracion_estampilla['terceros_recursos_publicos'], indent=2, ensure_ascii=False)}
-
-OBJETOS DE CONTRATO QUE APLICAN:
-{json.dumps(configuracion_estampilla['objetos_contrato'], indent=2, ensure_ascii=False)}
-
-RANGOS UVT Y TARIFAS:
-{json.dumps(configuracion_estampilla['rangos_uvt'], indent=2, ensure_ascii=False)}
-
-UVT 2025: ${configuracion_estampilla['uvt_2025']:,}
-
-DOCUMENTOS DISPONIBLES:
-
-FACTURA (DOCUMENTO PRINCIPAL):
-{factura_texto}
-
-RUT (si está disponible):
-{rut_texto if rut_texto else "NO DISPONIBLE"}
-
-ANEXOS (DETALLES ADICIONALES):
-{anexos_texto if anexos_texto else "NO DISPONIBLES"}
-
-COTIZACIONES (PROPUESTAS COMERCIALES):
-{cotizaciones_texto if cotizaciones_texto else "NO DISPONIBLES"}
-
-ANEXO CONCEPTO CONTRATO (OBJETO DEL CONTRATO):
-{anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
-
-INSTRUCCIONES CRÍTICAS:
-
-1. **IDENTIFICACIÓN DEL TERCERO**:
-   - Busca el nombre exacto del tercero/beneficiario en la factura
-   - Verifica si aparece en la lista de terceros que administran recursos públicos
-   - Busca indicadores de consorcio (palabra "CONSORCIO" en el nombre)
-   - Si es consorcio, identifica consorciados y porcentajes de participación
-
-2. **OBJETO DEL CONTRATO**:
-   - Analiza la descripción del servicio/producto en la factura
-   - Revisa anexos y cotizaciones para detalles del objeto
-   - Clasifica según los tipos: contrato_obra, interventoria, servicios_conexos_obra
-   - Busca palabras clave específicas para cada tipo
-
-3. **VALOR DEL CONTRATO**:
-   - Identifica el valor total del contrato (puede ser diferente al valor de la factura)
-   - Si solo aparece un porcentaje (ej: "20% del contrato por $50,000,000"), calcula el va   lor total
-   - Convierte a UVT: valor_pesos / {configuracion_estampilla['uvt_2025']}
-   - Si no puedes identificar el valor, marca como null
-
-4. **VALIDACIONES**:
-   - ¿El tercero administra recursos públicos?
-   - ¿El objeto es obra, interventoría o servicios conexos?
-   - ¿Se puede identificar el valor del contrato?
-   - ¿Hay información suficiente para aplicar estampilla?
-
-RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
-{{
-    "tercero_identificado": {{
-        "nombre": "NOMBRE EXACTO DEL TERCERO",
-        "es_consorcio": true/false,
-        "administra_recursos_publicos": true/false,
-        "consorciados": [
-            {{
-                "nombre": "NOMBRE CONSORCIADO",
-                "participacion_porcentaje": 0.0
-            }}
-        ]
-    }},
-    "objeto_contrato": {{
-        "tipo": "contrato_obra" | "interventoria" | "servicios_conexos_obra" | "no_identificado",
-        "aplica_estampilla": true/false,
-        "palabras_clave_encontradas": ["palabra1", "palabra2"],
-        "descripcion": "DESCRIPCIÓN DEL OBJETO DEL CONTRATO"
-    }},
-    "valor_contrato": {{
-        "valor_total_pesos": 0.0,
-        "valor_total_uvt": 0.0,
-        "metodo_identificacion": "directo" | "porcentaje_calculado" | "no_identificado",
-        "texto_referencia": "TEXTO DE DONDE SE EXTRAJO EL VALOR"
-    }},
-    "observaciones": [
-        "Observación 1",
-        "Observación 2"
-    ]
-}}
-"""
 
 def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_texto: str, anexos_texto: str, 
                                                        cotizaciones_texto: str, anexo_contrato: str, 
@@ -1345,6 +1235,219 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 • Si es extranjero y IVA ≠ 19% → "Preliquidación Sin Finalizar"
 • Solo proceder con ReteIVA si el IVA fue identificado correctamente
 
+    """
+
+def PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(factura_texto: str, rut_texto: str, anexos_texto: str, 
+                                             cotizaciones_texto: str, anexo_contrato: str) -> str:
+    """
+    🆕 NUEVO PROMPT: Análisis de 6 Estampillas Generales
+    
+    Analiza documentos para identificar información de estampillas:
+    - Procultura
+    - Bienestar
+    - Adulto Mayor
+    - Prouniversidad Pedagógica
+    - Francisco José de Caldas
+    - Prodeporte
+    
+    Estas estampillas aplican para TODOS los NITs administrativos.
+    Solo identifica información sin realizar cálculos.
+    
+    Args:
+        factura_texto: Texto extraído de la factura principal
+        rut_texto: Texto del RUT (si está disponible)
+        anexos_texto: Texto de anexos adicionales
+        cotizaciones_texto: Texto de cotizaciones
+        anexo_contrato: Texto del anexo de concepto de contrato
+        
+    Returns:
+        str: Prompt formateado para enviar a Gemini
+    """
+    
+    return f"""
+Eres un experto contador colombiano especializado en ESTAMPILLAS GENERALES que trabaja para la FIDUCIARIA FIDUCOLDEX.
+Tu tarea es identificar información sobre 6 estampillas específicas en los documentos adjuntos.
+
+🎯 ESTAMPILLAS A IDENTIFICAR:
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+1. 🎨 **PROCULTURA** - Estampilla Pro Cultura
+2. 🏥 **BIENESTAR** - Estampilla Pro Bienestar
+3. 👴 **ADULTO MAYOR** - Estampilla Pro Adulto Mayor
+4. 🎓 **PROUNIVERSIDAD PEDAGÓGICA** - Estampilla Pro Universidad Pedagógica
+5. 🔬 **FRANCISCO JOSÉ DE CALDAS** - Estampilla Francisco José de Caldas
+6. ⚽ **PRODEPORTE** - Estampilla Pro Deporte
+
+📋 ESTRATEGIA DE ANÁLISIS SECUENCIAL:
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+🔄 **ANÁLISIS ACUMULATIVO** - Revisar TODOS los documentos en este orden:
+1. 📄 **FACTURA PRINCIPAL** - Buscar desglose de estampillas
+2. 📋 **ANEXOS** - Información adicional sobre estampillas
+3. 📜 **ANEXO CONTRATO** - Referencias a estampillas aplicables
+4. 🏛️ **RUT** - Validación del tercero
+
+⚠️ **IMPORTANTE**: Revisar TODOS los documentos y consolidar información encontrada
+
+DOCUMENTOS DISPONIBLES:
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+FACTURA PRINCIPAL:
+{factura_texto}
+
+RUT DEL TERCERO:
+{rut_texto if rut_texto else "NO DISPONIBLE"}
+
+ANEXOS ADICIONALES:
+{anexos_texto if anexos_texto else "NO DISPONIBLES"}
+
+COTIZACIONES:
+{cotizaciones_texto if cotizaciones_texto else "NO DISPONIBLES"}
+
+ANEXO CONCEPTO CONTRATO:
+{anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
+
+INSTRUCCIONES CRÍTICAS:
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+1. 🔍 **IDENTIFICACIÓN DE ESTAMPILLAS**:
+   • Busca menciones EXACTAS de los nombres de las estampillas
+   • Identifica variaciones comunes:
+     - "Pro Cultura" / "Procultura" / "Estampilla ProCultura"/ PROCULTURA
+     - "Pro Bienestar" /  "Estampilla Bienestar"
+     - "Adulto Mayor" / "Pro Adulto Mayor" / "Estampilla Adulto Mayor"
+     - "Universidad Pedagógica" / "Estampilla Pro Universidad Pedagógica" 
+     - "Francisco José de Caldas" / "FJDC" / Estampilla Francisco José de Caldas
+     - "Pro Deporte" / "Prodeporte" / "Estampilla ProDeporte"
+
+2. 💰 **EXTRACCIÓN DE INFORMACIÓN**:
+   Para cada estampilla identificada, extrae:
+   • **Nombre exacto** como aparece en el documento
+   • **Porcentaje** (ej: 1.5 , 2.0 , 0.5 , 1.1)
+   • **Valor a deducir** en pesos colombianos
+   • **Texto de referencia** donde se encontró la información
+
+3. 📊 **VALIDACIÓN DE INFORMACIÓN COMPLETA**:
+   • **INFORMACIÓN COMPLETA**: Nombre + Porcentaje + Valor → Estado: "preliquidacion_completa"
+   • **INFORMACIÓN INCOMPLETA**: Solo nombre o porcentaje sin valor → Estado: "preliquidacion_sin_finalizar"
+   • **NO IDENTIFICADA**: No se encuentra información → Estado: "no_aplica_impuesto"
+
+4. 🔄 **CONSOLIDACIÓN ACUMULATIVA**:
+   • Si FACTURA tiene info de 3 estampillas Y ANEXOS tienen info de 2 adicionales
+   • RESULTADO: Mostrar las 5 estampillas consolidadas
+   • Si hay duplicados, priorizar información más detallada
+
+5. 📝 **OBSERVACIONES ESPECÍFICAS**:
+   • Si encuentra estampillas mencionadas pero sin información completa
+   • Si hay inconsistencias entre documentos
+   • Si faltan detalles específicos de porcentaje o valor
+
+EJEMPLOS DE IDENTIFICACIÓN:
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+✅ **EJEMPLO 1 - INFORMACIÓN COMPLETA**:
+Factura: "Estampilla Pro Cultura 1.5% = $150,000"
+Resultado: {{
+  "nombre_estampilla": "Procultura",
+  "porcentaje": 1.5,
+  "valor": 150000,
+  "estado": "preliquidacion_completa"
+}}
+
+⚠️ **EJEMPLO 2 - INFORMACIÓN INCOMPLETA**:
+Anexo: "Aplica estampilla Pro Bienestar"
+Resultado: {{
+  "nombre_estampilla": "Bienestar",
+  "porcentaje": null,
+  "valor": null,
+  "estado": "preliquidacion_sin_finalizar",
+  "observaciones": "Se menciona la estampilla pero no se encontró porcentaje ni valor"
+}}
+
+❌ **EJEMPLO 3 - NO IDENTIFICADA**:
+Resultado: {{
+  "nombre_estampilla": "Prodeporte",
+  "porcentaje": null,
+  "valor": null,
+  "estado": "no_aplica_impuesto",
+  "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+}}
+
+IMPORTANTE:
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+• NO realizar cálculos, solo identificar información
+• Si una estampilla se menciona múltiples veces, consolidar la información más completa
+• Priorizar información de FACTURA, luego ANEXOS, luego ANEXO CONTRATO
+• Si no encuentra información de alguna estampilla, marcar como "no_aplica_impuesto"
+• Ser específico en observaciones cuando falta información
+
+RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
+{{
+    "estampillas_generales": [
+        {{
+            "nombre_estampilla": "Procultura",
+            "porcentaje": 1.5,
+            "valor": 150000,
+            "estado": "preliquidacion_completa",
+            "texto_referencia": "Factura línea 15: Estampilla Pro Cultura 1.5% = $150,000",
+            "observaciones": null
+        }},
+        {{
+            "nombre_estampilla": "Bienestar",
+            "porcentaje": null,
+            "valor": null,
+            "estado": "preliquidacion_sin_finalizar",
+            "texto_referencia": "Anexo página 2: Aplica estampilla Pro Bienestar",
+            "observaciones": "Se menciona la estampilla pero no se encontró porcentaje ni valor específico"
+        }},
+        {{
+            "nombre_estampilla": "Adulto Mayor",
+            "porcentaje": null,
+            "valor": null,
+            "estado": "no_aplica_impuesto",
+            "texto_referencia": null,
+            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+        }},
+        {{
+            "nombre_estampilla": "Prouniversidad Pedagógica",
+            "porcentaje": null,
+            "valor": null,
+            "estado": "no_aplica_impuesto",
+            "texto_referencia": null,
+            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+        }},
+        {{
+            "nombre_estampilla": "Francisco José de Caldas",
+            "porcentaje": null,
+            "valor": null,
+            "estado": "no_aplica_impuesto",
+            "texto_referencia": null,
+            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+        }},
+        {{
+            "nombre_estampilla": "Prodeporte",
+            "porcentaje": null,
+            "valor": null,
+            "estado": "no_aplica_impuesto",
+            "texto_referencia": null,
+            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+        }}
+    ],
+    "resumen_analisis": {{
+        "total_estampillas_identificadas": 2,
+        "estampillas_completas": 1,
+        "estampillas_incompletas": 1,
+        "estampillas_no_aplican": 4,
+        "documentos_revisados": ["FACTURA", "ANEXOS", "ANEXO_CONTRATO", "RUT"]
+    }}
+}}
+
+🔥 **CRÍTICO - CONDICIONES EXACTAS**:
+• SIEMPRE incluir las 6 estampillas en el resultado (aunque sea como "no_aplica_impuesto")
+• Estados válidos: "preliquidacion_completa", "preliquidacion_sin_finalizar", "no_aplica_impuesto"
+• Si encuentra información parcial, marcar como "preliquidacion_sin_finalizar" con observaciones específicas
+• Consolidar información de TODOS los documentos de forma acumulativa
+• Especificar claramente dónde se encontró cada información
+• No inventar valores, solo usar información explícita en los documentos
     """
 
 if __name__ == '__main__':
