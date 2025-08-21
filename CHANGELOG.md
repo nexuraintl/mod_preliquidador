@@ -1,5 +1,39 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [2.4.0] - 2025-08-21
+
+### 🔧 Cambiado
+- **Estructura JSON reorganizada**: Todos los impuestos ahora están agrupados bajo la clave `"impuestos"`
+  - 📊 **Nueva estructura**: `resultado_final["impuestos"]["retefuente"]`, `resultado_final["impuestos"]["iva_reteiva"]`, etc.
+  - 🏗️ **Organización mejorada**: Separación clara entre metadatos del procesamiento e información de impuestos
+  - 🔄 **Compatibilidad preservada**: Información completa de cada impuesto se mantiene exactamente igual
+  - ✅ **Cálculo actualizado**: `resumen_total` ahora usa las nuevas rutas para calcular totales
+  - 📝 **Estructura consistente**: Tanto procesamiento paralelo como individual usan la misma organización
+
+### 🆕 Estructura JSON Nueva
+```json
+{
+  "procesamiento_paralelo": true,
+  "impuestos_procesados": [...],
+  "impuestos": {
+    "retefuente": {...},
+    "iva_reteiva": {...},
+    "estampilla_universidad": {...},
+    "contribucion_obra_publica": {...},
+    "estampillas_generales": {...}
+  },
+  "resumen_total": {...}
+}
+```
+
+### 🔍 Beneficios
+- **API más organizada**: Todos los impuestos en una sección específica
+- **Escalabilidad mejorada**: Fácil adición de nuevos impuestos sin modificar estructura raíz
+- **Claridad de datos**: Separación lógica entre metadatos de procesamiento e información fiscal
+- **Mantenimiento simplificado**: Cálculos y acceso a datos de impuestos centralizados
+
+---
+
 ## [2.3.1] - 2025-08-20
 
 ### 🐛 Corregido

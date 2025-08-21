@@ -844,7 +844,8 @@ async def procesar_facturas_integrado(
                 "nit_administrativo": nit_administrativo,
                 "nombre_entidad": nombre_entidad,
                 "timestamp": datetime.now().isoformat(),
-                "version": "2.0.0"
+                "version": "2.4.0",
+                "impuestos": {}  # 🆕 NUEVA ESTRUCTURA PARA TODOS LOS IMPUESTOS
             }
             
             # Liquidar Retefuente
@@ -913,9 +914,9 @@ async def procesar_facturas_integrado(
                                 'mensajes_error': [error_msg]
                             })()
                     
-                    # Convertir objeto ResultadoLiquidacion a diccionario para compatibilidad
+                    # ✅ ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["retefuente"]
                     if hasattr(resultado_retefuente, 'valor_retencion'):
-                        resultado_final["retefuente"] = {
+                        resultado_final["impuestos"]["retefuente"] = {
                             "aplica": resultado_retefuente.puede_liquidar,
                             "valor_retencion": resultado_retefuente.valor_retencion,
                             "concepto": resultado_retefuente.concepto_aplicado,
@@ -927,11 +928,11 @@ async def procesar_facturas_integrado(
                         logger.info(f"✅ Retefuente liquidada: ${resultado_retefuente.valor_retencion:,.2f}")
                     else:
                         # Es un diccionario (resultado de consorcio)
-                        resultado_final["retefuente"] = resultado_retefuente
+                        resultado_final["impuestos"]["retefuente"] = resultado_retefuente
                         logger.info(f"✅ Retefuente liquidada: ${resultado_retefuente.get('valor_retencion', 0):,.2f}")
                 except Exception as e:
                     logger.error(f"❌ Error liquidando retefuente: {e}")
-                    resultado_final["retefuente"] = {"error": str(e), "aplica": False}
+                    resultado_final["impuestos"]["retefuente"] = {"error": str(e), "aplica": False}
             
             # Liquidar Impuestos Especiales (Estampilla + Obra Pública)
             if "impuestos_especiales" in resultados_analisis and (aplica_estampilla or aplica_obra_publica):
@@ -942,21 +943,21 @@ async def procesar_facturas_integrado(
                     analisis_especiales = resultados_analisis["impuestos_especiales"]
                     resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, nit_administrativo)
                     
-                    # Separar resultados por impuesto
+                    # ✅ ASIGNAR A NUEVA ESTRUCTURA: Separar resultados por impuesto
                     if aplica_estampilla and "estampilla_universidad" in resultado_estampilla:
-                        resultado_final["estampilla_universidad"] = resultado_estampilla["estampilla_universidad"]
+                        resultado_final["impuestos"]["estampilla_universidad"] = resultado_estampilla["estampilla_universidad"]
                         logger.info(f"✅ Estampilla liquidada: ${resultado_estampilla['estampilla_universidad'].get('valor_estampilla', 0):,.2f}")
                     
                     if aplica_obra_publica and "contribucion_obra_publica" in resultado_estampilla:
-                        resultado_final["contribucion_obra_publica"] = resultado_estampilla["contribucion_obra_publica"]
+                        resultado_final["impuestos"]["contribucion_obra_publica"] = resultado_estampilla["contribucion_obra_publica"]
                         logger.info(f"✅ Obra pública liquidada: ${resultado_estampilla['contribucion_obra_publica'].get('valor_contribucion', 0):,.2f}")
                         
                 except Exception as e:
                     logger.error(f"❌ Error liquidando impuestos especiales: {e}")
                     if aplica_estampilla:
-                        resultado_final["estampilla_universidad"] = {"error": str(e), "aplica": False}
+                        resultado_final["impuestos"]["estampilla_universidad"] = {"error": str(e), "aplica": False}
                     if aplica_obra_publica:
-                        resultado_final["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
+                        resultado_final["impuestos"]["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
             
             # Liquidar IVA y ReteIVA - ✅ NUEVA LIQUIDACIÓN
             if "iva_reteiva" in resultados_analisis and aplica_iva:
@@ -967,16 +968,16 @@ async def procesar_facturas_integrado(
                     analisis_iva = resultados_analisis["iva_reteiva"]
                     resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
                     
-                    # Convertir a formato compatible
+                    # ✅ ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["iva_reteiva"]
                     from Liquidador.liquidador_iva import convertir_resultado_a_dict
-                    resultado_final["iva_reteiva"] = convertir_resultado_a_dict(resultado_iva_completo)
+                    resultado_final["impuestos"]["iva_reteiva"] = convertir_resultado_a_dict(resultado_iva_completo)
                     
                     logger.info(f"✅ IVA identificado: ${resultado_iva_completo.valor_iva_identificado:,.2f}")
                     logger.info(f"✅ ReteIVA liquidada: ${resultado_iva_completo.valor_reteiva:,.2f}")
                     
                 except Exception as e:
                     logger.error(f"❌ Error liquidando IVA/ReteIVA: {e}")
-                    resultado_final["iva_reteiva"] = {"error": str(e), "aplica": False}
+                    resultado_final["impuestos"]["iva_reteiva"] = {"error": str(e), "aplica": False}
             
             # Liquidar Estampillas Generales - 🆕 NUEVA LIQUIDACIÓN
             if "estampillas_generales" in resultados_analisis:
@@ -1001,7 +1002,9 @@ async def procesar_facturas_integrado(
                     
                     # Presentar resultado final
                     resultado_estampillas = presentar_resultado_estampillas_generales(respuesta_validada)
-                    resultado_final.update(resultado_estampillas)
+                    
+                    # ✅ ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
+                    resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas.get("estampillas_generales", {})
                     
                     # Log informativo
                     resumen = resultado_estampillas.get("estampillas_generales", {}).get("resumen", {})
@@ -1012,30 +1015,31 @@ async def procesar_facturas_integrado(
                     
                 except Exception as e:
                     logger.error(f"❌ Error liquidando estampillas generales: {e}")
-                    resultado_final["estampillas_generales"] = {
+                    resultado_final["impuestos"]["estampillas_generales"] = {
                         "procesamiento_exitoso": False,
                         "error": str(e),
                         "observaciones_generales": ["Error procesando estampillas generales"]
                     }
             
-            # Calcular resumen total
+            # ✅ CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
             valor_total_impuestos = 0.0
             
-            if "retefuente" in resultado_final and isinstance(resultado_final["retefuente"], dict):
-                valor_total_impuestos += resultado_final["retefuente"].get("valor_retencion", 0)
+            # Usar nuevas rutas: resultado_final["impuestos"][nombre_impuesto]
+            if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
+                valor_total_impuestos += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
             
-            if "estampilla_universidad" in resultado_final and isinstance(resultado_final["estampilla_universidad"], dict):
-                valor_total_impuestos += resultado_final["estampilla_universidad"].get("valor_estampilla", 0)
+            if "estampilla_universidad" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["estampilla_universidad"], dict):
+                valor_total_impuestos += resultado_final["impuestos"]["estampilla_universidad"].get("valor_estampilla", 0)
             
-            if "contribucion_obra_publica" in resultado_final and isinstance(resultado_final["contribucion_obra_publica"], dict):
-                valor_total_impuestos += resultado_final["contribucion_obra_publica"].get("valor_contribucion", 0)
+            if "contribucion_obra_publica" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["contribucion_obra_publica"], dict):
+                valor_total_impuestos += resultado_final["impuestos"]["contribucion_obra_publica"].get("valor_contribucion", 0)
             
-            if "iva_reteiva" in resultado_final and isinstance(resultado_final["iva_reteiva"], dict):
-                valor_total_impuestos += resultado_final["iva_reteiva"].get("valor_reteiva", 0)
+            if "iva_reteiva" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["iva_reteiva"], dict):
+                valor_total_impuestos += resultado_final["impuestos"]["iva_reteiva"].get("valor_reteiva", 0)
             
             resultado_final["resumen_total"] = {
                 "valor_total_impuestos": valor_total_impuestos,
-                "impuestos_liquidados": [imp for imp in impuestos_a_procesar if imp.lower().replace("_", "") in [k.lower().replace("_", "") for k in resultado_final.keys()]],
+                "impuestos_liquidados": [imp for imp in impuestos_a_procesar if imp.lower().replace("_", "") in [k.lower().replace("_", "") for k in resultado_final["impuestos"].keys()]],
                 "procesamiento_exitoso": True
             }
             
@@ -1099,13 +1103,33 @@ async def procesar_facturas_integrado(
                 liquidador_retencion = LiquidadorRetencion()
                 if es_consorcio:
                     resultado_liquidacion = analisis_factura  # Ya viene liquidado como dict
+                    # ✅ NUEVA ESTRUCTURA: Consorcio Individual
                     resultado_final = {
                         "procesamiento_paralelo": False,
                         "impuestos_procesados": ["RETENCION_FUENTE"],
-                        **resultado_liquidacion,
-                        "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                        "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
-                        "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
+                        "nit_administrativo": nit_administrativo,
+                        "nombre_entidad": nombre_entidad,
+                        "timestamp": datetime.now().isoformat(),
+                        "version": "2.4.0",
+                        "impuestos": {
+                            "retefuente": resultado_liquidacion,  # Viene como dict del consorcio
+                            "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
+                            "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
+                            "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
+                        },
+                        # 📊 COMPATIBILIDAD: Incluir campos legacy del consorcio
+                        **{k: v for k, v in resultado_liquidacion.items() if k not in ["retefuente", "estampilla_universidad", "contribucion_obra_publica", "iva_reteiva"]}
+                    }
+                    
+                    # ✅ CALCULAR RESUMEN TOTAL PARA CONSORCIO
+                    valor_total_consorcio = 0.0
+                    if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
+                        valor_total_consorcio += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
+                    
+                    resultado_final["resumen_total"] = {
+                        "valor_total_impuestos": valor_total_consorcio,
+                        "impuestos_liquidados": ["RETENCION_FUENTE"] if valor_total_consorcio > 0 else [],
+                        "procesamiento_exitoso": True
                     }
                 else:
                     # ✅ USAR FUNCIÓN SEGURA PARA PROCESAMIENTO INDIVIDUAL
@@ -1165,30 +1189,48 @@ async def procesar_facturas_integrado(
                             'mensajes_error': [error_msg]
                         })()
                     
-                    # Convertir objeto ResultadoLiquidacion a dict
+                    # ✅ NUEVA ESTRUCTURA: Crear resultado con estructura "impuestos"
                     resultado_final = {
                         "procesamiento_paralelo": False,
                         "impuestos_procesados": ["RETENCION_FUENTE"],
+                        "nit_administrativo": nit_administrativo,
+                        "nombre_entidad": nombre_entidad,
+                        "timestamp": datetime.now().isoformat(),
+                        "version": "2.4.0",
+                        "impuestos": {
+                            "retefuente": {
+                                "aplica": resultado_liquidacion.puede_liquidar,
+                                "valor_retencion": resultado_liquidacion.valor_retencion,
+                                "concepto": resultado_liquidacion.concepto_aplicado,
+                                "tarifa_retencion": resultado_liquidacion.tarifa_aplicada,
+                                "valor_base": resultado_liquidacion.valor_base_retencion,
+                                "fecha_calculo": resultado_liquidacion.fecha_calculo,
+                                "mensajes_error": resultado_liquidacion.mensajes_error
+                            },
+                            "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
+                            "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
+                            "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
+                        },
+                        # 📊 CAMPOS LEGACY (compatibilidad temporal)
                         "aplica_retencion": resultado_liquidacion.puede_liquidar,
                         "valor_retencion": resultado_liquidacion.valor_retencion,
                         "concepto": resultado_liquidacion.concepto_aplicado,
-                        "tarifa_retencion": resultado_liquidacion.tarifa_aplicada,
-                        "valor_base_retencion": resultado_liquidacion.valor_base_retencion,
-                        "fecha_calculo": resultado_liquidacion.fecha_calculo,
-                        "mensajes_error": resultado_liquidacion.mensajes_error,
-                        "retefuente": {
-                            "aplica": resultado_liquidacion.puede_liquidar,
-                            "valor_retencion": resultado_liquidacion.valor_retencion,
-                            "concepto": resultado_liquidacion.concepto_aplicado,
-                            "tarifa_retencion": resultado_liquidacion.tarifa_aplicada
-                        },
-                        "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                        "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
-                        "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
+                        "tarifa_retencion": resultado_liquidacion.tarifa_aplicada
                     }
                     
                     # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
                     resultado_final.update(resultado_estampillas_individual)
+                    
+                    # ✅ CALCULAR RESUMEN TOTAL PARA PROCESAMIENTO INDIVIDUAL
+                    valor_total_impuestos_individual = 0.0
+                    if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
+                        valor_total_impuestos_individual += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
+                    
+                    resultado_final["resumen_total"] = {
+                        "valor_total_impuestos": valor_total_impuestos_individual,
+                        "impuestos_liquidados": [imp for imp in resultado_final["impuestos_procesados"] if resultado_final["impuestos"].get(imp.lower().replace("_", ""), {}).get("aplica", False)],
+                        "procesamiento_exitoso": True
+                    }
             
             elif impuesto_unico == "IVA_RETEIVA":
                 # Procesamiento individual de IVA - ✅ NUEVO FLUJO
@@ -1198,17 +1240,37 @@ async def procesar_facturas_integrado(
                 liquidador_iva = LiquidadorIVA()
                 resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
                 
+                # ✅ NUEVA ESTRUCTURA: IVA Individual
                 resultado_final = {
                     "procesamiento_paralelo": False,
                     "impuestos_procesados": ["IVA_RETEIVA"],
-                    "iva_reteiva": convertir_resultado_a_dict(resultado_iva_completo),
-                    "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
-                    "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                    "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"}
+                    "nit_administrativo": nit_administrativo,
+                    "nombre_entidad": nombre_entidad,
+                    "timestamp": datetime.now().isoformat(),
+                    "version": "2.4.0",
+                    "impuestos": {
+                        "iva_reteiva": convertir_resultado_a_dict(resultado_iva_completo),
+                        "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
+                        "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
+                        "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"}
+                    }
                 }
                 
                 # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
                 resultado_final.update(resultado_estampillas_individual)
+                
+                # ✅ CALCULAR RESUMEN TOTAL PARA OTROS IMPUESTOS
+                valor_total_otros = 0.0
+                if "estampilla_universidad" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["estampilla_universidad"], dict):
+                    valor_total_otros += resultado_final["impuestos"]["estampilla_universidad"].get("valor_estampilla", 0)
+                if "contribucion_obra_publica" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["contribucion_obra_publica"], dict):
+                    valor_total_otros += resultado_final["impuestos"]["contribucion_obra_publica"].get("valor_contribucion", 0)
+                
+                resultado_final["resumen_total"] = {
+                    "valor_total_impuestos": valor_total_otros,
+                    "impuestos_liquidados": [impuesto_unico] if valor_total_otros > 0 else [],
+                    "procesamiento_exitoso": True
+                }
             
             else:
                 # Otros impuestos individuales (estampilla, obra pública)
@@ -1218,12 +1280,19 @@ async def procesar_facturas_integrado(
                 liquidador_estampilla = LiquidadorEstampilla()
                 resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, nit_administrativo)
                 
+                # ✅ NUEVA ESTRUCTURA: Otros impuestos individuales
                 resultado_final = {
                     "procesamiento_paralelo": False,
                     "impuestos_procesados": [impuesto_unico],
-                    **resultado_estampilla,
-                    "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
-                    "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
+                    "nit_administrativo": nit_administrativo,
+                    "nombre_entidad": nombre_entidad,
+                    "timestamp": datetime.now().isoformat(),
+                    "version": "2.4.0",
+                    "impuestos": {
+                        **{k: v for k, v in resultado_estampilla.items() if k in ["estampilla_universidad", "contribucion_obra_publica"]},
+                        "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
+                        "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
+                    }
                 }
                 
                 # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
@@ -1242,7 +1311,7 @@ async def procesar_facturas_integrado(
             "es_facturacion_extranjera": es_facturacion_extranjera,
             "documentos_procesados": len(archivos),
             "documentos_clasificados": list(clasificacion.keys()),
-            "version_sistema": "2.0.0",
+            "version_sistema": "2.4.0",
             "modulos_utilizados": ["Extraccion", "Clasificador", "Liquidador"]
         })
         
@@ -1277,7 +1346,7 @@ async def procesar_facturas_integrado(
             "error_tipo": type(e).__name__,
             "traceback": traceback.format_exc(),
             "archivos_recibidos": [archivo.filename for archivo in archivos],
-            "version": "2.0.0"
+            "version": "2.4.0"
         }
         guardar_archivo_json(error_data, "error_procesamiento")
         
@@ -1302,7 +1371,7 @@ async def procesar_facturas_integrado(
                 "mensaje": user_message,
                 "detalle_tecnico": error_msg,
                 "tipo": error_type,
-                "version": "2.0.0",
+                "version": "2.4.0",
                 "timestamp": datetime.now().isoformat()
             }
         )
@@ -1329,7 +1398,7 @@ async def obtener_conceptos():
         "conceptos": conceptos_formateados,
         "total_conceptos": len(CONCEPTOS_RETEFUENTE),
         "fuente": "RETEFUENTE_CONCEPTOS.xlsx",
-        "version": "2.0.0"
+        "version": "2.4.0"
     }
 
 @app.get("/api/nits-disponibles")
@@ -1354,7 +1423,7 @@ async def obtener_nits_disponibles_endpoint():
             "success": True,
             "nits": nits_formateados,
             "total_nits": len(nits_formateados),
-            "version": "2.0.0",
+            "version": "2.4.0",
             "timestamp": datetime.now().isoformat()
         }
         
@@ -1365,7 +1434,7 @@ async def obtener_nits_disponibles_endpoint():
             detail={
                 "error": "Error obteniendo NITs",
                 "mensaje": str(e),
-                "version": "2.0.0"
+                "version": "2.4.0"
             }
         )
 
@@ -1378,7 +1447,7 @@ async def obtener_estadisticas_extracciones():
         
         return {
             "success": True,
-            "version": "2.0.0",
+            "version": "2.4.0",
             "modulo": "Extraccion",
             "estadisticas": estadisticas,
             "timestamp": datetime.now().isoformat()
@@ -1403,7 +1472,7 @@ async def prueba_simple(nit_administrativo: Optional[str] = Form(None)):
         "success": True,
         "mensaje": "POST sin archivos funciona - Sistema integrado",
         "nit_recibido": nit_administrativo,
-        "version": "2.0.0",
+        "version": "2.4.0",
         "sistema": "integrado_retefuente_estampilla",
         "timestamp": datetime.now().isoformat()
     }
@@ -1413,7 +1482,7 @@ async def diagnostico_completo():
     """Endpoint de diagnóstico completo para verificar todos los componentes del sistema"""
     diagnostico = {
         "timestamp": datetime.now().isoformat(),
-        "version": "2.0.0",
+        "version": "2.4.0",
         "sistema": "integrado_retefuente_estampilla",
         "estado_general": "VERIFICANDO",
         "componentes": {}
