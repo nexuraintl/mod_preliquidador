@@ -1,5 +1,46 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [2.3.1] - 2025-08-20
+
+### 🐛 Corregido
+- **Problema crítico con fallback de OCR**: Corrección de la detección automática de OCR
+  - 🎆 **Detección inteligente**: Nueva función `_evaluar_calidad_extraccion_pdf()` que detecta contenido útil real
+  - 📄 **Exclusión de mensajes vacíos**: No cuenta "[Página vacía o sin texto extraíble]" como contenido válido
+  - 🔢 **Criterios múltiples**: OCR se activa si 80%+ páginas vacías O <100 caracteres útiles O 50%+ vacías + <500 caracteres
+  - ⚡ **Activación automática**: OCR se ejecuta inmediatamente cuando PDF Plumber detecta poco contenido útil
+  - 📊 **Comparación inteligente**: Sistema compara caracteres útiles (no totales) entre PDF Plumber y OCR
+  - 📈 **Logging mejorado**: Mensajes específicos con razón exacta de activación de OCR
+- **Simplificación de `procesar_archivo()`**: Lógica centralizada en `extraer_texto_pdf()` para mejor mantenimiento
+
+### 📉 Problema Resuelto
+- **ANTES**: PDFs escaneados generaban 46 páginas de "[Página vacía o sin texto extraíble]" sin activar OCR
+- **AHORA**: Sistema detecta automáticamente PDFs escaneados y activa OCR inmediatamente
+- **Resultado**: Extracción exitosa de contenido en PDFs de imagen/escaneo
+
+---
+
+## [2.3.0] - 2025-08-20
+
+### 🔧 Cambiado
+- **Mejora en extracción de PDF**: Cambio de PyPDF2 a **PDF Plumber** como método principal de extracción
+  - 📄 **PDF Plumber** como método principal para mejor extracción de estructuras complejas
+  - 🔄 **PyPDF2** como fallback para compatibilidad
+  - 🌊 **Extracción natural**: PDF Plumber extrae texto como fluye naturalmente en el documento
+  - ⚡ **Mayor precisión**: Mejor manejo de tablas, formularios y documentos estructurados
+- **Logging mejorado**: Mensajes específicos para cada método de extracción usado
+- **Metadatos expandidos**: Información detallada del método de extracción utilizado
+
+### 📦 Dependencias
+- **Nueva dependencia**: `pdfplumber` para extracción mejorada de PDFs
+- **Mantiene compatibilidad**: Todas las dependencias anteriores se conservan
+
+### 🔍 Validaciones
+- **Detección automática**: El sistema detecta automáticamente qué método usar
+- **Fallback inteligente**: Si PDF Plumber falla, usa PyPDF2 automáticamente
+- **Compatibilidad total**: Mantiene exactamente el mismo formato de salida
+
+---
+
 ## [2.2.0] - 2025-08-18
 
 ### 🆕 Añadido

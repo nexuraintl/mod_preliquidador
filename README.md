@@ -1,4 +1,25 @@
-### ✅ **Últimas Optimizaciones v2.2.0 (2025-08-18)**
+### ✅ **Últimas Optimizaciones v2.3.1 (2025-08-20)**
+
+**Corrección Crítica: Fallback de OCR Inteligente:**
+- 🎆 **Detección inteligente**: Nueva lógica que detecta contenido útil real vs mensajes de "página vacía"
+- 📄 **Activación automática**: OCR se ejecuta inmediatamente cuando PDF Plumber detecta poco contenido útil
+- 🔢 **Criterios múltiples**: Sistema activa OCR si 80%+ páginas vacías O <100 caracteres útiles O 50%+ vacías + <500 caracteres
+- 📊 **Comparación inteligente**: Compara caracteres útiles reales entre PDF Plumber y OCR
+- 📈 **Logging detallado**: Mensajes específicos con razón exacta de activación de OCR
+- ⚡ **Problema resuelto**: PDFs escaneados (46 páginas vacías) ahora activan OCR automáticamente
+
+### ✅ **Optimizaciones Anteriores v2.3.0 (2025-08-20)**
+
+**Mejora en Extracción de PDF:**
+- 📄 **PDF Plumber como método principal**: Cambio de PyPDF2 a PDF Plumber para mejor extracción de estructuras complejas
+- 🌊 **Extracción natural**: PDF Plumber extrae texto como fluye naturalmente en el documento
+- ⚡ **Mayor precisión**: Mejor manejo de tablas, formularios y documentos con estructuras complejas
+- 🔄 **Fallback inteligente**: PyPDF2 se mantiene como método de respaldo automático
+- 📊 **Logging mejorado**: Mensajes específicos para cada método de extracción usado
+- 👐 **Compatibilidad total**: Mantiene exactamente el mismo formato de salida
+- 📦 **Nueva dependencia**: `pdfplumber` agregado a requirements.txt
+
+### ✅ **Optimizaciones Anteriores v2.2.0 (2025-08-18)**
 
 **Nueva Funcionalidad: 6 Estampillas Generales:**
 - 🆕 **Implementación completa**: Análisis e identificación de 6 estampillas generales para TODOS los NITs

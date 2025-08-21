@@ -1314,7 +1314,7 @@ INSTRUCCIONES CRÍTICAS:
    • Identifica variaciones comunes:
      - "Pro Cultura" / "Procultura" / "Estampilla ProCultura"/ PROCULTURA
      - "Pro Bienestar" /  "Estampilla Bienestar"
-     - "Adulto Mayor" / "Pro Adulto Mayor" / "Estampilla Adulto Mayor"
+     - "Adulto Mayor" / "Pro Adulto Mayor" / "Estampilla Adulto Mayor / Estampilla Bienestar Adulto Mayor"
      - "Universidad Pedagógica" / "Estampilla Pro Universidad Pedagógica" 
      - "Francisco José de Caldas" / "FJDC" / Estampilla Francisco José de Caldas
      - "Pro Deporte" / "Prodeporte" / "Estampilla ProDeporte"

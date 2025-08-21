@@ -52,6 +52,14 @@ try:
 except ImportError:
     PYMUPDF_DISPONIBLE = False
 
+# PDF Plumber para extracción mejorada
+try:
+    import pdfplumber
+    PDFPLUMBER_DISPONIBLE = True
+except ImportError:
+    PDFPLUMBER_DISPONIBLE = False
+    logging.warning("pdfplumber no disponible - extracción PDF limitada")
+
 # Google Vision para OCR
 from google.cloud import vision
 
@@ -80,7 +88,18 @@ class ProcesadorArchivos:
         logger.info("ProcesadorArchivos inicializado con guardado automático")
     
     def _verificar_dependencias_pdf(self):
-        """Verifica y reporta las dependencias disponibles para PDF → Imagen y emails"""
+        """Verifica y reporta las dependencias disponibles para extracción PDF y conversión a imagen"""
+        # Verificar PDF Plumber (método principal)
+        if PDFPLUMBER_DISPONIBLE:
+            logger.info("✅ pdfplumber disponible para extracción principal de PDF")
+        else:
+            logger.warning("⚠️ pdfplumber no disponible. Usando PyPDF2 como principal")
+            logger.warning("   Instala: pip install pdfplumber")
+        
+        # Verificar PyPDF2 (fallback)
+        logger.info("✅ PyPDF2 disponible como fallback")
+        
+        # Verificar conversión PDF → Imagen para OCR
         if PDF2IMAGE_DISPONIBLE:
             logger.info("✅ pdf2image disponible para conversión PDF → Imagen")
         elif PYMUPDF_DISPONIBLE:
@@ -397,13 +416,7 @@ FIN DE LA EXTRACCIÓN
         # Determinar método de extracción según extensión
         if extension == '.pdf':
             texto = await self.extraer_texto_pdf(contenido, archivo.filename)
-            # Si se extrajo muy poco texto de PDF, intentar OCR
-            if len(texto.strip()) < 1000 and not texto.startswith("Error"):
-                logger.info("🔄 Poco texto extraído de PDF, intentando OCR con conversión a imagen...")
-                texto_ocr = await self.extraer_texto_pdf_con_ocr(contenido, archivo.filename)
-                if texto_ocr and len(texto_ocr) > len(texto) and not texto_ocr.startswith("Error"):
-                    logger.info("✅ OCR proporcionó mejor resultado que extracción de PDF")
-                    return texto_ocr
+            # La función extraer_texto_pdf ya maneja automáticamente el OCR cuando es necesario
             return texto
         
         elif extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']:
@@ -421,9 +434,72 @@ FIN DE LA EXTRACCIÓN
         else:
             raise ValueError(f"Tipo de archivo no soportado: {extension}")
     
+    def _evaluar_calidad_extraccion_pdf(self, texto_extraido: str, num_paginas: int) -> dict:
+        """
+        Evalúa la calidad del texto extraído de un PDF para determinar si se necesita OCR.
+        
+        Args:
+            texto_extraido: Texto extraído del PDF
+            num_paginas: Número total de páginas del PDF
+            
+        Returns:
+            dict: Información sobre la calidad de extracción
+        """
+        # Contar páginas con mensaje de "vacía"
+        mensajes_vacia = texto_extraido.count("[Página vacía o sin texto extraíble]")
+        
+        # Calcular texto útil (sin contar separadores y mensajes de páginas vacías)
+        lineas = texto_extraido.split('\n')
+        texto_util = ""
+        
+        for linea in lineas:
+            # Excluir separadores de página y mensajes de páginas vacías
+            if (not linea.startswith("--- PÁGINA") and 
+                "[Página vacía o sin texto extraíble]" not in linea and
+                linea.strip()):
+                texto_util += linea + " "
+        
+        texto_util = texto_util.strip()
+        caracteres_utiles = len(texto_util)
+        
+        # Calcular porcentajes
+        porcentaje_paginas_vacias = (mensajes_vacia / num_paginas) * 100 if num_paginas > 0 else 0
+        
+        # Determinar si necesita OCR
+        necesita_ocr = (
+            porcentaje_paginas_vacias >= 80 or  # 80% o más páginas vacías
+            caracteres_utiles < 100 or          # Menos de 100 caracteres útiles
+            (porcentaje_paginas_vacias >= 50 and caracteres_utiles < 500)  # 50% vacías y poco texto
+        )
+        
+        evaluacion = {
+            "caracteres_totales": len(texto_extraido),
+            "caracteres_utiles": caracteres_utiles,
+            "paginas_totales": num_paginas,
+            "paginas_vacias": mensajes_vacia,
+            "porcentaje_paginas_vacias": porcentaje_paginas_vacias,
+            "necesita_ocr": necesita_ocr,
+            "razon_ocr": self._generar_razon_ocr(porcentaje_paginas_vacias, caracteres_utiles)
+        }
+        
+        return evaluacion
+    
+    def _generar_razon_ocr(self, porcentaje_vacias: float, caracteres_utiles: int) -> str:
+        """
+        Genera una razón legible de por qué se necesita OCR.
+        """
+        if porcentaje_vacias >= 80:
+            return f"80%+ páginas vacías ({porcentaje_vacias:.1f}%)"
+        elif caracteres_utiles < 100:
+            return f"Muy poco texto útil ({caracteres_utiles} caracteres)"
+        elif porcentaje_vacias >= 50 and caracteres_utiles < 500:
+            return f"50%+ páginas vacías ({porcentaje_vacias:.1f}%) y poco texto ({caracteres_utiles} caracteres)"
+        else:
+            return "Extracción satisfactoria"
+    
     async def extraer_texto_pdf(self, contenido: bytes, nombre_archivo: str = "documento.pdf") -> str:
         """
-        Extrae texto de archivo PDF usando PyPDF2.
+        Extrae texto de archivo PDF usando PDF Plumber como método principal y PyPDF2 como fallback.
         GUARDA AUTOMÁTICAMENTE el texto extraído.
         
         Args:
@@ -433,12 +509,79 @@ FIN DE LA EXTRACCIÓN
         Returns:
             str: Texto extraído del PDF
         """
+        # MÉTODO PRINCIPAL: PDF PLUMBER
+        if PDFPLUMBER_DISPONIBLE:
+            try:
+                logger.info(f"🔄 Extrayendo texto con PDF Plumber (método principal): {nombre_archivo}")
+                
+                with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+                    texto_completo = ""
+                    num_paginas = len(pdf.pages)
+                    
+                    logger.info(f"📖 Procesando PDF con {num_paginas} página(s) usando PDF Plumber")
+                    
+                    for i, page in enumerate(pdf.pages):
+                        # Extraer texto como fluye naturalmente
+                        texto_pagina = page.extract_text()
+                        if texto_pagina and texto_pagina.strip():  # Solo agregar si hay texto real
+                            texto_completo += f"\n--- PÁGINA {i+1} ---\n{texto_pagina}\n"
+                        else:
+                            texto_completo += f"\n--- PÁGINA {i+1} ---\n[Página vacía o sin texto extraíble]\n"
+                    
+                    texto_final = texto_completo.strip()
+                    
+                    # EVALUAR CALIDAD DE EXTRACCIÓN
+                    evaluacion = self._evaluar_calidad_extraccion_pdf(texto_final, num_paginas)
+                    
+                    # Preparar metadatos con evaluación
+                    metadatos = {
+                        "total_paginas": num_paginas,
+                        "tamaño_archivo_bytes": len(contenido),
+                        "metodo": "PDF Plumber (principal)",
+                        "caracteres_extraidos": len(texto_final),
+                        "evaluacion_calidad": evaluacion
+                    }
+                    
+                    # SI NECESITA OCR, INTENTAR EXTRACCIÓN CON OCR INMEDIATAMENTE
+                    if evaluacion["necesita_ocr"]:
+                        logger.warning(f"⚠️ PDF Plumber extrajo poco contenido útil: {evaluacion['razon_ocr']}")
+                        logger.info(f"🔄 Intentando OCR automáticamente...")
+                        
+                        try:
+                            texto_ocr = await self.extraer_texto_pdf_con_ocr(contenido, nombre_archivo)
+                            
+                            if texto_ocr and not texto_ocr.startswith("Error") and len(texto_ocr.strip()) > evaluacion["caracteres_utiles"]:
+                                logger.info(f"✅ OCR proporcionó mejor resultado que PDF Plumber")
+                                logger.info(f"📊 Comparación: PDF Plumber ({evaluacion['caracteres_utiles']} caracteres útiles) vs OCR ({len(texto_ocr.strip())} caracteres)")
+                                return texto_ocr  # Retornar resultado de OCR
+                            else:
+                                logger.warning(f"⚠️ OCR no mejoró el resultado, manteniendo extracción de PDF Plumber")
+                                
+                        except Exception as e:
+                            logger.error(f"❌ Error en OCR automático: {str(e)}")
+                            logger.info(f"🔄 Continuando con resultado de PDF Plumber")
+                    
+                    # Guardar texto extraído automáticamente
+                    archivo_guardado = self._guardar_texto_extraido(
+                        nombre_archivo, texto_final, "PDF", metadatos
+                    )
+                    
+                    logger.info(f"✅ PDF Plumber: {len(texto_final)} caracteres extraídos")
+                    return texto_final
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ PDF Plumber falló: {str(e)}")
+                logger.info(f"🔄 Intentando con PyPDF2 como fallback...")
+        
+        # MÉTODO FALLBACK: PyPDF2
         try:
+            logger.info(f"🔄 Extrayendo texto con PyPDF2 (fallback): {nombre_archivo}")
+            
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(contenido))
             texto_completo = ""
             
             num_paginas = len(pdf_reader.pages)
-            logger.info(f"📖 Procesando PDF con {num_paginas} página(s)")
+            logger.info(f"📖 Procesando PDF con {num_paginas} página(s) usando PyPDF2")
             
             for i, page in enumerate(pdf_reader.pages):
                 texto_pagina = page.extract_text()
@@ -450,7 +593,7 @@ FIN DE LA EXTRACCIÓN
             metadatos = {
                 "total_paginas": num_paginas,
                 "tamaño_archivo_bytes": len(contenido),
-                "metodo": "PyPDF2",
+                "metodo": "PyPDF2 (fallback)",
                 "caracteres_extraidos": len(texto_final)
             }
             
@@ -459,12 +602,11 @@ FIN DE LA EXTRACCIÓN
                 nombre_archivo, texto_final, "PDF", metadatos
             )
             
-            logger.info(f"✅ Texto extraído de PDF: {len(texto_final)} caracteres")
-            
+            logger.info(f"✅ PyPDF2: {len(texto_final)} caracteres extraídos")
             return texto_final
             
         except Exception as e:
-            error_msg = f"Error procesando PDF: {str(e)}"
+            error_msg = f"Error procesando PDF con ambos métodos (PDF Plumber + PyPDF2): {str(e)}"
             logger.error(f"❌ {error_msg}")
             
             # Guardar también los errores para debugging
@@ -1344,10 +1486,16 @@ FECHA: {fecha}
         guardado_automatico = True
         
         if extension == '.pdf':
-            if PDF2IMAGE_DISPONIBLE or PYMUPDF_DISPONIBLE:
-                tipo_procesamiento = "Extracción PDF + OCR con conversión a imagen"
+            if PDFPLUMBER_DISPONIBLE:
+                tipo_procesamiento = "PDF Plumber (principal) + PyPDF2 (fallback)"
+                if PDF2IMAGE_DISPONIBLE or PYMUPDF_DISPONIBLE:
+                    tipo_procesamiento += " + OCR con conversión a imagen"
             else:
-                tipo_procesamiento = "Extracción PDF (OCR fallback limitado)"
+                tipo_procesamiento = "PyPDF2 (sin PDF Plumber)"
+                if PDF2IMAGE_DISPONIBLE or PYMUPDF_DISPONIBLE:
+                    tipo_procesamiento += " + OCR con conversión a imagen"
+                else:
+                    tipo_procesamiento += " (OCR fallback limitado)"
         elif extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']:
             tipo_procesamiento = "OCR con Google Vision"
         elif extension in ['.xlsx', '.xls']:
@@ -1437,6 +1585,7 @@ FECHA: {fecha}
                 "tamaño_total_mb": 0,
                 "dependencias": {
                     "google_vision": self.vision_client is not None,
+                    "pdfplumber": PDFPLUMBER_DISPONIBLE,
                     "pdf2image": PDF2IMAGE_DISPONIBLE,
                     "pymupdf": PYMUPDF_DISPONIBLE,
                     "extract_msg": EXTRACT_MSG_DISPONIBLE
