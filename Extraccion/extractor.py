@@ -17,9 +17,12 @@ import os
 import io
 import json
 import logging
+import asyncio
 from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 # Procesamiento de archivos
 import PyPDF2
@@ -661,38 +664,27 @@ FIN DE LA EXTRACCIÓN
                 
                 return error_msg
             
-            # Aplicar OCR a cada imagen
-            texto_total = ""
-            total_caracteres = 0
-            
-            for i, imagen_bytes in enumerate(imagenes):
-                logger.info(f"🔍 Aplicando OCR a página {i+1}/{len(imagenes)}")
-                
-                # Aplicar OCR a esta imagen
-                texto_pagina = await self._aplicar_ocr_a_imagen(imagen_bytes, f"página_{i+1}")
-                
-                if texto_pagina and not texto_pagina.startswith("Error"):
-                    texto_total += f"\n--- PÁGINA {i+1} (OCR) ---\n{texto_pagina}\n"
-                    total_caracteres += len(texto_pagina)
-                else:
-                    texto_total += f"\n--- PÁGINA {i+1} (OCR) ---\n[Error en OCR o página vacía]\n"
+            # Aplicar OCR paralelo con ThreadPoolExecutor (2 workers fijos)
+            texto_total, total_caracteres = await self._procesar_ocr_paralelo(imagenes, nombre_archivo)
             
             # Preparar metadatos
             metadatos = {
                 "total_paginas": len(imagenes),
                 "tamaño_archivo_bytes": len(contenido_pdf),
-                "metodo": "PDF → Imagen → Google Vision OCR",
+                "metodo": "PDF → Imagen → Google Vision OCR (Paralelo)",
+                "workers_paralelos": 2,
                 "caracteres_extraidos": total_caracteres,
                 "paginas_procesadas": len(imagenes),
-                "validacion": validacion["info"]
+                "validacion": validacion["info"],
+                "procesamiento_paralelo": True
             }
             
             # Guardar texto extraído automáticamente
             archivo_guardado = self._guardar_texto_extraido(
-                nombre_archivo, texto_total, "PDF_OCR", metadatos
+                nombre_archivo, texto_total, "PDF_OCR_PARALELO", metadatos
             )
             
-            logger.info(f"✅ OCR de PDF completado: {total_caracteres} caracteres de {len(imagenes)} páginas")
+            logger.info(f"OCR paralelo de PDF completado: {total_caracteres} caracteres de {len(imagenes)} paginas con 2 workers")
             
             return texto_total.strip()
             
@@ -707,6 +699,105 @@ FIN DE LA EXTRACCIÓN
             )
             
             return error_msg
+    
+    async def _procesar_ocr_paralelo(self, imagenes: list, nombre_archivo: str) -> tuple:
+        """
+        Procesa OCR de múltiples páginas en paralelo usando ThreadPoolExecutor.
+        
+        Args:
+            imagenes: Lista de imágenes en bytes
+            nombre_archivo: Nombre del archivo para logging
+            
+        Returns:
+            tuple: (texto_total, total_caracteres)
+        """
+        if not imagenes:
+            return "", 0
+        
+        # Configuración de OCR paralelo (2 workers fijos)
+        max_workers = 2
+        num_paginas = len(imagenes)
+        
+        # Logging específico sin emojis
+        logger.info(f"Iniciando OCR paralelo: {num_paginas} paginas con {max_workers} workers")
+        inicio_tiempo = asyncio.get_event_loop().time()
+        
+        # Función sincrónica para usar en ThreadPoolExecutor
+        def aplicar_ocr_sincrono(imagen_bytes: bytes, num_pagina: int) -> tuple:
+            """Función sincrónica que envuelve la llamada a Google Vision"""
+            try:
+                if not self.vision_client:
+                    return num_pagina, "OCR no disponible - Google Vision no configurado"
+                
+                # Crear objeto Image para Vision
+                image = vision.Image(content=imagen_bytes)
+                
+                # Detectar texto
+                response = self.vision_client.text_detection(image=image)
+                
+                if response.error.message:
+                    return num_pagina, f"Error en Vision API: {response.error.message}"
+                
+                texts = response.text_annotations
+                
+                if texts:
+                    texto_extraido = texts[0].description
+                    return num_pagina, texto_extraido
+                else:
+                    return num_pagina, ""
+                    
+            except Exception as e:
+                return num_pagina, f"Error en OCR: {str(e)}"
+        
+        # Ejecutar OCR paralelo con ThreadPoolExecutor
+        loop = asyncio.get_event_loop()
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Crear tareas para cada página
+            tasks = [
+                loop.run_in_executor(
+                    executor, 
+                    aplicar_ocr_sincrono, 
+                    imagen_bytes, 
+                    i + 1
+                )
+                for i, imagen_bytes in enumerate(imagenes)
+            ]
+            
+            # Ejecutar todas las tareas en paralelo
+            resultados = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Calcular tiempo transcurrido
+        tiempo_total = asyncio.get_event_loop().time() - inicio_tiempo
+        
+        # Procesar resultados manteniendo orden de páginas
+        texto_total = ""
+        total_caracteres = 0
+        paginas_exitosas = 0
+        
+        for resultado in resultados:
+            if isinstance(resultado, Exception):
+                # Manejar excepción
+                num_pagina = len([r for r in resultados[:resultados.index(resultado)] if not isinstance(r, Exception)]) + 1
+                texto_total += f"\n--- PÁGINA {num_pagina} (OCR) ---\n[Error en procesamiento paralelo: {resultado}]\n"
+                continue
+            
+            num_pagina, texto_pagina = resultado
+            
+            if texto_pagina and not texto_pagina.startswith("Error"):
+                texto_total += f"\n--- PÁGINA {num_pagina} (OCR) ---\n{texto_pagina}\n"
+                total_caracteres += len(texto_pagina)
+                paginas_exitosas += 1
+            else:
+                texto_total += f"\n--- PÁGINA {num_pagina} (OCR) ---\n[Error en OCR o página vacía]\n"
+        
+        # Logging de resultados sin emojis
+        logger.info(f"OCR paralelo completado: {paginas_exitosas}/{num_paginas} paginas exitosas")
+        logger.info(f"Tiempo total de OCR paralelo: {tiempo_total:.2f} segundos")
+        logger.info(f"Promedio por pagina: {tiempo_total/num_paginas:.2f} segundos")
+        logger.info(f"Caracteres extraidos: {total_caracteres}")
+        
+        return texto_total, total_caracteres
     
     async def _aplicar_ocr_a_imagen(self, imagen_bytes: bytes, descripcion: str = "imagen") -> str:
         """
