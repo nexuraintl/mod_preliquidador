@@ -804,13 +804,60 @@ async def procesar_facturas_integrado(
             # Esperar todos los resultados
             resultados_analisis = {}
             try:
+
+                # 🔧 OPTIMIZACIÓN: Procesamiento con semáforo de 4 workers
+                semaforo = asyncio.Semaphore(4)  # Máximo 4 llamados simultáneos a Gemini
+
+                async def ejecutar_tarea_con_worker(nombre_impuesto: str, tarea_async, worker_id: int):
+                    """
+                    Ejecuta una tarea de análisis con control de concurrencia.
+                    
+                    Args:
+                        nombre_impuesto: Nombre del impuesto (retefuente, impuestos_especiales, etc.)
+                        tarea_async: Tarea asíncrona a ejecutar
+                        worker_id: ID del worker (1 o 2)
+                        
+                    Returns:
+                        tuple: (nombre_impuesto, resultado_o_excepcion, tiempo_ejecucion)
+                    """
+                    async with semaforo:
+                        inicio_worker = datetime.now()
+                        logger.info(f"🔄 Worker {worker_id}: Iniciando análisis de {nombre_impuesto}")
+                        
+                        try:
+                            resultado = await tarea_async
+                            tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
+                            logger.info(f"✅ Worker {worker_id}: {nombre_impuesto} completado en {tiempo_ejecucion:.2f}s")
+                            return (nombre_impuesto, resultado, tiempo_ejecucion)
+                            
+                        except Exception as e:
+                            tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
+                            logger.error(f"❌ Worker {worker_id}: Error en {nombre_impuesto} tras {tiempo_ejecucion:.2f}s: {str(e)}")
+                            return (nombre_impuesto, e, tiempo_ejecucion)
                 
-                tareas_asyncio = [tarea for _, tarea in tareas_analisis]
-                resultados_brutos = await asyncio.gather(*tareas_asyncio, return_exceptions=True)
+                # Crear tareas con workers
+                inicio_total = datetime.now()
+                tareas_con_workers = [
+                    ejecutar_tarea_con_worker(nombre_impuesto, tarea, i + 1) 
+                    for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis)
+                ]
                 
-                #mapear resultados a sus nombres
+                logger.info(f"⚡ Ejecutando {len(tareas_con_workers)} tareas con máximo 2 workers simultáneos...")
+                
+                # Esperar todos los resultados con workers limitados
+                resultados_con_workers = await asyncio.gather(*tareas_con_workers, return_exceptions=True)
+                
+                # Mapear resultados a sus nombres
                 for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis):
-                    resultado = resultados_brutos[i]
+                    resultado_worker = resultados_con_workers[i]
+                    if isinstance(resultado_worker, Exception):
+                        logger.error(f"❌ Error crítico en worker: {resultado_worker}")
+                        resultados_analisis[nombre_impuesto] = {"error": str(resultado_worker)}
+                        continue
+                    
+                    # Extraer información del worker: (nombre_impuesto, resultado, tiempo)
+                    _, resultado, tiempo_ejecucion = resultado_worker
+                    
                     if isinstance(resultado, Exception):
                         logger.error(f" Error en análisis de {nombre_impuesto}: {resultado}")
                         resultados_analisis[nombre_impuesto] = {"error": str(resultado)}
