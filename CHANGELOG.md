@@ -1,5 +1,207 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [2.8.2] - 2025-08-28
+
+### 🚀 **MULTIMODALIDAD INTEGRADA EN RETEFUENTE**
+- **NUEVA FUNCIONALIDAD**: Análisis híbrido multimodal en RETEFUENTE y todos los impuestos
+  - 📄 **PDFs e Imágenes**: Enviados directamente a Gemini sin extracción previa (multimodal nativo)
+  - 📊 **Excel/Email/Word**: Mantienen preprocesamiento local optimizado
+  - ⚡ **Procesamiento híbrido**: Combina archivos directos + textos preprocesados en una sola llamada
+  - 🔄 **Aplicable a todos**: RETEFUENTE, IVA, Estampilla, Obra Pública, Estampillas Generales
+
+### 🆕 **FUNCIONES IMPLEMENTADAS**
+- **`analizar_factura()` HÍBRIDA**: Acepta archivos directos + documentos clasificados tradicionales
+  - Nueva signatura: `analizar_factura(documentos_clasificados, es_facturacion_extranjera, archivos_directos=None)`
+  - Compatibilidad total con funcionalidad existente
+  - Separación automática de archivos por estrategia de procesamiento
+- **`_llamar_gemini_hibrido_factura()`**: Función reutilizable para análisis multimodal de impuestos
+  - Timeout específico: 90s para análisis de facturas con archivos directos
+  - Detección automática de tipos MIME por magic bytes y extensiones
+  - Manejo robusto de archivos UploadFile y bytes directos
+- **Prompts actualizados**: Todos los prompts de análisis soportan archivos directos
+  - `PROMPT_ANALISIS_FACTURA()` con parámetro `nombres_archivos_directos`
+  - `PROMPT_ANALISIS_CONSORCIO()` con soporte multimodal
+  - `PROMPT_ANALISIS_FACTURA_EXTRANJERA()` híbrido
+  - `PROMPT_ANALISIS_CONSORCIO_EXTRANJERO()` multimodal
+
+### 🔧 **CAMBIOS EN MAIN.PY**
+- **MODIFICADO**: Paso 4A - Procesamiento paralelo híbrido
+  - Archivos directos se pasan a TODAS las tareas de análisis
+  - `tarea_retefuente = clasificador.analizar_factura(..., archivos_directos=archivos_directos)`
+  - Soporte multimodal en consorcios, impuestos especiales, IVA y estampillas
+- **MODIFICADO**: Paso 4B - Procesamiento individual híbrido
+  - Mismo soporte multimodal para procesamiento individual
+  - Archivos directos disponibles para análisis único de RETEFUENTE
+
+### 🎯 **BENEFICIOS INMEDIATOS**
+- **✅ Calidad superior**: PDFs de facturas procesados nativamente sin pérdida de formato
+- **✅ Imágenes optimizadas**: Facturas escaneadas procesadas con OCR nativo de Gemini
+- **✅ Procesamiento más rápido**: Menos extracción local, más análisis directo
+- **✅ Análisis más preciso**: Gemini ve la factura original con formato, colores, tablas
+- **✅ Compatibilidad total**: Sistema legacy funciona exactamente igual
+- **✅ Escalable**: Misma función híbrida para todos los tipos de impuestos
+
+### 📊 **ARQUITECTURA HÍBRIDA UNIFICADA**
+- **Separación inteligente**: PDFs/imágenes → Gemini directo, Excel/Email → procesamiento local
+- **Función reutilizable**: `_llamar_gemini_hibrido_factura()` usada por todos los impuestos
+- **Manejo seguro de archivos**: Validación de tipos MIME y manejo de errores por archivo
+- **Logging específico**: Identificación clara de archivos directos vs preprocesados
+
+### ⚡ **OPTIMIZACIONES**
+- **Timeout especializado**: 90s para análisis híbrido vs 60s para solo texto
+- **Detección MIME inteligente**: Magic bytes para PDFs (\%PDF) e imágenes (\xff\xd8\xff, \x89PNG)
+- **Fallback robusto**: Continúa procesamiento aunque falle un archivo directo individual
+- **Memory efficient**: Archivos se procesan uno por uno, no se almacenan todos en memoria
+
+---
+
+## [2.8.1] - 2025-08-27
+
+### 🐛 **CORRECCIÓN CRÍTICA - ERROR MULTIMODAL GEMINI**
+- **PROBLEMA SOLUCIONADO**: Error "Could not create Blob, expected Blob, dict or Image type"
+  - **CAUSA**: Se enviaban bytes raw a Gemini en lugar de objetos formateados
+  - **SOLUCIÓN**: Crear objetos con `mime_type` y `data` para compatibilidad multimodal
+  - **IMPACTO**: Multimodalidad ahora funciona correctamente con PDFs e imágenes
+
+### 🔧 **CAMBIOS TÉCNICOS**
+- **MODIFICADO**: `_llamar_gemini_hibrido()` en `Clasificador/clasificador.py`
+  - Detección automática de tipos de archivo por magic bytes
+  - Mapeo correcto de extensiones a MIME types
+  - Creación de objetos compatibles con Gemini: `{"mime_type": "...", "data": bytes}`
+  - Manejo robusto de archivos con tipos desconocidos
+
+### ✅ **FUNCIONALIDAD RESTAURADA**
+- **PDFs**: Procesamiento nativo multimodal sin extracción local
+- **Imágenes**: OCR nativo de Gemini para JPG, PNG, GIF, BMP, TIFF, WebP
+- **Clasificación híbrida**: PDFs/imágenes + Excel/Email en el mismo procesamiento
+- **Logging mejorado**: Detección y reporte de tipos de archivo procesados
+
+### 🎯 **TIPOS DE ARCHIVO SOPORTADOS**
+**📄 Archivos directos (multimodal):**
+- `.pdf` → `application/pdf`
+- `.jpg/.jpeg` → `image/jpeg`
+- `.png` → `image/png` 
+- `.gif` → `image/gif`
+- `.bmp` → `image/bmp`
+- `.tiff/.tif` → `image/tiff`
+- `.webp` → `image/webp`
+
+**📊 Archivos preprocesados (local):**
+- `.xlsx/.xls`, `.eml/.msg`, `.docx/.doc` → Texto extraído localmente
+
+---
+
+## [2.8.0] - 2025-08-27
+
+### 🚀 **MULTIMODALIDAD COMPLETA IMPLEMENTADA EN MAIN.PY**
+- **FUNCIONALIDAD COMPLETA**: Sistema híbrido multimodal totalmente operativo
+  - 📄 **Separación automática**: PDFs/imágenes → Gemini directo vs Excel/Email → preprocesamiento local
+  - 🔄 **Llamada híbrida**: `clasificar_documentos(archivos_directos=[], textos_preprocesados={})`
+  - ⚡ **Procesamiento optimizado**: Cada tipo de archivo usa la estrategia más efectiva
+
+### 🔧 **CAMBIOS EN MAIN.PY**
+- **MODIFICADO**: `procesar_facturas_integrado()`
+  - **PASO 2 ACTUALIZADO**: Separación de archivos por estrategia antes de extracción
+  - **PASO 3 REEMPLAZADO**: Clasificación híbrida multimodal en lugar de legacy
+  - **Variables actualizadas**: `textos_archivos` → `textos_preprocesados` para consistencia
+  - **Documentos estructurados**: Soporte para archivos directos + preprocesados
+
+### 📊 **NUEVA INFORMACIÓN EN JSONS**
+- **MEJORADO**: `clasificacion_documentos.json` incluye metadatos híbridos:
+  ```json
+  "procesamiento_hibrido": {
+    "multimodalidad_activa": true,
+    "archivos_directos": 2,
+    "archivos_preprocesados": 3,
+    "nombres_archivos_directos": ["factura.pdf", "imagen.jpg"],
+    "nombres_archivos_preprocesados": ["datos.xlsx", "rut.txt"],
+    "version_multimodal": "2.8.0"
+  }
+  ```
+
+### 🔍 **LOGGING MEJORADO**
+- **Nuevos logs**: Separación de archivos por estrategia
+- **Logs detallados**: Conteo de archivos directos vs preprocesados
+- **Trazabilidad**: Origen de cada documento en la clasificación
+
+### 📋 **COMPATIBILIDAD**
+- **✅ Mantiene compatibilidad**: Sistema legacy sigue funcionando
+- **✅ Función híbrida**: `clasificar_documentos()` detecta automáticamente el modo
+- **✅ Documentos mixtos**: Maneja PDFs + Excel en la misma solicitud
+
+### 🎯 **BENEFICIOS INMEDIATOS**
+- **Mejor calidad PDF**: Sin pérdida de formato en clasificación
+- **OCR superior**: Imágenes procesadas nativamente por Gemini
+- **Excel optimizado**: Preprocesamiento local mantiene estructura tabular
+- **Procesamiento más rápido**: Menos extracción local, más procesamiento nativo
+- **Escalabilidad**: Hasta 20 archivos directos simultáneos
+
+---
+
+## [2.7.0] - 2025-08-27
+
+### 🔄 **IMPLEMENTACIÓN DE ENFOQUE HÍBRIDO - MULTIMODALIDAD**
+- **NUEVA FUNCIONALIDAD**: Clasificación híbrida con archivos directos + textos preprocesados
+  - 📄 **PDFs e Imágenes**: Enviados directamente a Gemini sin extracción local (multimodal)
+  - 📊 **Excel/Email/Word**: Mantienen preprocesamiento local para calidad óptima
+  - 🔢 **Arquitectura híbrida**: Combina lo mejor de ambos enfoques
+
+### 🆕 **NUEVAS FUNCIONES IMPLEMENTADAS**
+- **`clasificar_documentos()` HÍBRIDA**: Acepta archivos directos + textos preprocesados
+- **`_llamar_gemini_hibrido()`**: Llamada especializada para contenido multimodal
+- **`PROMPT_CLASIFICACION()` ACTUALIZADO**: Soporte para archivos directos + textos
+- **Validaciones de seguridad**: Límite de 20 archivos directos máximo
+- **Fallback híbrido**: Clasificación por nombres en caso de errores
+
+### 🚀 **VENTAJAS DEL ENFOQUE HÍBRIDO**
+- **✅ Mejor calidad PDF**: Gemini procesa PDFs nativamente sin pérdida de formato
+- **✅ Imágenes optimizadas**: OCR nativo de Gemini superior al procesamiento local
+- **✅ Excel mantenido**: Preprocesamiento local sigue siendo óptimo para tablas
+- **✅ Email estructurado**: Formato de email se mantiene con procesamiento local
+- **✅ Escalabilidad**: Hasta 20 archivos directos simultáneos
+- **✅ Compatibilidad**: Mantiene funcionalidad existente
+
+### 🔄 **CAMBIOS ARQUITECTÓNICOS**
+- **MODIFICADO**: `Clasificador/clasificador.py`
+  - Nueva signatura de función con parámetros opcionales
+  - Importación de `FastAPI UploadFile` para archivos directos
+  - Validaciones de límites y tipos de archivo
+- **MODIFICADO**: `Clasificador/prompt_clasificador.py`
+  - Prompt híbrido con sección de archivos directos
+  - Funciones auxiliares `_formatear_archivos_directos()` y `_formatear_textos_preprocesados()`
+  - Importación de `List` para tipado
+- **MANTENIDO**: Flujo principal en `main.py` (preparado para integración)
+
+### 📊 **ARCHIVOS SOPORTADOS POR ESTRATEGIA**
+
+**📄 ARCHIVOS DIRECTOS (Multimodal):**
+- `.pdf` - PDFs procesados nativamente por Gemini
+- `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tiff` - Imágenes con OCR nativo
+
+**📊 ARCHIVOS PREPROCESADOS (Local):**
+- `.xlsx`, `.xls` - Excel con limpieza de filas/columnas vacías
+- `.eml`, `.msg` - Emails con formato estructurado
+- `.docx`, `.doc` - Word con extracción de texto y tablas
+
+### 🔍 **LOGGING MEJORADO**
+- **Logs detallados**: Clasificación por origen (DIRECTO vs PREPROCESADO)
+- **Métricas de archivos**: Conteo y tamaño de archivos directos
+- **Metadatos híbridos**: Información completa guardada en JSONs
+- **Timeout extendido**: 90 segundos para procesamiento híbrido
+
+### ⚠️ **LIMITACIONES Y CONSIDERACIONES**
+- **Límite**: Máximo 20 archivos directos por solicitud
+- **Sin fallback**: No retrocede a extracción local si falla archivo directo
+- **Compatibilidad**: Requiere parámetros opcionales en llamadas existentes
+- **Timeout**: Mayor tiempo de procesamiento para archivos grandes
+
+### 📝 **DOCUMENTACIÓN ACTUALIZADA**
+- **CHANGELOG.md**: Nueva sección de enfoque híbrido
+- **README.md**: Preparado para actualización (pendiente integración completa)
+- **Comentarios de código**: Documentación detallada de funciones híbridas
+
+---
+
 ## [2.6.2] - 2025-08-22
 
 ### 🔄 Reversión de Optimización

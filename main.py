@@ -701,56 +701,105 @@ async def procesar_facturas_integrado(
         # PASO 2: EXTRACCIÓN HÍBRIDA DE TEXTO
         # =================================
         
-        # Extraer texto de archivos con preprocesamiento Excel
-        extractor = ProcesadorArchivos()
-        textos_archivos_original = await extractor.procesar_multiples_archivos(archivos)
+        logger.info(f"🔄 Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
         
-        # Preprocesamiento específico para Excel
-        textos_archivos = {}
+        # SEPARAR ARCHIVOS POR ESTRATEGIA DE PROCESAMIENTO
+        archivos_directos = []      # PDFs e imágenes → Gemini directo (multimodal)
+        archivos_preprocesamiento = []  # Excel, Email, Word → Procesamiento local
+        
+        for archivo in archivos:
+            try:
+                nombre_archivo = archivo.filename
+                extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
+                
+                # Definir qué archivos van directo a Gemini (multimodal)
+                if extension == 'pdf' or extension in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
+                    archivos_directos.append(archivo)
+                    logger.info(f"📄 Archivo directo (multimodal): {nombre_archivo}")
+                else:
+                    # Excel, Email, Word y otros van a procesamiento local
+                    archivos_preprocesamiento.append(archivo)
+                    logger.info(f"📊 Archivo para preprocesamiento: {nombre_archivo}")
+            except Exception as e:
+                logger.warning(f"⚠️ Error clasificando archivo: {e}")
+                # En caso de error, enviar a preprocesamiento (más seguro)
+                logger.warning(f"Enviando a preprocesamiento por seguridad: {archivo.filename}")
+                archivos_preprocesamiento.append(archivo)
+        
+        logger.info(f"⚡ Estrategia híbrida multimodal definida:")
+        logger.info(f"📄 Archivos directos (multimodal): {len(archivos_directos)}")
+        logger.info(f"📊 Archivos preprocesamiento local: {len(archivos_preprocesamiento)}")
+        
+        # PROCESAR SOLO ARCHIVOS QUE NECESITAN PREPROCESAMIENTO LOCAL
+        if archivos_preprocesamiento:
+            logger.info(f"🔧 Iniciando extracción local para {len(archivos_preprocesamiento)} archivos...")
+            extractor = ProcesadorArchivos()
+            textos_archivos_original = await extractor.procesar_multiples_archivos(archivos_preprocesamiento)
+        else:
+            logger.info(f"ℹ️ No hay archivos para procesamiento local - Solo archivos directos multimodales")
+            textos_archivos_original = {}
+        
+        # Preprocesamiento específico para Excel (solo archivos locales)
+        textos_preprocesados = {}
         for nombre_archivo, contenido_original in textos_archivos_original.items():
             # Si es Excel, aplicar preprocesamiento
             if nombre_archivo.lower().endswith(('.xlsx', '.xls')):
                 try:
                     # Obtener contenido binario original del archivo
-                    archivo_obj = next((arch for arch in archivos if arch.filename == nombre_archivo), None)
+                    archivo_obj = next((arch for arch in archivos_preprocesamiento if arch.filename == nombre_archivo), None)
                     if archivo_obj:
                         await archivo_obj.seek(0)  # Resetear puntero
                         contenido_binario = await archivo_obj.read()
                         texto_preprocesado = preprocesar_excel_limpio(contenido_binario, nombre_archivo)
-                        textos_archivos[nombre_archivo] = texto_preprocesado
-                        logger.info(f" Excel preprocesado: {nombre_archivo}")
+                        textos_preprocesados[nombre_archivo] = texto_preprocesado
+                        logger.info(f"📊 Excel preprocesado: {nombre_archivo}")
                     else:
-                        textos_archivos[nombre_archivo] = contenido_original
+                        textos_preprocesados[nombre_archivo] = contenido_original
                 except Exception as e:
-                    logger.warning(f" Error preprocesando {nombre_archivo}: {e}")
-                    textos_archivos[nombre_archivo] = contenido_original
+                    logger.warning(f"⚠️ Error preprocesando {nombre_archivo}: {e}")
+                    textos_preprocesados[nombre_archivo] = contenido_original
             else:
-                textos_archivos[nombre_archivo] = contenido_original
+                textos_preprocesados[nombre_archivo] = contenido_original
         
-        logger.info(f" Textos extraídos de {len(textos_archivos)} archivos")
+        logger.info(f"✅ Extracción local completada: {len(textos_preprocesados)} textos extraídos")
         
         # =================================
-        # PASO 3: CLASIFICACIÓN INTELIGENTE
+        # PASO 3: CLASIFICACIÓN HÍBRIDA CON MULTIMODALIDAD
         # =================================
         
-        # Clasificar documentos y detectar consorcios/extranjera
+        # Clasificar documentos usando enfoque híbrido multimodal
         clasificador = ProcesadorGemini()
-        clasificacion, es_consorcio, es_facturacion_extranjera = await clasificador.clasificar_documentos(textos_archivos)
+        logger.info(f"🔄 Iniciando clasificación híbrida multimodal:")
+        logger.info(f"📄 Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
+        logger.info(f"📊 Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
+        
+        clasificacion, es_consorcio, es_facturacion_extranjera = await clasificador.clasificar_documentos(
+            archivos_directos=archivos_directos,
+            textos_preprocesados=textos_preprocesados
+        )
         
         logger.info(f" Documentos clasificados: {len(clasificacion)}")
         logger.info(f" Es consorcio: {es_consorcio}")
         logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
         
-        # Estructurar documentos clasificados
+        # Estructurar documentos clasificados (híbrido: directos + preprocesados)
         documentos_clasificados = {}
         for nombre_archivo, categoria in clasificacion.items():
-            if nombre_archivo in textos_archivos:
+            # Para archivos directos, el texto no está disponible (se procesó directamente por Gemini)
+            if nombre_archivo in textos_preprocesados:
                 documentos_clasificados[nombre_archivo] = {
                     "categoria": categoria,
-                    "texto": textos_archivos[nombre_archivo]
+                    "texto": textos_preprocesados[nombre_archivo]
+                }
+            else:
+                # Archivo directo (PDF/imagen) - procesado nativamente por Gemini
+                documentos_clasificados[nombre_archivo] = {
+                    "categoria": categoria,
+                    "texto": "[ARCHIVO_DIRECTO_MULTIMODAL]",
+                    "procesamiento": "directo_gemini"
                 }
         
-        # Guardar clasificación
+        # Guardar clasificación con información híbrida
         clasificacion_data = {
             "timestamp": datetime.now().isoformat(),
             "nit_administrativo": nit_administrativo,
@@ -759,7 +808,16 @@ async def procesar_facturas_integrado(
             "es_consorcio": es_consorcio,
             "es_facturacion_extranjera": es_facturacion_extranjera,
             "impuestos_aplicables": impuestos_a_procesar,
-            "procesamiento_paralelo": procesamiento_paralelo
+            "procesamiento_paralelo": procesamiento_paralelo,
+            "procesamiento_hibrido": {
+                "multimodalidad_activa": True,
+                "archivos_directos": len(archivos_directos),
+                "archivos_preprocesados": len(textos_preprocesados),
+                "total_archivos": len(archivos_directos) + len(textos_preprocesados),
+                "nombres_archivos_directos": [archivo.filename for archivo in archivos_directos],
+                "nombres_archivos_preprocesados": list(textos_preprocesados.keys()),
+                "version_multimodal": "2.8.0"
+            }
         }
         guardar_archivo_json(clasificacion_data, "clasificacion_documentos")
         logger.info(f" Clasificación completada: {len(clasificacion)} documentos")
@@ -780,7 +838,12 @@ async def procesar_facturas_integrado(
                 if es_consorcio:
                     tarea_retefuente = clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera)
                 else:
-                    tarea_retefuente = clasificador.analizar_factura(documentos_clasificados, es_facturacion_extranjera)
+                    # ✅ MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
+                    tarea_retefuente = clasificador.analizar_factura(
+                        documentos_clasificados, 
+                        es_facturacion_extranjera,
+                        archivos_directos=archivos_directos
+                    )
                 tareas_analisis.append(("retefuente", tarea_retefuente))
             
             # Tarea 2: Análisis de Impuestos Especiales (si aplican)
@@ -1145,7 +1208,12 @@ async def procesar_facturas_integrado(
                 if es_consorcio:
                     analisis_factura = await clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera)
                 else:
-                    analisis_factura = await clasificador.analizar_factura(documentos_clasificados, es_facturacion_extranjera)
+                    # ✅ MULTIMODALIDAD: Pasar archivos directos para análisis híbrido individual
+                    analisis_factura = await clasificador.analizar_factura(
+                        documentos_clasificados, 
+                        es_facturacion_extranjera,
+                        archivos_directos=archivos_directos
+                    )
                 
                 liquidador_retencion = LiquidadorRetencion()
                 if es_consorcio:

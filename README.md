@@ -1,42 +1,41 @@
-### ✅ **NUEVA VERSIÓN v2.6.2 (2025-08-22)**
+### ✅ **NUEVA VERSIÓN v2.8.2 (2025-08-28)**
 
-**🔄 Corrección de Regresión de Performance - Reversión ThreadPoolExecutor:**
-- ❌ **ThreadPoolExecutor REVERTIDO**: Era 50% más lento que asyncio.Semaphore(2)
-- ✅ **asyncio.Semaphore(2) RESTAURADO**: Solución correcta para I/O asíncrono
-- 🔧 **Overhead eliminado**: Sin threads innecesarios para llamados HTTP a Gemini API
-- 🚀 **Performance restaurada**: Vuelta a tiempos óptimos de ~30 segundos
-- 📈 **Mejora neta**: 33% reducción vs ThreadPoolExecutor (45s → 30s)
+**🚀 MULTIMODALIDAD INTEGRADA EN TODOS LOS IMPUESTOS:**
+- 📄 **PDFs e Imágenes**: Enviados directamente a Gemini sin extracción previa (nativo multimodal)
+- 📊 **Excel/Email/Word**: Mantienen preprocesamiento local optimizado para calidad máxima
+- ⚡ **Análisis híbrido**: RETEFUENTE, IVA, Estampilla, Obra Pública con archivos directos + textos
+- 🔄 **Una sola llamada**: Combina archivos directos + textos preprocesados en análisis unificado
+- ✅ **Compatibilidad total**: Sistema legacy funciona exactamente igual, nueva funcionalidad es aditiva
 
-**📈 Análisis Técnico - ¿Por qué ThreadPoolExecutor falló?**
+**🎯 Beneficios Técnicos de Multimodalidad:**
 ```
-🚫 Problema: Threading para I/O asíncrono es contraproducente
-🧵 Overhead: Crear threads + event loops + cleanup = latencia extra
-🔒 Bloqueo: run_until_complete() bloquea threads innecesariamente
-⚡ Solución: asyncio.Semaphore(2) = concurrencia nativa sin overhead
-```
-
-**📋 Logging Optimizado Restaurado:**
-```
-⚡ Ejecutando 4 tareas con máximo 2 workers simultáneos...
-🔄 Worker 1: Iniciando análisis de retefuente
-🔄 Worker 2: Iniciando análisis de impuestos_especiales
-✅ Worker 1: retefuente completado en 12.34s
-✅ Worker 2: impuestos_especiales completado en 15.43s
-⚡ Análisis paralelo completado en 28.76s total
+✅ Calidad superior: PDFs procesados nativamente sin pérdida de formato
+📊 Imágenes optimizadas: Facturas escaneadas con OCR nativo de Gemini
+⚡ Procesamiento rápido: Menos extracción local, más análisis directo
+🔍 Análisis preciso: Gemini ve formato, colores, tablas originales
 ```
 
-**📉 Performance Comparativa:**
+**📋 Ejemplo de Procesamiento Híbrido:**
 ```
-ThreadPoolExecutor (v2.6.1): ~45 segundos ❌ (LENTO)
-asyncio.Semaphore (v2.6.2):  ~30 segundos ✅ (CORRECTO)
-Mejora obtenida: 33% reducción de tiempo
+🔄 Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...
+📄 Archivo directo (multimodal): factura.pdf
+📊 Archivo para preprocesamiento: datos.xlsx
+⚡ Estrategia híbrida multimodal definida: 1 directo + 1 preprocesado
+🧠 Llamando a Gemini con 2 elementos: 1 prompt + 1 archivo directo
+✅ Respuesta híbrida de Gemini recibida: Análisis exitoso
 ```
 
-**🔧 Cambios Técnicos:**
-- ❌ **Eliminado**: `from concurrent.futures import ThreadPoolExecutor`
-- ❌ **Eliminado**: `ThreadPoolExecutor(max_workers=2)` y `loop.run_in_executor()`
-- ✅ **Restaurado**: `asyncio.Semaphore(2)` y `async with semaforo`
-- ✅ **Restaurado**: Función `ejecutar_tarea_con_worker()` original
+**🎨 Archivos Soportados por Estrategia:**
+```
+📄 DIRECTOS (Multimodal):   .pdf, .jpg, .png, .gif, .bmp, .tiff
+📊 PREPROCESADOS (Local):   .xlsx, .xls, .eml, .msg, .docx, .doc
+```
+
+**🔧 Funciones Nuevas Implementadas:**
+- ✅ **`analizar_factura()` híbrida**: Acepta archivos directos + textos preprocesados
+- ✅ **`_llamar_gemini_hibrido_factura()`**: Función reutilizable para todos los impuestos
+- ✅ **Prompts actualizados**: Todos soportan `nombres_archivos_directos`
+- ✅ **Timeout especializado**: 90s para análisis híbrido vs 60s para solo texto
 
 ---
 

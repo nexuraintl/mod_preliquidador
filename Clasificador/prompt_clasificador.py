@@ -6,23 +6,33 @@ Plantillas de prompts utilizadas por el clasificador de documentos.
 """
 
 import json
-from typing import Dict
+from typing import Dict, List
 
 
 
-def PROMPT_CLASIFICACION(textos_archivos: Dict[str, str]) -> str:
+def PROMPT_CLASIFICACION(textos_preprocesados: Dict[str, str], nombres_archivos_directos: List[str]) -> str:
     """
-    Genera el prompt para clasificar documentos fiscales colombianos.
+    🔄 Genera el prompt HÍBRIDO para clasificar documentos fiscales colombianos.
+    
+    ENFOQUE HÍBRIDO IMPLEMENTADO:
+    ✅ Archivos directos (PDFs/Imágenes): Enviados directamente, los verás adjuntos
+    ✅ Textos preprocesados (Excel/Email/Word): Incluidos como texto en el prompt
+    ✅ Modificación mínima del prompt original
     
     Args:
-        textos_archivos: Diccionario con nombre_archivo -> texto_extraido
+        textos_preprocesados: Diccionario con {nombre_archivo: texto_extraido} de archivos preprocesados
+        nombres_archivos_directos: Lista de nombres de archivos enviados directamente a Gemini
         
     Returns:
-        str: Prompt formateado para enviar a Gemini
+        str: Prompt formateado híbrido para enviar a Gemini
     """
     
+    # Construir lista de todos los archivos para informar al modelo
+    todos_los_archivos = nombres_archivos_directos + list(textos_preprocesados.keys())
+    total_archivos = len(todos_los_archivos)
+    
     return f"""
-Eres un experto en documentos fiscales colombianos. Tu tarea es clasificar cada uno de los siguientes documentos en una de estas categorías exactas:
+Eres un experto en documentos fiscales colombianos. Tu tarea es clasificar cada uno de los siguientes {total_archivos} documentos en una de estas categorías exactas:
 - FACTURA
 - RUT  
 - COTIZACION
@@ -54,7 +64,12 @@ INSTRUCCIONES:
    - Si hay múltiples NITs/empresas trabajando en conjunto
 
 DOCUMENTOS A CLASIFICAR:
-{json.dumps(textos_archivos, indent=2, ensure_ascii=False)}
+
+📄 **ARCHIVOS DIRECTOS (verás estos archivos adjuntos):**
+{_formatear_archivos_directos(nombres_archivos_directos)}
+
+📊 **TEXTOS PREPROCESADOS (Excel/Email/Word procesados localmente):**
+{_formatear_textos_preprocesados(textos_preprocesados)}
 
 RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 {{
@@ -69,8 +84,72 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 }}
 """
 
+def _formatear_archivos_directos(nombres_archivos_directos: List[str]) -> str:
+    """
+    Formatea la lista de archivos directos para el prompt.
+    
+    Args:
+        nombres_archivos_directos: Lista de nombres de archivos directos
+        
+    Returns:
+        str: Texto formateado para incluir en el prompt
+    """
+    if not nombres_archivos_directos:
+        return "- No hay archivos directos en esta solicitud"
+    
+    texto = ""
+    for i, nombre in enumerate(nombres_archivos_directos, 1):
+        extension = nombre.split('.')[-1].upper() if '.' in nombre else "DESCONOCIDO"
+        tipo_archivo = "PDF" if extension == "PDF" else "IMAGEN" if extension in ["JPG", "JPEG", "PNG", "GIF", "BMP", "TIFF"] else extension
+        texto += f"- {nombre} (ARCHIVO {tipo_archivo} ADJUNTO - lo verás directamente)\n"
+    
+    return texto.strip()
+
+def _formatear_textos_preprocesados(textos_preprocesados: Dict[str, str]) -> str:
+    """
+    Formatea los textos preprocesados para incluir en el prompt.
+    
+    Args:
+        textos_preprocesados: Diccionario con textos preprocesados
+        
+    Returns:
+        str: Texto formateado para incluir en el prompt
+    """
+    if not textos_preprocesados:
+        return "- No hay textos preprocesados en esta solicitud"
+    
+    import json
+    return json.dumps(textos_preprocesados, indent=2, ensure_ascii=False)
+
+def _generar_seccion_archivos_directos(nombres_archivos_directos: List[str]) -> str:
+    """
+    Genera sección informativa sobre archivos directos para análisis de factura.
+    
+    Args:
+        nombres_archivos_directos: Lista de nombres de archivos directos o None
+        
+    Returns:
+        str: Texto formateado para incluir en el prompt de análisis
+    """
+    if not nombres_archivos_directos:
+        return "📄 **ARCHIVOS DIRECTOS**: No hay archivos directos adjuntos."
+    
+    texto = "📄 **ARCHIVOS DIRECTOS ADJUNTOS** (verás estos archivos nativamente):\n"
+    for nombre in nombres_archivos_directos:
+        extension = nombre.split('.')[-1].upper() if '.' in nombre else "DESCONOCIDO"
+        if extension == "PDF":
+            tipo = "PDF"
+        elif extension in ["JPG", "JPEG", "PNG", "GIF", "BMP", "TIFF", "WEBP"]:
+            tipo = "IMAGEN"
+        else:
+            tipo = extension
+        texto += f"   - {nombre} (ARCHIVO {tipo} - procésalo directamente)\n"
+    
+    return texto.strip()
+
 def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: str, 
-                            cotizaciones_texto: str, anexo_contrato: str, conceptos_dict: dict) -> str:
+                            cotizaciones_texto: str, anexo_contrato: str, conceptos_dict: dict,
+                            nombres_archivos_directos: List[str] = None) -> str:
     """
     Genera el prompt para analizar factura y extraer información de retención.
     
@@ -110,6 +189,7 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
     {json.dumps(constantes_art383['limites_deducciones'], indent=2, ensure_ascii=False)}
     
     DOCUMENTOS DISPONIBLES:
+    {_generar_seccion_archivos_directos(nombres_archivos_directos)}
     
     FACTURA (DOCUMENTO PRINCIPAL):
     {factura_texto}
@@ -324,7 +404,8 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
     """
 
 def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: str, 
-                              cotizaciones_texto: str, anexo_contrato: str, conceptos_dict: dict) -> str:
+                              cotizaciones_texto: str, anexo_contrato: str, conceptos_dict: dict,
+                              nombres_archivos_directos: List[str] = None) -> str:
     """
     Genera el prompt optimizado para analizar consorcios.
     
@@ -571,7 +652,7 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
 def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexos_texto: str, 
                                        cotizaciones_texto: str, anexo_contrato: str, 
                                        conceptos_extranjeros_dict: dict, paises_convenio: list, 
-                                       preguntas_fuente: list) -> str:
+                                       preguntas_fuente: list, nombres_archivos_directos: List[str] = None) -> str:
     """
     Genera el prompt para analizar factura extranjera y determinar retenciones.
     
@@ -708,7 +789,7 @@ def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexo
 def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, anexos_texto: str, 
                                          cotizaciones_texto: str, anexo_contrato: str, 
                                          conceptos_extranjeros_dict: dict, paises_convenio: list, 
-                                         preguntas_fuente: list) -> str:
+                                         preguntas_fuente: list, nombres_archivos_directos: List[str] = None ) -> str:
     """
     Genera el prompt optimizado para analizar consorcios con facturación extranjera.
     
@@ -1447,7 +1528,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 • Si encuentra información parcial, marcar como "preliquidacion_sin_finalizar" con observaciones específicas
 • Consolidar información de TODOS los documentos de forma acumulativa
 • Especificar claramente dónde se encontró cada información
-• No inventar valores, solo usar información explícita en los documentos
+• NO INVENTAR VALORES, SOLO UTILIZAR LA INFORMACIÓN PRESENTE EN LOS DOCUMENTOS
     """
 
 if __name__ == '__main__':

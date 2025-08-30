@@ -24,6 +24,9 @@ import google.generativeai as genai
 from pydantic import BaseModel
 from typing import List, Optional
 
+# Importación adicional para archivos directos
+from fastapi import UploadFile
+
 # Configuración de logging
 logger = logging.getLogger(__name__)
 
@@ -145,29 +148,156 @@ class ProcesadorGemini:
         # Inicializar procesador de consorcios
         self.procesador_consorcios = ProcesadorConsorcios()
     
-    async def clasificar_documentos(self, textos_archivos: Dict[str, str]) -> Tuple[Dict[str, str], bool, bool]:
+    async def clasificar_documentos(
+        self, 
+        textos_archivos_o_directos = None,  # ✅ COMPATIBILIDAD TOTAL: Acepta cualquier tipo
+        archivos_directos: List[UploadFile] = None,  # 🆕 NUEVO: Archivos directos
+        textos_preprocesados: Dict[str, str] = None  # 🆕 NUEVO: Textos preprocesados
+    ) -> Tuple[Dict[str, str], bool, bool]:
         """
-        Primera llamada a Gemini: clasificar documentos en categorías, detectar consorcios y facturación extranjera.
+        🔄 FUNCIÓN HÍBRIDA CON COMPATIBILIDAD: Clasificación con archivos directos + textos preprocesados.
+        
+        MODOS DE USO:
+        ✅ MODO LEGACY: clasificar_documentos(textos_archivos) - Funciona como antes
+        ✅ MODO HÍBRIDO: clasificar_documentos(archivos_directos=[], textos_preprocesados={})
+        
+        ENFOQUE HÍBRIDO IMPLEMENTADO:
+        ✅ PDFs e Imágenes → Enviados directamente a Gemini (multimodal)
+        ✅ Excel/Email/Word → Procesados localmente y enviados como texto
+        ✅ Límite: Máximo 20 archivos directos
+        ✅ Mantener prompts existentes con modificaciones mínimas
         
         Args:
-            textos_archivos: Diccionario {nombre_archivo: texto_extraido}
+            textos_archivos: [LEGACY] Diccionario {nombre_archivo: texto_extraido} - Compatibilidad
+            archivos_directos: [NUEVO] Lista de archivos para envío directo (PDFs e imágenes)
+            textos_preprocesados: [NUEVO] Diccionario {nombre_archivo: texto_extraido} para archivos preprocesados
             
         Returns:
             Tuple[Dict[str, str], bool, bool]: (clasificacion_documentos, es_consorcio, es_facturacion_extranjera)
             
         Raises:
             ValueError: Si hay error en el procesamiento con Gemini
+            HTTPException: Si se excede límite de archivos directos
         """
-        logger.info(f"Clasificando {len(textos_archivos)} documentos con Gemini")
+        # 🔄 DETECCIÓN AUTOMÁTICA DE MODO MEJORADA
+        if textos_archivos_o_directos is not None:
+            # DETECTAR TIPO DE ENTRADA
+            if isinstance(textos_archivos_o_directos, dict):
+                # MODO LEGACY: Dict[str, str] - signatura original de main.py
+                logger.info(f"🔙 MODO LEGACY detectado: {len(textos_archivos_o_directos)} textos recibidos")
+                logger.info("📋 Convirtiendo a modo híbrido interno...")
+                
+                archivos_directos = []
+                textos_preprocesados = textos_archivos_o_directos
+                
+            elif isinstance(textos_archivos_o_directos, list):
+                # MODO HÍBRIDO: List[UploadFile] - nueva signatura híbrida
+                logger.info(f"🆕 MODO HÍBRIDO detectado: {len(textos_archivos_o_directos)} archivos directos")
+                
+                archivos_directos = textos_archivos_o_directos
+                textos_preprocesados = textos_preprocesados or {}
+                
+            else:
+                # MODO DESCONOCIDO: Error
+                tipo_recibido = type(textos_archivos_o_directos).__name__
+                error_msg = f"Tipo de entrada no soportado: {tipo_recibido}. Se esperaba Dict[str, str] (legacy) o List[UploadFile] (híbrido)"
+                logger.error(f"❌ {error_msg}")
+                raise ValueError(error_msg)
+        
+        else:
+            # MODO HÍBRIDO EXPLÍCITO: usar parámetros específicos
+            logger.info("🆕 MODO HÍBRIDO EXPLÍCITO detectado")
+            archivos_directos = archivos_directos or []
+            textos_preprocesados = textos_preprocesados or {}
+        
+        # Continuar con lógica híbrida usando variables normalizadas
+        archivos_directos = archivos_directos or []
+        textos_preprocesados = textos_preprocesados or {}        
+        total_archivos = len(archivos_directos) + len(textos_preprocesados)
+        
+        logger.info(f"🔄 CLASIFICACIÓN HÍBRIDA iniciada:")
+        logger.info(f"📄 Archivos directos (PDFs/Imágenes): {len(archivos_directos)}")
+        logger.info(f"📊 Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
+        logger.info(f"📋 Total archivos a clasificar: {total_archivos}")
+        
+        # ✅ VALIDACIÓN: Límite de archivos directos (20)
+        if len(archivos_directos) > 20:
+            error_msg = f"Límite excedido: {len(archivos_directos)} archivos directos (máximo 20)"
+            logger.error(f"❌ {error_msg}")
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Demasiados archivos directos",
+                    "detalle": error_msg,
+                    "limite_maximo": 20,
+                    "archivos_recibidos": len(archivos_directos),
+                    "sugerencia": "Reduzca el número de PDFs/imágenes o use procesamiento por lotes"
+                }
+            )
+        
+        # ✅ VALIDACIÓN: Al menos un archivo debe estar presente
+        if total_archivos == 0:
+            error_msg = "No se recibieron archivos para clasificar"
+            logger.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
         try:
-            # Generar prompt usando la función del módulo de prompts
-            prompt = PROMPT_CLASIFICACION(textos_archivos)
+            # PASO 1: Crear lista de nombres de archivos directos para el prompt (con manejo seguro)
+            nombres_archivos_directos = []
+            for archivo in archivos_directos:
+                try:
+                    if hasattr(archivo, 'filename') and archivo.filename:
+                        nombres_archivos_directos.append(archivo.filename)
+                    else:
+                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Error obteniendo filename: {e}")
+                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
             
-            # Llamar a Gemini
-            respuesta = await self._llamar_gemini(prompt)
-            logger.info(f"Respuesta cruda de Gemini: {respuesta[:500]}...")  # Log para debugging
+            logger.info(f"📋 Archivos directos para Gemini: {nombres_archivos_directos}")
+            logger.info(f"📋 Textos preprocesados: {list(textos_preprocesados.keys())}")
             
+            # PASO 2: Generar prompt híbrido usando función modificada
+            prompt = PROMPT_CLASIFICACION(textos_preprocesados, nombres_archivos_directos)
+            
+            # PASO 3: Preparar contenido para Gemini (archivos directos + prompt)
+            contents = [prompt]
+            
+            # Agregar archivos directos al contenido (con manejo seguro)
+            for i, archivo in enumerate(archivos_directos):
+                try:
+                    # Resetear el puntero del archivo
+                    if hasattr(archivo, 'seek'):
+                        await archivo.seek(0)
+                    
+                    # Leer contenido del archivo
+                    if hasattr(archivo, 'read'):
+                        archivo_bytes = await archivo.read()
+                    else:
+                        # Si no es un UploadFile estándar, asumir que es bytes directo
+                        archivo_bytes = archivo if isinstance(archivo, bytes) else bytes(archivo)
+                    
+                    contents.append(archivo_bytes)
+                    
+                    # Obtener nombre seguro para logging
+                    nombre_archivo = nombres_archivos_directos[i] if i < len(nombres_archivos_directos) else f"archivo_{i+1}"
+                    logger.info(f"➕ Archivo directo agregado: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error procesando archivo directo {i+1}: {e}")
+                    # Continuar con el siguiente archivo en lugar de fallar completamente
+                    continue
+            
+            # PASO 4: Llamar a Gemini con contenido híbrido
+            logger.info(f"🧠 Llamando a Gemini con {len(contents)} elementos: 1 prompt + {len(archivos_directos)} archivos")
+            
+            # Usar el modelo directamente en lugar de _llamar_gemini para archivos directos
+            respuesta = await self._llamar_gemini_hibrido(contents)
+            
+            logger.info(f"✅ Respuesta híbrida de Gemini recibida: {respuesta[:500]}...")
+            
+            # PASO 5: Procesar respuesta (igual que antes)
             # Limpiar respuesta si viene con texto extra
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
             
@@ -182,35 +312,285 @@ class ProcesadorGemini:
             es_facturacion_extranjera = resultado.get("es_facturacion_extranjera", False)
             indicadores_extranjera = resultado.get("indicadores_extranjera", [])
             
-            # Guardar respuesta de clasificación en Results
-            await self._guardar_respuesta("clasificacion_documentos.json", resultado)
+            # PASO 6: Guardar respuesta con metadatos del procesamiento híbrido
+            clasificacion_data_hibrida = {
+                **resultado,
+                "metadatos_hibridos": {
+                    "procesamiento_hibrido": True,
+                    "archivos_directos": nombres_archivos_directos,
+                    "archivos_preprocesados": list(textos_preprocesados.keys()),
+                    "total_archivos": total_archivos,
+                    "timestamp": datetime.now().isoformat(),
+                    "version": "2.4.0_hibrido"
+                }
+            }
             
-            logger.info(f"Clasificación exitosa: {len(clasificacion)} documentos clasificados")
-            logger.info(f"Consorcio detectado: {es_consorcio}")
-            logger.info(f"Facturación extranjera detectada: {es_facturacion_extranjera}")
+            await self._guardar_respuesta("clasificacion_documentos_hibrido.json", clasificacion_data_hibrida)
+            
+            # PASO 7: Logging de resultados
+            logger.info(f"✅ Clasificación híbrida exitosa: {len(clasificacion)} documentos clasificados")
+            logger.info(f"🏢 Consorcio detectado: {es_consorcio}")
+            logger.info(f"🌍 Facturación extranjera detectada: {es_facturacion_extranjera}")
             if es_facturacion_extranjera and indicadores_extranjera:
-                logger.info(f"Indicadores extranjera: {indicadores_extranjera}")
+                logger.info(f"🔍 Indicadores extranjera: {indicadores_extranjera}")
             
+            # PASO 8: Logging detallado por archivo
+            for nombre_archivo, categoria in clasificacion.items():
+                origen = "DIRECTO" if nombre_archivo in nombres_archivos_directos else "PREPROCESADO"
+                logger.info(f"📄 {nombre_archivo} → {categoria} ({origen})")
             
             return clasificacion, es_consorcio, es_facturacion_extranjera
             
         except json.JSONDecodeError as e:
-            logger.error(f"Error parseando JSON de Gemini: {e}")
+            logger.error(f"❌ Error parseando JSON híbrido de Gemini: {e}")
             logger.error(f"Respuesta problemática: {respuesta}")
             # Fallback: clasificar manualmente basado en nombres
-            clasificacion_fb = self._clasificacion_fallback(textos_archivos)
+            clasificacion_fb = self._clasificacion_fallback_hibrida(archivos_directos, textos_preprocesados)
             return clasificacion_fb, False, False  # Asumir que no es consorcio ni extranjera en fallback
         except Exception as e:
-            logger.error(f"Error en clasificación de documentos: {e}")
-            raise ValueError(f"Error clasificando documentos: {str(e)}")
+            logger.error(f"❌ Error en clasificación híbrida de documentos: {e}")
+            # Logging seguro de archivos directos fallidos
+            archivos_fallidos_nombres = []
+            for archivo in archivos_directos:
+                try:
+                    if hasattr(archivo, 'filename') and archivo.filename:
+                        archivos_fallidos_nombres.append(archivo.filename)
+                    else:
+                        archivos_fallidos_nombres.append("archivo_sin_nombre")
+                except Exception:
+                    archivos_fallidos_nombres.append("archivo_con_error")
+            
+            logger.error(f"📊 Archivos directos fallidos: {archivos_fallidos_nombres}")
+            logger.error(f"📊 Textos preprocesados fallidos: {list(textos_preprocesados.keys())}")
+            raise ValueError(f"Error en clasificación híbrida: {str(e)}")
 
-    async def analizar_factura(self, documentos_clasificados: Dict[str, Dict], es_facturacion_extranjera: bool = False) -> AnalisisFactura:
+    # ===============================
+    # NUEVA FUNCIÓN: _llamar_gemini_hibrido
+    # ===============================
+    
+    async def _llamar_gemini_hibrido(self, contents: List) -> str:
         """
-        Segunda llamada a Gemini: analizar factura y extraer información para retención.
+        Llamada especial a Gemini para contenido híbrido (prompt + archivos directos).
+        
+        CORREGIDO: Ahora crea objetos con formato correcto para Gemini multimodal.
+        
+        Args:
+            contents: Lista con prompt + archivos UploadFile [prompt_str, archivo1_UploadFile, archivo2_UploadFile, ...]
+            
+        Returns:
+            str: Respuesta de Gemini
+            
+        Raises:
+            ValueError: Si hay error en la llamada a Gemini
+        """
+        try:
+            timeout_segundos = 90.0
+            
+            logger.info(f"🧠 Llamada híbrida a Gemini con timeout de {timeout_segundos}s")
+            logger.info(f"📋 Contenido: 1 prompt + {len(contents) - 1} archivos directos")
+            
+            # ✅ CREAR CONTENIDO MULTIMODAL CORRECTO
+            contenido_multimodal = []
+            
+            # Agregar prompt (primer elemento)
+            if contents:
+                prompt_texto = contents[0]
+                contenido_multimodal.append(prompt_texto)
+                logger.info(f"✅ Prompt agregado: {len(prompt_texto):,} caracteres")
+            
+            # ✅ PROCESAR ARCHIVOS DIRECTOS CORRECTAMENTE
+            archivos_directos = contents[1:] if len(contents) > 1 else []
+            for i, archivo_elemento in enumerate(archivos_directos):
+                try:
+                    # Si es bytes (resultado de archivo.read()), necesitamos crear objeto correcto
+                    if isinstance(archivo_elemento, bytes):
+                        # Este es el problema: bytes raw sin información de tipo
+                        # Intentar detectar tipo de archivo por magic bytes
+                        if archivo_elemento.startswith(b'%PDF'):
+                            # Es un PDF
+                            archivo_objeto = {
+                                "mime_type": "application/pdf",
+                                "data": archivo_elemento
+                            }
+                            logger.info(f"✅ PDF detectado por magic bytes: {len(archivo_elemento):,} bytes")
+                        elif archivo_elemento.startswith((b'\xff\xd8\xff', b'\x89PNG')):
+                            # Es imagen JPEG o PNG
+                            if archivo_elemento.startswith(b'\xff\xd8\xff'):
+                                mime_type = "image/jpeg"
+                            else:
+                                mime_type = "image/png"
+                            archivo_objeto = {
+                                "mime_type": mime_type,
+                                "data": archivo_elemento
+                            }
+                            logger.info(f"✅ Imagen detectada por magic bytes: {mime_type}, {len(archivo_elemento):,} bytes")
+                        else:
+                            # Tipo genérico
+                            archivo_objeto = {
+                                "mime_type": "application/octet-stream",
+                                "data": archivo_elemento
+                            }
+                            logger.info(f"✅ Archivo genérico: {len(archivo_elemento):,} bytes")
+                    
+                    elif hasattr(archivo_elemento, 'read'):
+                        # Es un UploadFile que no se ha leído aún
+                        await archivo_elemento.seek(0)
+                        archivo_bytes = await archivo_elemento.read()
+                        
+                        # Determinar MIME type por extension
+                        nombre_archivo = getattr(archivo_elemento, 'filename', f'archivo_{i+1}')
+                        extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
+                        
+                        if extension == 'pdf':
+                            mime_type = "application/pdf"
+                        elif extension in ['jpg', 'jpeg']:
+                            mime_type = "image/jpeg"
+                        elif extension == 'png':
+                            mime_type = "image/png"
+                        elif extension == 'gif':
+                            mime_type = "image/gif"
+                        elif extension in ['bmp']:
+                            mime_type = "image/bmp"
+                        elif extension in ['tiff', 'tif']:
+                            mime_type = "image/tiff"
+                        elif extension == 'webp':
+                            mime_type = "image/webp"
+                        else:
+                            mime_type = "application/octet-stream"
+                        
+                        archivo_objeto = {
+                            "mime_type": mime_type,
+                            "data": archivo_bytes
+                        }
+                        logger.info(f"✅ Archivo {i+1} procesado: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
+                    
+                    else:
+                        # Tipo desconocido, intentar convertir
+                        logger.warning(f"⚠️ Tipo de archivo desconocido: {type(archivo_elemento)}")
+                        archivo_objeto = {
+                            "mime_type": "application/octet-stream",
+                            "data": bytes(archivo_elemento) if not isinstance(archivo_elemento, bytes) else archivo_elemento
+                        }
+                    
+                    contenido_multimodal.append(archivo_objeto)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error procesando archivo {i+1}: {e}")
+                    continue
+            
+            # ✅ LLAMAR A GEMINI CON CONTENIDO MULTIMODAL CORRECTO
+            logger.info(f"🚀 Enviando a Gemini: {len(contenido_multimodal)} elementos multimodales")
+            
+            loop = asyncio.get_event_loop()
+            
+            respuesta = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, 
+                    lambda: self.modelo.generate_content(contenido_multimodal)
+                ),
+                timeout=timeout_segundos
+            )
+            
+            if not respuesta:
+                raise ValueError("Gemini devolvió respuesta None en modo híbrido")
+                
+            if not hasattr(respuesta, 'text') or not respuesta.text:
+                raise ValueError("Gemini devolvió respuesta sin texto en modo híbrido")
+                
+            texto_respuesta = respuesta.text.strip()
+            
+            if not texto_respuesta:
+                raise ValueError("Gemini devolvió texto vacío en modo híbrido")
+                
+            logger.info(f"✅ Respuesta híbrida de Gemini recibida: {len(texto_respuesta):,} caracteres")
+            return texto_respuesta
+            
+        except asyncio.TimeoutError:
+            error_msg = f"Gemini tardó más de {timeout_segundos}s en procesar archivos directos"
+            logger.error(f"❌ Timeout híbrido: {error_msg}")
+            raise ValueError(error_msg)
+        except Exception as e:
+            logger.error(f"❌ Error llamando a Gemini en modo híbrido: {e}")
+            logger.error(f"🔍 Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
+            raise ValueError(f"Error híbrido de Gemini: {str(e)}")
+    
+    def _clasificacion_fallback_hibrida(
+        self, 
+        archivos_directos: List[UploadFile], 
+        textos_preprocesados: Dict[str, str]
+    ) -> Dict[str, str]:
+        """
+        Clasificación de emergencia híbrida basada en nombres de archivo.
+        
+        Args:
+            archivos_directos: Lista de archivos directos
+            textos_preprocesados: Diccionario con textos preprocesados
+            
+        Returns:
+            Dict[str, str]: Clasificación basada en nombres
+        """
+        resultado = {}
+        
+        # Clasificar archivos directos (con manejo seguro)
+        for i, archivo in enumerate(archivos_directos):
+            try:
+                if hasattr(archivo, 'filename') and archivo.filename:
+                    nombre_archivo = archivo.filename
+                else:
+                    nombre_archivo = f"archivo_directo_{i+1}"
+            except Exception:
+                nombre_archivo = f"archivo_directo_{i+1}"
+                
+            resultado[nombre_archivo] = self._clasificar_por_nombre(nombre_archivo)
+        
+        # Clasificar textos preprocesados
+        for nombre_archivo in textos_preprocesados.keys():
+            resultado[nombre_archivo] = self._clasificar_por_nombre(nombre_archivo)
+        
+        logger.warning(f"⚠️ Usando clasificación híbrida fallback para {len(resultado)} archivos")
+        return resultado
+    
+    def _clasificar_por_nombre(self, nombre_archivo: str) -> str:
+        """
+        Clasifica un archivo basándose únicamente en su nombre.
+        
+        Args:
+            nombre_archivo: Nombre del archivo
+            
+        Returns:
+            str: Categoría asignada
+        """
+        nombre_lower = nombre_archivo.lower()
+        
+        if 'factura' in nombre_lower or 'fact' in nombre_lower:
+            return "FACTURA"
+        elif 'rut' in nombre_lower:
+            return "RUT"
+        elif 'cotiz' in nombre_lower or 'presupuesto' in nombre_lower:
+            return "COTIZACION"
+        elif 'contrato' in nombre_lower:
+            return "ANEXO CONCEPTO DE CONTRATO"
+        else:
+            return "ANEXO"
+
+    async def analizar_factura(
+        self, 
+        documentos_clasificados: Dict[str, Dict], 
+        es_facturacion_extranjera: bool = False,
+        archivos_directos: List[UploadFile] = None  # 🆕 NUEVO: Soporte multimodal
+    ) -> AnalisisFactura:
+        """
+        🔄 ANÁLISIS HÍBRIDO MULTIMODAL: Analizar factura con archivos directos + textos preprocesados.
+        
+        FUNCIONALIDAD HÍBRIDA:
+        ✅ Archivos directos (PDFs/imágenes): Enviados nativamente a Gemini
+        ✅ Textos preprocesados: Documentos ya extraidos localmente
+        ✅ Combinación inteligente: Una sola llamada con contenido mixto
         
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
             es_facturacion_extranjera: Si es facturación extranjera (usa prompts especializados)
+            archivos_directos: Lista de archivos para envío directo a Gemini (PDFs/imágenes)
             
         Returns:
             AnalisisFactura: Análisis completo de la factura
@@ -218,7 +598,15 @@ class ProcesadorGemini:
         Raises:
             ValueError: Si no se encuentra factura o hay error en procesamiento
         """
-        logger.info("Analizando factura con Gemini para extracción de información")
+        # 📊 LOGGING HÍBRIDO: Identificar estrategia de procesamiento
+        archivos_directos = archivos_directos or []
+        total_archivos_directos = len(archivos_directos)
+        total_textos_preprocesados = len(documentos_clasificados)
+        
+        if total_archivos_directos > 0:
+            logger.info(f"🔄 Analizando factura HÍBRIDO: {total_archivos_directos} directos + {total_textos_preprocesados} preprocesados")
+        else:
+            logger.info(f"📄 Analizando factura TRADICIONAL: {total_textos_preprocesados} textos preprocesados")
         
         # Extraer documentos por categoría
         factura_texto = ""
@@ -241,35 +629,93 @@ class ProcesadorGemini:
             elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
                 anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
         
-        if not factura_texto:
-            raise ValueError("No se encontró una FACTURA en los documentos proporcionados")
+        # ✅ VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
+        hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
+        nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
+        posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
+        
+        if not hay_factura_texto and not posibles_facturas_directas:
+            raise ValueError("No se encontró una FACTURA en los documentos (ni texto ni archivo directo)")
         
         try:
-            if es_facturacion_extranjera:
-                # NUEVA FUNCIONALIDAD: Usar prompts especializados para facturación extranjera
-                logger.info("Usando prompt especializado para facturación extranjera")
-                conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
-                paises_convenio = self._obtener_paises_convenio()
-                preguntas_fuente = self._obtener_preguntas_fuente_nacional()
-                
-                prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
-                    factura_texto, rut_texto, anexos_texto, 
-                    cotizaciones_texto, anexo_contrato, 
-                    conceptos_extranjeros_dict, paises_convenio, preguntas_fuente
-                )
-            else:
-                # Flujo original para facturación nacional
-                logger.info("Usando prompt para facturación nacional")
-                conceptos_dict = self._obtener_conceptos_retefuente()
-                
-                prompt = PROMPT_ANALISIS_FACTURA(
-                    factura_texto, rut_texto, anexos_texto, 
-                    cotizaciones_texto, anexo_contrato, conceptos_dict
-                )
+            # 🔄 DECIDIR ESTRATEGIA: HÍBRIDO vs TRADICIONAL
+            usar_hibrido = total_archivos_directos > 0
             
-            # Llamar a Gemini
-            respuesta = await self._llamar_gemini(prompt)
-            logger.info(f"Respuesta análisis de Gemini: {respuesta[:500]}...")  # Log para debugging
+            if usar_hibrido:
+                logger.info("⚡ Usando análisis HÍBRIDO con archivos directos + textos preprocesados")
+                
+                # 📄 CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
+                nombres_archivos_directos = []
+                for archivo in archivos_directos:
+                    try:
+                        if hasattr(archivo, 'filename') and archivo.filename:
+                            nombres_archivos_directos.append(archivo.filename)
+                        else:
+                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error obteniendo nombre de archivo: {e}")
+                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                
+                # GENERAR PROMPT HÍBRIDO
+                if es_facturacion_extranjera:
+                    logger.info("🌍 Prompt híbrido para facturación extranjera")
+                    conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
+                    paises_convenio = self._obtener_paises_convenio()
+                    preguntas_fuente = self._obtener_preguntas_fuente_nacional()
+                    
+                    prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
+                        factura_texto, rut_texto, anexos_texto, 
+                        cotizaciones_texto, anexo_contrato, 
+                        conceptos_extranjeros_dict, paises_convenio, preguntas_fuente,
+                        nombres_archivos_directos  # 🆕 NUEVO PARÁMETRO
+                    )
+                else:
+                    logger.info("🇨🇴 Prompt híbrido para facturación nacional")
+                    conceptos_dict = self._obtener_conceptos_retefuente()
+                    
+                    prompt = PROMPT_ANALISIS_FACTURA(
+                        factura_texto, rut_texto, anexos_texto, 
+                        cotizaciones_texto, anexo_contrato, conceptos_dict,
+                        nombres_archivos_directos  # 🆕 NUEVO PARÁMETRO
+                    )
+                
+                # ⚡ LLAMAR A GEMINI HÍBRIDO
+                respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos)
+                
+            else:
+                # 📄 FLUJO TRADICIONAL (solo textos preprocesados)
+                logger.info("📄 Usando análisis TRADICIONAL con solo textos preprocesados")
+                
+                if es_facturacion_extranjera:
+                    logger.info("Usando prompt especializado para facturación extranjera")
+                    conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
+                    paises_convenio = self._obtener_paises_convenio()
+                    preguntas_fuente = self._obtener_preguntas_fuente_nacional()
+                    
+                    prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
+                        factura_texto, rut_texto, anexos_texto, 
+                        cotizaciones_texto, anexo_contrato, 
+                        conceptos_extranjeros_dict, paises_convenio, preguntas_fuente
+                    )
+                else:
+                    logger.info("Usando prompt para facturación nacional")
+                    conceptos_dict = self._obtener_conceptos_retefuente()
+                    
+                    prompt = PROMPT_ANALISIS_FACTURA(
+                        factura_texto, rut_texto, anexos_texto, 
+                        cotizaciones_texto, anexo_contrato, conceptos_dict
+                    )
+                
+                # 📄 LLAMAR A GEMINI TRADICIONAL
+                respuesta = await self._llamar_gemini(prompt)
+            # ✅ LOG DE RESPUESTA SEGÚN ESTRATEGIA
+            if usar_hibrido:
+                logger.info(f"⚡ Respuesta análisis HÍBRIDO: {len(respuesta):,} caracteres")
+            else:
+                logger.info(f"📄 Respuesta análisis tradicional: {len(respuesta):,} caracteres")
+            
+            # Log de muestra para debugging (primeros 500 caracteres)
+            logger.info(f"📝 Muestra de respuesta: {respuesta[:500]}...")
             
             # Limpiar respuesta si viene con texto extra
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
@@ -512,7 +958,135 @@ class ProcesadorGemini:
         except Exception as e:
             logger.error(f"Error en análisis de impuestos especiales: {e}")
             raise ValueError(f"Error analizando impuestos especiales: {str(e)}")
-    
+        
+    async def _llamar_gemini_hibrido_factura(self, prompt: str, archivos_directos: List[UploadFile]) -> str:
+        
+             
+        """
+         FUNCIÓN HÍBRIDA PARA ANÁLISIS DE FACTURA: Prompt + Archivos directos para análisis de retefuente.
+         
+         FUNCIONALIDAD:
+         ✅ Análisis especializado de facturas con multimodalidad
+         ✅ Combina prompt de análisis + archivos PDFs/imágenes
+         ✅ Optimizado para análisis de retefuente, consorcios y extranjera
+         ✅ Reutilizable para todos los tipos de análisis de facturas
+         ✅ Timeout extendido para análisis complejo
+         
+         Args:
+             prompt: Prompt especializado para análisis (PROMPT_ANALISIS_FACTURA, etc.)
+             archivos_directos: Lista de archivos para envío directo a Gemini
+             
+         Returns:
+             str: Respuesta de Gemini con análisis completo
+             
+         Raises:
+             ValueError: Si hay error en la llamada a Gemini
+         """
+        try:
+            # Timeout extendido para análisis de facturas (más complejo que clasificación)
+            timeout_segundos = 120.0  # 2 minutos para análisis detallado
+            
+            logger.info(f"🧠 Análisis híbrido de factura con timeout de {timeout_segundos}s")
+            logger.info(f"📋 Contenido: 1 prompt de análisis + {len(archivos_directos)} archivos directos")
+            
+            # ✅ CREAR CONTENIDO MULTIMODAL CORRECTO PARA ANÁLISIS
+            contenido_multimodal = []
+            
+            # Agregar prompt de análisis (primer elemento)
+            contenido_multimodal.append(prompt)
+            logger.info(f"✅ Prompt de análisis agregado: {len(prompt):,} caracteres")
+            
+            # ✅ PROCESAR ARCHIVOS DIRECTOS PARA ANÁLISIS
+            for i, archivo in enumerate(archivos_directos):
+                try:
+                    # Resetear puntero y leer archivo
+                    if hasattr(archivo, 'seek'):
+                        await archivo.seek(0)
+                    
+                    archivo_bytes = await archivo.read()
+                    
+                    # Determinar MIME type por magic bytes o extensión
+                    nombre_archivo = getattr(archivo, 'filename', f'archivo_analisis_{i+1}')
+                    
+                    if archivo_bytes.startswith(b'%PDF'):
+                        # PDF
+                        archivo_objeto = {
+                            "mime_type": "application/pdf",
+                            "data": archivo_bytes
+                        }
+                        logger.info(f"✅ PDF para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
+                    elif archivo_bytes.startswith((b'\xff\xd8\xff', b'\x89PNG')):
+                        # Imagen JPEG o PNG
+                        if archivo_bytes.startswith(b'\xff\xd8\xff'):
+                            mime_type = "image/jpeg"
+                        else:
+                            mime_type = "image/png"
+                        archivo_objeto = {
+                            "mime_type": mime_type,
+                            "data": archivo_bytes
+                        }
+                        logger.info(f"✅ Imagen para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
+                    else:
+                        # Detectar por extensión como fallback
+                        extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
+                        
+                        mime_type_map = {
+                            'pdf': 'application/pdf',
+                            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                            'png': 'image/png', 'gif': 'image/gif',
+                            'bmp': 'image/bmp', 'tiff': 'image/tiff', 'tif': 'image/tiff',
+                            'webp': 'image/webp'
+                        }
+                        mime_type = mime_type_map.get(extension, 'application/octet-stream')
+                        
+                        archivo_objeto = {
+                            "mime_type": mime_type,
+                            "data": archivo_bytes
+                        }
+                        logger.info(f"✅ Archivo para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
+                    
+                    contenido_multimodal.append(archivo_objeto)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error procesando archivo {i+1} para análisis: {e}")
+                    continue
+            
+            # ✅ LLAMAR A GEMINI CON CONTENIDO MULTIMODAL PARA ANÁLISIS
+            logger.info(f"🚀 Enviando análisis a Gemini: {len(contenido_multimodal)} elementos")
+            
+            loop = asyncio.get_event_loop()
+            
+            respuesta = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, 
+                    lambda: self.modelo.generate_content(contenido_multimodal)
+                ),
+                timeout=timeout_segundos
+            )
+            
+            if not respuesta:
+                raise ValueError("Gemini devolvió respuesta None en análisis híbrido")
+                
+            if not hasattr(respuesta, 'text') or not respuesta.text:
+                raise ValueError("Gemini devolvió respuesta sin texto en análisis híbrido")
+                
+            texto_respuesta = respuesta.text.strip()
+            
+            if not texto_respuesta:
+                raise ValueError("Gemini devolvió texto vacío en análisis híbrido")
+                
+            logger.info(f"✅ Análisis híbrido de factura completado: {len(texto_respuesta):,} caracteres")
+            return texto_respuesta
+            
+        except asyncio.TimeoutError:
+            error_msg = f"Análisis híbrido tardó más de {timeout_segundos}s en completarse"
+            logger.error(f"❌ Timeout en análisis híbrido: {error_msg}")
+            raise ValueError(error_msg)
+        except Exception as e:
+            logger.error(f"❌ Error en análisis híbrido de factura: {e}")
+            logger.error(f"🔍 Archivos enviados: {[getattr(archivo, 'filename', 'sin_nombre') for archivo in archivos_directos]}")
+            raise ValueError(f"Error híbrido en análisis de factura: {str(e)}")
+        
     async def _llamar_gemini(self, prompt: str, usar_modelo_consorcio: bool = False) -> str:
         """
         Realiza llamada a Gemini con manejo de errores y timeout MEJORADO.
