@@ -1,5 +1,54 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [2.8.3] - 2025-09-01
+
+### 🛡️ **VALIDACIÓN ROBUSTA DE PDFs - SOLUCIÓN CRÍTICA**
+- **🐛 CORREGIDO**: Error crítico "archivo no tiene páginas" en llamadas a API de Gemini
+  - Problema solucionado en `_llamar_gemini_hibrido_factura()` con validación previa de PDFs
+  - Implementación de retry logic y validación de contenido antes del envío
+
+### 🆕 **NUEVAS FUNCIONES DE VALIDACIÓN**
+- **`_leer_archivo_seguro()`**: Lectura segura de archivos con single retry
+  - ✅ Validación de tamaño mínimo (100 bytes para PDFs)
+  - ✅ Verificación de contenido no vacío
+  - ✅ Single retry con pausa de 0.1-0.2 segundos
+  - ✅ Manejo específico de archivos UploadFile
+- **`_validar_pdf_tiene_paginas()`**: Validación específica de PDFs con PyPDF2
+  - ✅ Verificación de número de páginas > 0
+  - ✅ Detección de PDFs escaneados (sin texto extraíble)
+  - ✅ Validación de contenido de primera página
+  - ✅ Manejo seguro de streams y recursos
+
+### 🔧 **MEJORADO**: Función `_llamar_gemini_hibrido_factura()`
+- **ANTES**: Procesamiento directo sin validación → Fallas con PDFs problemáticos
+- **AHORA**: Validación robusta en 2 pasos:
+  1. **Lectura segura**: `_leer_archivo_seguro()` con retry
+  2. **Validación específica**: `_validar_pdf_tiene_paginas()` para PDFs
+- **✅ Omisión inteligente**: Archivos problemáticos se omiten sin fallar todo el procesamiento
+- **✅ Logging mejorado**: Identificación clara de archivos validados vs omitidos
+- **✅ Validación final**: Verificación de que hay archivos válidos antes de enviar a Gemini
+
+### 🚨 **MANEJO DE ERRORES MEJORADO**
+- **ValueError específicos**: Errores de validación diferenciados de otros errores
+- **Logging detallado**: Estado de validación por cada archivo procesado
+- **Continuidad del servicio**: Archivos problemáticos no interrumpen el procesamiento completo
+- **Mensajes informativos**: Reportes claros de archivos omitidos vs validados
+
+### 📋 **TIPOS DE ARCHIVOS VALIDADOS**
+- **PDFs**: Validación completa con PyPDF2 (páginas + contenido)
+- **Imágenes**: Validación básica de magic bytes y tamaño
+- **Otros formatos**: Detección por extensión + validación de tamaño mínimo
+- **PDFs por extensión**: Validación PyPDF2 incluso cuando se detectan por extensión
+
+### ⚡ **BENEFICIOS INMEDIATOS**
+- **🛡️ Confiabilidad**: Eliminación del error "archivo no tiene páginas"
+- **📈 Tasa de éxito**: Mayor porcentaje de procesamientos exitosos
+- **🔍 Debugging mejorado**: Logs específicos para identificar archivos problemáticos
+- **⚡ Performance**: Archivos válidos se procesan sin interrupciones
+- **🧠 IA optimizada**: Solo archivos validados llegan a Gemini
+
+---
+
 ## [2.8.2] - 2025-08-28
 
 ### 🚀 **MULTIMODALIDAD INTEGRADA EN RETEFUENTE**

@@ -28,6 +28,7 @@ import traceback
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # FastAPI y dependencias web
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
@@ -41,48 +42,29 @@ import sys
 
 def configurar_logging():
     """
-    Configuración profesional de logging para evitar duplicación
-    
-    BENEFICIOS:
-    ✅ Evita duplicación de handlers
-    ✅ Formato profesional con timestamp
-    ✅ Previene propagación conflictiva
-    ✅ Configuración centralizada
-    ✅ FIX: Eliminación completa de handlers duplicados
+    Configura el logging profesional para la aplicación.
+    - Elimina handlers existentes para evitar duplicación.
+    - Establece un formato claro con timestamp.
+    - Envía logs a la consola (stdout).
     """
-    # LIMPIEZA COMPLETA: Remover todos los handlers existentes
-    root_logger = logging.getLogger()
-    if root_logger.handlers:
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
-            handler.close()
-    
-    # CONFIGURACIÓN ÚNICA: Crear handler único para stdout
-    handler = logging.StreamHandler(sys.stdout)
-    
-    # Formato profesional con timestamp
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    handler.setFormatter(formatter)
-    
-    # Configurar root logger con handler único
-    root_logger.addHandler(handler)
-    root_logger.setLevel(logging.INFO)
-    
-    # SILENCIAR FRAMEWORKS: Evitar propagación duplicada
-    logging.getLogger("uvicorn").propagate = False
-    logging.getLogger("fastapi").propagate = False
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.error").propagate = False
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    
-    print("✅ Logging CORREGIDO - Handlers duplicados eliminados")
+    # Evitar duplicación de logs por el reloader de uvicorn
+    if logging.getLogger().hasHandlers():
+        logging.getLogger().handlers.clear()
+        print(" Logging CORREGIDO - Handlers duplicados eliminados")
 
-# Configurar logging profesional
-configurar_logging()
+    # Configurar el formato del log
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    formatter = logging.Formatter(log_format)
+
+    # Configurar un handler para la consola
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+
+    # Configurar el logger raíz
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(stream_handler)
+
 logger = logging.getLogger(__name__)
 
 # ===============================
@@ -101,9 +83,9 @@ from config import (
     validar_nit_administrativo, 
     nit_aplica_retencion_fuente,
     nit_aplica_estampilla_universidad,
-    nit_aplica_contribucion_obra_publica,  # ✅ NUEVA IMPORTACIÓN
-    nit_aplica_iva_reteiva,  # ✅ NUEVA IMPORTACIÓN IVA
-    detectar_impuestos_aplicables,  # ✅ DETECCIÓN AUTOMÁTICA
+    nit_aplica_contribucion_obra_publica,  #  NUEVA IMPORTACIÓN
+    nit_aplica_iva_reteiva,  #  NUEVA IMPORTACIÓN IVA
+    detectar_impuestos_aplicables,  #  DETECCIÓN AUTOMÁTICA
     
 )
 
@@ -121,12 +103,12 @@ def preprocesar_excel_limpio(contenido: bytes, nombre_archivo: str = "archivo.xl
     Mantiene formato tabular limpio con toda la información intacta.
     
     FUNCIONALIDAD:
-    ✅ Elimina filas completamente vacías
-    ✅ Elimina columnas completamente vacías
-    ✅ Mantiene formato tabular pero limpio
-    ✅ Conserva toda la información relevante
-    ✅ Óptimo y simple
-    ✅ Guarda automáticamente el archivo preprocesado
+    Elimina filas completamente vacías
+    Elimina columnas completamente vacías
+    Mantiene formato tabular pero limpio
+    Conserva toda la información relevante
+    Óptimo y simple
+    Guarda automáticamente el archivo preprocesado
     
     Args:
         contenido: Contenido binario del archivo Excel
@@ -136,7 +118,7 @@ def preprocesar_excel_limpio(contenido: bytes, nombre_archivo: str = "archivo.xl
         str: Texto extraído y limpio del Excel
     """
     try:
-        logger.info(f"🧹 Preprocesando Excel: {nombre_archivo}")
+        logger.info(f" Preprocesando Excel: {nombre_archivo}")
         
         # 1. LEER EXCEL CON TODAS LAS HOJAS
         df_dict = pd.read_excel(io.BytesIO(contenido), sheet_name=None)
@@ -189,7 +171,7 @@ def preprocesar_excel_limpio(contenido: bytes, nombre_archivo: str = "archivo.xl
             filas_orig = len(dataframe)
             cols_orig = len(dataframe.columns)
             
-            # 🧹 LIMPIEZA SIMPLE: Eliminar filas y columnas vacías
+            #  LIMPIEZA SIMPLE: Eliminar filas y columnas vacías
             df_limpio = dataframe.dropna(how='all')  # Filas vacías
             df_limpio = df_limpio.dropna(axis=1, how='all')  # Columnas vacías
             
@@ -211,15 +193,15 @@ def preprocesar_excel_limpio(contenido: bytes, nombre_archivo: str = "archivo.xl
         _guardar_archivo_preprocesado(nombre_archivo, texto_final, filas_eliminadas_total, columnas_eliminadas_total, total_hojas)
         
         # 4. LOGGING OPTIMIZADO
-        logger.info(f"✅ Preprocesamiento completado: {len(texto_final)} caracteres")
-        logger.info(f"📊 Hojas: {total_hojas} | Filas eliminadas: {filas_eliminadas_total} | Columnas eliminadas: {columnas_eliminadas_total}")
-        logger.info(f"💾 Archivo preprocesado guardado automáticamente")
+        logger.info(f" Preprocesamiento completado: {len(texto_final)} caracteres")
+        logger.info(f" Hojas: {total_hojas} | Filas eliminadas: {filas_eliminadas_total} | Columnas eliminadas: {columnas_eliminadas_total}")
+        logger.info(f" Archivo preprocesado guardado automáticamente")
         
         return texto_final
         
     except Exception as e:
         error_msg = f"Error en preprocesamiento Excel: {str(e)}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(f" {error_msg}")
         return error_msg
 
 def _guardar_archivo_preprocesado(nombre_archivo: str, texto_preprocesado: str, 
@@ -228,10 +210,10 @@ def _guardar_archivo_preprocesado(nombre_archivo: str, texto_preprocesado: str,
     Guarda el archivo Excel preprocesado según nomenclatura {archivo_original}_preprocesado.txt
     
     FUNCIONALIDAD:
-    ✅ Guarda en carpeta extracciones/ 
-    ✅ Nomenclatura: {archivo_original}_preprocesado.txt
-    ✅ Logs básicos para confirmar guardado exitoso
-    ✅ Manejo de errores sin afectar flujo principal
+     Guarda en carpeta extracciones/ 
+     Nomenclatura: {archivo_original}_preprocesado.txt
+     Logs básicos para confirmar guardado exitoso
+     Manejo de errores sin afectar flujo principal
     
     Args:
         nombre_archivo: Nombre del archivo original
@@ -282,11 +264,11 @@ TEXTO ENVIADO A GEMINI:
             f.write(contenido_final)
         
         # 5. LOG BÁSICO DE CONFIRMACIÓN
-        logger.info(f"💾 Archivo preprocesado guardado: extracciones/{nombre_final}")
-        logger.info(f"📊 Estadísticas: {filas_eliminadas} filas y {columnas_eliminadas} columnas eliminadas")
+        logger.info(f" Archivo preprocesado guardado: extracciones/{nombre_final}")
+        logger.info(f" Estadísticas: {filas_eliminadas} filas y {columnas_eliminadas} columnas eliminadas")
         
     except Exception as e:
-        logger.error(f"❌ Error guardando archivo preprocesado: {e}")
+        logger.error(f" Error guardando archivo preprocesado: {e}")
         # No fallar el preprocesamiento por un error de guardado
 
 # ===============================
@@ -298,11 +280,11 @@ def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str =
     Guarda archivos JSON en la carpeta Results/ organizados por fecha.
     
     FUNCIONALIDAD:
-    ✅ Crea estructura Results/YYYY-MM-DD/
-    ✅ Guarda archivos JSON con timestamp
-    ✅ Manejo de errores sin afectar flujo principal
-    ✅ Logs de confirmación
-    ✅ Path absoluto para evitar errores de subpath
+     Crea estructura Results/YYYY-MM-DD/
+     Guarda archivos JSON con timestamp
+     Manejo de errores sin afectar flujo principal
+     Logs de confirmación
+    Path absoluto para evitar errores de subpath
     
     Args:
         contenido: Diccionario a guardar como JSON
@@ -338,15 +320,15 @@ def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str =
         # 4. LOG DE CONFIRMACIÓN CON PATH RELATIVO SEGURO
         try:
             ruta_relativa = ruta_archivo.relative_to(carpeta_base)
-            logger.info(f"💾 JSON guardado: {ruta_relativa}")
+            logger.info(f" JSON guardado: {ruta_relativa}")
         except ValueError:
             # Fallback si relative_to falla
-            logger.info(f"💾 JSON guardado: {nombre_final} en {carpeta_final.name}")
+            logger.info(f" JSON guardado: {nombre_final} en {carpeta_final.name}")
         
         return True
         
     except Exception as e:
-        logger.error(f"❌ Error guardando JSON {nombre_archivo}: {e}")
+        logger.error(f" Error guardando JSON {nombre_archivo}: {e}")
         return False
 
 # ===============================
@@ -472,22 +454,22 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
     try:
         logger.info(f" Iniciando liquidación segura de retefuente para NIT: {nit_administrativo}")
         
-        # ✅ VERIFICAR ESTRUCTURA Y EXTRAER ANÁLISIS
+        #  VERIFICAR ESTRUCTURA Y EXTRAER ANÁLISIS
         if isinstance(analisis_retefuente, dict):
             if "analisis" in analisis_retefuente:
                 # Estructura: {"analisis": {...}, "timestamp": ..., etc}
                 datos_analisis = analisis_retefuente["analisis"]
-                logger.info("📊 Extrayendo análisis desde estructura JSON con clave 'analisis'")
+                logger.info("Extrayendo análisis desde estructura JSON con clave 'analisis'")
             else:
                 # Estructura directa: {"es_facturacion_exterior": ..., etc}
                 datos_analisis = analisis_retefuente
-                logger.info("📊 Usando estructura directa de análisis")
+                logger.info("Usando estructura directa de análisis")
         else:
             # Ya es un objeto, usar directamente
             datos_analisis = analisis_retefuente
-            logger.info("📊 Usando objeto AnalisisFactura directamente")
+            logger.info("Usando objeto AnalisisFactura directamente")
         
-        # ✅ VERIFICAR CAMPOS REQUERIDOS
+        #  VERIFICAR CAMPOS REQUERIDOS
         campos_requeridos = ["es_facturacion_exterior", "conceptos_identificados", "naturaleza_tercero"]
         campos_faltantes = []
         
@@ -511,7 +493,7 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
                 ]
             }
         
-        # ✅ CREAR OBJETO ANALYSISFACTURA MANUALMENTE
+        #  CREAR OBJETO ANALYSISFACTURA MANUALMENTE
         from Clasificador.clasificador import AnalisisFactura, ConceptoIdentificado, NaturalezaTercero
         
         # Convertir conceptos identificados
@@ -519,7 +501,7 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
         conceptos_data = datos_analisis.get("conceptos_identificados", [])
         
         if not isinstance(conceptos_data, list):
-            logger.warning(f"⚠️ conceptos_identificados no es lista: {type(conceptos_data)}")
+            logger.warning(f" conceptos_identificados no es lista: {type(conceptos_data)}")
             conceptos_data = []
         
         for concepto_data in conceptos_data:
@@ -530,7 +512,7 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
                     base_gravable=concepto_data.get("base_gravable", None)
                 )
                 conceptos.append(concepto_obj)
-                logger.info(f"✅ Concepto convertido: {concepto_obj.concepto} - {concepto_obj.tarifa_retencion}%")
+                logger.info(f" Concepto convertido: {concepto_obj.concepto} - {concepto_obj.tarifa_retencion}%")
         
         # Convertir naturaleza del tercero
         naturaleza_data = datos_analisis.get("naturaleza_tercero", {})
@@ -556,9 +538,9 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
             observaciones=datos_analisis.get("observaciones", [])
         )
         
-        logger.info(f"✅ Objeto AnalisisFactura creado: {len(conceptos)} conceptos, facturación_exterior={analisis_obj.es_facturacion_exterior}")
+        logger.info(f" Objeto AnalisisFactura creado: {len(conceptos)} conceptos, facturación_exterior={analisis_obj.es_facturacion_exterior}")
         
-        # ✅ LIQUIDAR CON OBJETO VÁLIDO
+        # LIQUIDAR CON OBJETO VÁLIDO
         liquidador_retencion = LiquidadorRetencion()
         resultado = liquidador_retencion.liquidar_factura(analisis_obj, nit_administrativo)
         
@@ -575,15 +557,15 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
         }
         
         if resultado.puede_liquidar:
-            logger.info(f"✅ Retefuente liquidada exitosamente: ${resultado.valor_retencion:,.2f}")
+            logger.info(f" Retefuente liquidada exitosamente: ${resultado.valor_retencion:,.2f}")
         else:
-            logger.warning(f"⚠️ Retefuente no se pudo liquidar: {resultado.mensajes_error}")
+            logger.warning(f" Retefuente no se pudo liquidar: {resultado.mensajes_error}")
         
         return resultado_dict
         
     except ImportError as e:
         error_msg = f"Error importando clases necesarias: {str(e)}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(f" {error_msg}")
         return {
             "aplica": False,
             "error": error_msg,
@@ -593,18 +575,18 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
         
     except Exception as e:
         error_msg = f"Error liquidando retefuente: {str(e)}"
-        logger.error(f"❌ {error_msg}")
-        logger.error(f"📄 Tipo de estructura recibida: {type(analisis_retefuente)}")
+        logger.error(f" {error_msg}")
+        logger.error(f" Tipo de estructura recibida: {type(analisis_retefuente)}")
         
         # Log adicional para debugging
         if isinstance(analisis_retefuente, dict):
-            logger.error(f"🔑 Claves disponibles en análisis: {list(analisis_retefuente.keys())}")
+            logger.error(f" Claves disponibles en análisis: {list(analisis_retefuente.keys())}")
             if "analisis" in analisis_retefuente and isinstance(analisis_retefuente["analisis"], dict):
-                logger.error(f"🔑 Claves en 'analisis': {list(analisis_retefuente['analisis'].keys())}")
+                logger.error(f" Claves en 'analisis': {list(analisis_retefuente['analisis'].keys())}")
         
         # Log del traceback completo para debugging
         import traceback
-        logger.error(f"🐛 Traceback completo: {traceback.format_exc()}")
+        logger.error(f" Traceback completo: {traceback.format_exc()}")
         
         return {
             "aplica": False,
@@ -616,6 +598,25 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
                 f"Error técnico: {str(e)}"
             ]
         }
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Manejador del ciclo de vida de la aplicación.
+    Reemplaza los eventos startup/shutdown.
+    """
+    # Código que se ejecuta ANTES de que la aplicación inicie
+    configurar_logging()
+    global logger
+    logger = logging.getLogger(__name__)
+    
+    logger.info(" Worker de FastAPI iniciándose... Cargando configuración.")
+    if not inicializar_configuracion():
+        logger.critical(" FALLO EN LA CARGA DE CONFIGURACIÓN. La aplicación puede no funcionar correctamente.")
+    
+    yield # <--- La aplicación se ejecuta aquí
+
+    # Código que se ejecuta DESPUÉS de que la aplicación se detiene (opcional)
+    logger.info(" Worker de FastAPI deteniéndose.")
 
 # ===============================
 # API FASTAPI
@@ -624,7 +625,8 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
 app = FastAPI(
     title="Preliquidador de Retefuente - Colombia",
     description="Sistema automatizado para calcular retención en la fuente con arquitectura modular",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 
@@ -634,16 +636,16 @@ async def procesar_facturas_integrado(
     nit_administrativo: str = Form(...)
 ) -> JSONResponse:
     """
-    🚀 ENDPOINT PRINCIPAL ÚNICO - SISTEMA INTEGRADO v2.0
+     ENDPOINT PRINCIPAL ÚNICO - SISTEMA INTEGRADO v2.0
     
     Procesa facturas y calcula múltiples impuestos en paralelo:
-    ✅ RETENCIÓN EN LA FUENTE (funcionalidad original)
-    ✅ ESTAMPILLA PRO UNIVERSIDAD NACIONAL (integrada)
-    ✅ CONTRIBUCIÓN A OBRA PÚBLICA 5% (integrada) 
-    ✅ IVA Y RETEIVA (nueva funcionalidad)
-    ✅ PROCESAMIENTO PARALELO cuando múltiples impuestos aplican
-    ✅ GUARDADO AUTOMÁTICO de JSONs en Results/
-    
+     RETENCIÓN EN LA FUENTE (funcionalidad original)
+     ESTAMPILLA PRO UNIVERSIDAD NACIONAL (integrada)
+     CONTRIBUCIÓN A OBRA PÚBLICA 5% (integrada) 
+     IVA Y RETEIVA (nueva funcionalidad)
+     PROCESAMIENTO PARALELO cuando múltiples impuestos aplican
+     GUARDADO AUTOMÁTICO de JSONs en Results/
+
     Args:
         archivos: Lista de archivos (facturas, RUTs, anexos, contratos)
         nit_administrativo: NIT de la entidad administrativa
@@ -671,8 +673,8 @@ async def procesar_facturas_integrado(
                 }
             )
         
-        logger.info(f"✅ NIT válido: {nombre_entidad}")
-        logger.info(f"🏷️ Impuestos configurados: {impuestos_aplicables}")
+        logger.info(f" NIT válido: {nombre_entidad}")
+        logger.info(f"Impuestos configurados: {impuestos_aplicables}")
         
         # Detectar automáticamente qué impuestos aplican
         deteccion_impuestos = detectar_impuestos_aplicables(nit_administrativo)
@@ -701,7 +703,7 @@ async def procesar_facturas_integrado(
         # PASO 2: EXTRACCIÓN HÍBRIDA DE TEXTO
         # =================================
         
-        logger.info(f"🔄 Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
+        logger.info(f" Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
         
         # SEPARAR ARCHIVOS POR ESTRATEGIA DE PROCESAMIENTO
         archivos_directos = []      # PDFs e imágenes → Gemini directo (multimodal)
@@ -715,28 +717,28 @@ async def procesar_facturas_integrado(
                 # Definir qué archivos van directo a Gemini (multimodal)
                 if extension == 'pdf' or extension in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
                     archivos_directos.append(archivo)
-                    logger.info(f"📄 Archivo directo (multimodal): {nombre_archivo}")
+                    logger.info(f" Archivo directo (multimodal): {nombre_archivo}")
                 else:
                     # Excel, Email, Word y otros van a procesamiento local
                     archivos_preprocesamiento.append(archivo)
-                    logger.info(f"📊 Archivo para preprocesamiento: {nombre_archivo}")
+                    logger.info(f" Archivo para preprocesamiento: {nombre_archivo}")
             except Exception as e:
-                logger.warning(f"⚠️ Error clasificando archivo: {e}")
+                logger.warning(f" Error clasificando archivo: {e}")
                 # En caso de error, enviar a preprocesamiento (más seguro)
                 logger.warning(f"Enviando a preprocesamiento por seguridad: {archivo.filename}")
                 archivos_preprocesamiento.append(archivo)
         
-        logger.info(f"⚡ Estrategia híbrida multimodal definida:")
-        logger.info(f"📄 Archivos directos (multimodal): {len(archivos_directos)}")
-        logger.info(f"📊 Archivos preprocesamiento local: {len(archivos_preprocesamiento)}")
+        logger.info(f" Estrategia híbrida multimodal definida:")
+        logger.info(f" Archivos directos (multimodal): {len(archivos_directos)}")
+        logger.info(f" Archivos preprocesamiento local: {len(archivos_preprocesamiento)}")
         
         # PROCESAR SOLO ARCHIVOS QUE NECESITAN PREPROCESAMIENTO LOCAL
         if archivos_preprocesamiento:
-            logger.info(f"🔧 Iniciando extracción local para {len(archivos_preprocesamiento)} archivos...")
+            logger.info(f" Iniciando extracción local para {len(archivos_preprocesamiento)} archivos...")
             extractor = ProcesadorArchivos()
             textos_archivos_original = await extractor.procesar_multiples_archivos(archivos_preprocesamiento)
         else:
-            logger.info(f"ℹ️ No hay archivos para procesamiento local - Solo archivos directos multimodales")
+            logger.info(f" No hay archivos para procesamiento local - Solo archivos directos multimodales")
             textos_archivos_original = {}
         
         # Preprocesamiento específico para Excel (solo archivos locales)
@@ -752,16 +754,16 @@ async def procesar_facturas_integrado(
                         contenido_binario = await archivo_obj.read()
                         texto_preprocesado = preprocesar_excel_limpio(contenido_binario, nombre_archivo)
                         textos_preprocesados[nombre_archivo] = texto_preprocesado
-                        logger.info(f"📊 Excel preprocesado: {nombre_archivo}")
+                        logger.info(f" Excel preprocesado: {nombre_archivo}")
                     else:
                         textos_preprocesados[nombre_archivo] = contenido_original
                 except Exception as e:
-                    logger.warning(f"⚠️ Error preprocesando {nombre_archivo}: {e}")
+                    logger.warning(f" Error preprocesando {nombre_archivo}: {e}")
                     textos_preprocesados[nombre_archivo] = contenido_original
             else:
                 textos_preprocesados[nombre_archivo] = contenido_original
         
-        logger.info(f"✅ Extracción local completada: {len(textos_preprocesados)} textos extraídos")
+        logger.info(f" Extracción local completada: {len(textos_preprocesados)} textos extraídos")
         
         # =================================
         # PASO 3: CLASIFICACIÓN HÍBRIDA CON MULTIMODALIDAD
@@ -769,9 +771,9 @@ async def procesar_facturas_integrado(
         
         # Clasificar documentos usando enfoque híbrido multimodal
         clasificador = ProcesadorGemini()
-        logger.info(f"🔄 Iniciando clasificación híbrida multimodal:")
-        logger.info(f"📄 Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
-        logger.info(f"📊 Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
+        logger.info(f" Iniciando clasificación híbrida multimodal:")
+        logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
+        logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
         
         clasificacion, es_consorcio, es_facturacion_extranjera = await clasificador.clasificar_documentos(
             archivos_directos=archivos_directos,
@@ -829,36 +831,39 @@ async def procesar_facturas_integrado(
         
         if procesamiento_paralelo:
             logger.info(f" Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
-            
+            logger.info(f"Documentos a analizar: {documentos_clasificados}  ")
             # Crear tareas paralelas para análisis con Gemini
             tareas_analisis = []
-            
+            logger.info(" Preparando cache para solucionar concurrencia en workers paralelos")
+            cache_archivos = await clasificador.preparar_archivos_para_workers_paralelos(archivos_directos)
+
             # Tarea 1: Análisis de Retefuente (si aplica)
             if aplica_retencion:
                 if es_consorcio:
-                    tarea_retefuente = clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera)
+                    tarea_retefuente = clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera, None,cache_archivos)
                 else:
-                    # ✅ MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
+                    #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
                     tarea_retefuente = clasificador.analizar_factura(
                         documentos_clasificados, 
                         es_facturacion_extranjera,
-                        archivos_directos=archivos_directos
+                        None,
+                        cache_archivos  
                     )
                 tareas_analisis.append(("retefuente", tarea_retefuente))
             
             # Tarea 2: Análisis de Impuestos Especiales (si aplican)
             if aplica_estampilla or aplica_obra_publica:
-                tarea_impuestos_especiales = clasificador.analizar_estampilla(documentos_clasificados)
+                tarea_impuestos_especiales = clasificador.analizar_estampilla(documentos_clasificados, None, cache_archivos)
                 tareas_analisis.append(("impuestos_especiales", tarea_impuestos_especiales))
             
-            # Tarea 3: Análisis de IVA (si aplica) - ✅ NUEVA TAREA
+            # Tarea 3: Análisis de IVA (si aplica) - NUEVA TAREA
             if aplica_iva:
-                tarea_iva = clasificador.analizar_iva(documentos_clasificados)
+                tarea_iva = clasificador.analizar_iva(documentos_clasificados, None, cache_archivos)
                 tareas_analisis.append(("iva_reteiva", tarea_iva))
             
             # Tarea 4: Análisis de Estampillas Generales - 🆕 NUEVA FUNCIONALIDAD
             # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
-            tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados)
+            tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
             tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
             
             # Ejecutar todas las tareas en paralelo
@@ -885,17 +890,17 @@ async def procesar_facturas_integrado(
                     """
                     async with semaforo:
                         inicio_worker = datetime.now()
-                        logger.info(f"🔄 Worker {worker_id}: Iniciando análisis de {nombre_impuesto}")
+                        logger.info(f" Worker {worker_id}: Iniciando análisis de {nombre_impuesto}")
                         
                         try:
                             resultado = await tarea_async
                             tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
-                            logger.info(f"✅ Worker {worker_id}: {nombre_impuesto} completado en {tiempo_ejecucion:.2f}s")
+                            logger.info(f" Worker {worker_id}: {nombre_impuesto} completado en {tiempo_ejecucion:.2f}s")
                             return (nombre_impuesto, resultado, tiempo_ejecucion)
                             
                         except Exception as e:
                             tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
-                            logger.error(f"❌ Worker {worker_id}: Error en {nombre_impuesto} tras {tiempo_ejecucion:.2f}s: {str(e)}")
+                            logger.error(f" Worker {worker_id}: Error en {nombre_impuesto} tras {tiempo_ejecucion:.2f}s: {str(e)}")
                             return (nombre_impuesto, e, tiempo_ejecucion)
                 
                 # Crear tareas con workers
@@ -905,7 +910,7 @@ async def procesar_facturas_integrado(
                     for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis)
                 ]
                 
-                logger.info(f"⚡ Ejecutando {len(tareas_con_workers)} tareas con máximo 2 workers simultáneos...")
+                logger.info(f" Ejecutando {len(tareas_con_workers)} tareas con máximo 2 workers simultáneos...")
                 
                 # Esperar todos los resultados con workers limitados
                 resultados_con_workers = await asyncio.gather(*tareas_con_workers, return_exceptions=True)
@@ -914,7 +919,7 @@ async def procesar_facturas_integrado(
                 for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis):
                     resultado_worker = resultados_con_workers[i]
                     if isinstance(resultado_worker, Exception):
-                        logger.error(f"❌ Error crítico en worker: {resultado_worker}")
+                        logger.error(f" Error crítico en worker: {resultado_worker}")
                         resultados_analisis[nombre_impuesto] = {"error": str(resultado_worker)}
                         continue
                     
@@ -946,7 +951,7 @@ async def procesar_facturas_integrado(
             # PASO 5A: LIQUIDACIÓN PARALELA
             # =================================
             
-            logger.info(f"💰 Iniciando liquidación paralela de impuestos...")
+            logger.info(f" Iniciando liquidación paralela de impuestos...")
             
             resultado_final = {
                 "procesamiento_paralelo": True,
@@ -967,7 +972,7 @@ async def procesar_facturas_integrado(
                     else:
                         analisis_factura = resultados_analisis["retefuente"]
                         
-                        # ✅ USAR FUNCIÓN SEGURA PARA PROCESAMIENTO PARALELO
+                        #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO PARALELO
                         logger.info(" Ejecutando liquidación segura en procesamiento paralelo...")
                         
                         # Crear estructura compatible
@@ -987,16 +992,16 @@ async def procesar_facturas_integrado(
                             analisis_retefuente_data, nit_administrativo
                         )
                         
-                        # 🔧 FIX: Manejar casos válidos sin retención correctamente
+                        #  FIX: Manejar casos válidos sin retención correctamente
                         if resultado_retefuente_dict.get("calculo_exitoso", False) or not resultado_retefuente_dict.get("error"):
                             # Caso exitoso O caso válido sin retención
                             valor_retencion = resultado_retefuente_dict.get('valor_retencion', 0.0)
                             concepto = resultado_retefuente_dict.get("concepto", "")
                             
                             if valor_retencion > 0:
-                                logger.info(f"✅ Retefuente paralela liquidada: ${valor_retencion:,.2f}")
+                                logger.info(f" Retefuente paralela liquidada: ${valor_retencion:,.2f}")
                             else:
-                                logger.info(f"✅ Retefuente procesada (no aplica retención): {concepto}")
+                                logger.info(f"Retefuente procesada (no aplica retención): {concepto}")
                             
                             # Crear objeto mock que simula ResultadoLiquidacion
                             resultado_retefuente = type('ResultadoLiquidacion', (object,), {
@@ -1011,7 +1016,7 @@ async def procesar_facturas_integrado(
                         else:
                             # Solo registrar como error si realmente hay un error técnico
                             error_msg = resultado_retefuente_dict.get('error', 'Error técnico en liquidación')
-                            logger.error(f"❌ Error técnico en liquidación paralela: {error_msg}")
+                            logger.error(f" Error técnico en liquidación paralela: {error_msg}")
                             
                             # Crear objeto con valores por defecto para errores técnicos
                             resultado_retefuente = type('ResultadoLiquidacion', (object,), {
@@ -1024,7 +1029,7 @@ async def procesar_facturas_integrado(
                                 'mensajes_error': [error_msg]
                             })()
                     
-                    # ✅ ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["retefuente"]
+                    #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["retefuente"]
                     if hasattr(resultado_retefuente, 'valor_retencion'):
                         resultado_final["impuestos"]["retefuente"] = {
                             "aplica": resultado_retefuente.puede_liquidar,
@@ -1035,13 +1040,13 @@ async def procesar_facturas_integrado(
                             "fecha_calculo": resultado_retefuente.fecha_calculo,
                             "mensajes_error": resultado_retefuente.mensajes_error
                         }
-                        logger.info(f"✅ Retefuente liquidada: ${resultado_retefuente.valor_retencion:,.2f}")
+                        logger.info(f" Retefuente liquidada: ${resultado_retefuente.valor_retencion:,.2f}")
                     else:
                         # Es un diccionario (resultado de consorcio)
                         resultado_final["impuestos"]["retefuente"] = resultado_retefuente
-                        logger.info(f"✅ Retefuente liquidada: ${resultado_retefuente.get('valor_retencion', 0):,.2f}")
+                        logger.info(f" Retefuente liquidada: ${resultado_retefuente.get('valor_retencion', 0):,.2f}")
                 except Exception as e:
-                    logger.error(f"❌ Error liquidando retefuente: {e}")
+                    logger.error(f" Error liquidando retefuente: {e}")
                     resultado_final["impuestos"]["retefuente"] = {"error": str(e), "aplica": False}
             
             # Liquidar Impuestos Especiales (Estampilla + Obra Pública)
@@ -1053,23 +1058,23 @@ async def procesar_facturas_integrado(
                     analisis_especiales = resultados_analisis["impuestos_especiales"]
                     resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, nit_administrativo)
                     
-                    # ✅ ASIGNAR A NUEVA ESTRUCTURA: Separar resultados por impuesto
+                    #  ASIGNAR A NUEVA ESTRUCTURA: Separar resultados por impuesto
                     if aplica_estampilla and "estampilla_universidad" in resultado_estampilla:
                         resultado_final["impuestos"]["estampilla_universidad"] = resultado_estampilla["estampilla_universidad"]
-                        logger.info(f"✅ Estampilla liquidada: ${resultado_estampilla['estampilla_universidad'].get('valor_estampilla', 0):,.2f}")
+                        logger.info(f" Estampilla liquidada: ${resultado_estampilla['estampilla_universidad'].get('valor_estampilla', 0):,.2f}")
                     
                     if aplica_obra_publica and "contribucion_obra_publica" in resultado_estampilla:
                         resultado_final["impuestos"]["contribucion_obra_publica"] = resultado_estampilla["contribucion_obra_publica"]
-                        logger.info(f"✅ Obra pública liquidada: ${resultado_estampilla['contribucion_obra_publica'].get('valor_contribucion', 0):,.2f}")
+                        logger.info(f" Obra pública liquidada: ${resultado_estampilla['contribucion_obra_publica'].get('valor_contribucion', 0):,.2f}")
                         
                 except Exception as e:
-                    logger.error(f"❌ Error liquidando impuestos especiales: {e}")
+                    logger.error(f" Error liquidando impuestos especiales: {e}")
                     if aplica_estampilla:
                         resultado_final["impuestos"]["estampilla_universidad"] = {"error": str(e), "aplica": False}
                     if aplica_obra_publica:
                         resultado_final["impuestos"]["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
             
-            # Liquidar IVA y ReteIVA - ✅ NUEVA LIQUIDACIÓN
+            # Liquidar IVA y ReteIVA -  NUEVA LIQUIDACIÓN
             if "iva_reteiva" in resultados_analisis and aplica_iva:
                 try:
                     from Liquidador.liquidador_iva import LiquidadorIVA
@@ -1078,18 +1083,18 @@ async def procesar_facturas_integrado(
                     analisis_iva = resultados_analisis["iva_reteiva"]
                     resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
                     
-                    # ✅ ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["iva_reteiva"]
+                    #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["iva_reteiva"]
                     from Liquidador.liquidador_iva import convertir_resultado_a_dict
                     resultado_final["impuestos"]["iva_reteiva"] = convertir_resultado_a_dict(resultado_iva_completo)
                     
-                    logger.info(f"✅ IVA identificado: ${resultado_iva_completo.valor_iva_identificado:,.2f}")
-                    logger.info(f"✅ ReteIVA liquidada: ${resultado_iva_completo.valor_reteiva:,.2f}")
+                    logger.info(f" IVA identificado: ${resultado_iva_completo.valor_iva_identificado:,.2f}")
+                    logger.info(f" ReteIVA liquidada: ${resultado_iva_completo.valor_reteiva:,.2f}")
                     
                 except Exception as e:
-                    logger.error(f"❌ Error liquidando IVA/ReteIVA: {e}")
+                    logger.error(f" Error liquidando IVA/ReteIVA: {e}")
                     resultado_final["impuestos"]["iva_reteiva"] = {"error": str(e), "aplica": False}
             
-            # Liquidar Estampillas Generales - 🆕 NUEVA LIQUIDACIÓN
+            # Liquidar Estampillas Generales - NUEVA LIQUIDACIÓN
             if "estampillas_generales" in resultados_analisis:
                 try:
                     from Liquidador.liquidador_estampillas_generales import (
@@ -1103,17 +1108,17 @@ async def procesar_facturas_integrado(
                     validacion = validar_formato_estampillas_generales(analisis_estampillas)
                     
                     if validacion["formato_valido"]:
-                        logger.info("✅ Formato de estampillas generales válido")
+                        logger.info(" Formato de estampillas generales válido")
                         respuesta_validada = validacion["respuesta_validada"]
                     else:
-                        logger.warning(f"⚠️ Formato de estampillas con errores: {len(validacion['errores'])} errores")
+                        logger.warning(f" Formato de estampillas con errores: {len(validacion['errores'])} errores")
                         logger.warning(f"Errores: {validacion['errores']}")
                         respuesta_validada = validacion["respuesta_validada"]  # Usar respuesta corregida
                     
                     # Presentar resultado final
                     resultado_estampillas = presentar_resultado_estampillas_generales(respuesta_validada)
                     
-                    # ✅ ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
+                    #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
                     resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas.get("estampillas_generales", {})
                     
                     # Log informativo
@@ -1121,17 +1126,17 @@ async def procesar_facturas_integrado(
                     completas = resumen.get("completas", 0)
                     incompletas = resumen.get("incompletas", 0)
                     
-                    logger.info(f"✅ Estampillas generales procesadas: {completas} completas, {incompletas} incompletas")
+                    logger.info(f" Estampillas generales procesadas: {completas} completas, {incompletas} incompletas")
                     
                 except Exception as e:
-                    logger.error(f"❌ Error liquidando estampillas generales: {e}")
+                    logger.error(f" Error liquidando estampillas generales: {e}")
                     resultado_final["impuestos"]["estampillas_generales"] = {
                         "procesamiento_exitoso": False,
                         "error": str(e),
                         "observaciones_generales": ["Error procesando estampillas generales"]
                     }
             
-            # ✅ CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
+            #  CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
             valor_total_impuestos = 0.0
             
             # Usar nuevas rutas: resultado_final["impuestos"][nombre_impuesto]
@@ -1160,14 +1165,14 @@ async def procesar_facturas_integrado(
         # =================================
         
         else:
-            logger.info(f"📄 Procesamiento individual: {impuestos_a_procesar[0]}")
+            logger.info(f" Procesamiento individual: {impuestos_a_procesar[0]}")
             
             impuesto_unico = impuestos_a_procesar[0]
             
-            # 🆕 EJECUTAR SIEMPRE ANÁLISIS DE ESTAMPILLAS GENERALES
+            #  EJECUTAR SIEMPRE ANÁLISIS DE ESTAMPILLAS GENERALES
             # Las estampillas generales se analizan independientemente del impuesto principal
             try:
-                logger.info("🎨 Ejecutando análisis de estampillas generales en procesamiento individual...")
+                logger.info(" Ejecutando análisis de estampillas generales en procesamiento individual...")
                 analisis_estampillas_generales = await clasificador.analizar_estampillas_generales(documentos_clasificados)
                 
                 # Validar y presentar resultados de estampillas generales
@@ -1179,10 +1184,10 @@ async def procesar_facturas_integrado(
                 validacion_estampillas = validar_formato_estampillas_generales(analisis_estampillas_generales)
                 
                 if validacion_estampillas["formato_valido"]:
-                    logger.info("✅ Formato de estampillas generales válido en procesamiento individual")
+                    logger.info(" Formato de estampillas generales válido en procesamiento individual")
                     respuesta_estampillas_validada = validacion_estampillas["respuesta_validada"]
                 else:
-                    logger.warning(f"⚠️ Errores en formato de estampillas: {len(validacion_estampillas['errores'])}")
+                    logger.warning(f" Errores en formato de estampillas: {len(validacion_estampillas['errores'])}")
                     respuesta_estampillas_validada = validacion_estampillas["respuesta_validada"]
                 
                 resultado_estampillas_individual = presentar_resultado_estampillas_generales(respuesta_estampillas_validada)
@@ -1191,10 +1196,10 @@ async def procesar_facturas_integrado(
                 resumen_est = resultado_estampillas_individual.get("estampillas_generales", {}).get("resumen", {})
                 completas_est = resumen_est.get("completas", 0)
                 incompletas_est = resumen_est.get("incompletas", 0)
-                logger.info(f"✅ Estampillas generales (individual): {completas_est} completas, {incompletas_est} incompletas")
+                logger.info(f" Estampillas generales (individual): {completas_est} completas, {incompletas_est} incompletas")
                 
             except Exception as e:
-                logger.error(f"❌ Error en estampillas generales (individual): {e}")
+                logger.error(f" Error en estampillas generales (individual): {e}")
                 resultado_estampillas_individual = {
                     "estampillas_generales": {
                         "procesamiento_exitoso": False,
@@ -1208,7 +1213,7 @@ async def procesar_facturas_integrado(
                 if es_consorcio:
                     analisis_factura = await clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera)
                 else:
-                    # ✅ MULTIMODALIDAD: Pasar archivos directos para análisis híbrido individual
+                    #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido individual
                     analisis_factura = await clasificador.analizar_factura(
                         documentos_clasificados, 
                         es_facturacion_extranjera,
@@ -1218,7 +1223,7 @@ async def procesar_facturas_integrado(
                 liquidador_retencion = LiquidadorRetencion()
                 if es_consorcio:
                     resultado_liquidacion = analisis_factura  # Ya viene liquidado como dict
-                    # ✅ NUEVA ESTRUCTURA: Consorcio Individual
+                    #  NUEVA ESTRUCTURA: Consorcio Individual
                     resultado_final = {
                         "procesamiento_paralelo": False,
                         "impuestos_procesados": ["RETENCION_FUENTE"],
@@ -1232,11 +1237,11 @@ async def procesar_facturas_integrado(
                             "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
                             "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
                         },
-                        # 📊 COMPATIBILIDAD: Incluir campos legacy del consorcio
+                        #  COMPATIBILIDAD: Incluir campos legacy del consorcio
                         **{k: v for k, v in resultado_liquidacion.items() if k not in ["retefuente", "estampilla_universidad", "contribucion_obra_publica", "iva_reteiva"]}
                     }
                     
-                    # ✅ CALCULAR RESUMEN TOTAL PARA CONSORCIO
+                    #  CALCULAR RESUMEN TOTAL PARA CONSORCIO
                     valor_total_consorcio = 0.0
                     if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
                         valor_total_consorcio += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
@@ -1247,8 +1252,8 @@ async def procesar_facturas_integrado(
                         "procesamiento_exitoso": True
                     }
                 else:
-                    # ✅ USAR FUNCIÓN SEGURA PARA PROCESAMIENTO INDIVIDUAL
-                    logger.info("🔄 Ejecutando liquidación segura individual...")
+                    #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO INDIVIDUAL
+                    logger.info(" Ejecutando liquidación segura individual...")
                     
                     # Crear estructura compatible
                     analisis_retefuente_data = {
@@ -1267,16 +1272,16 @@ async def procesar_facturas_integrado(
                         analisis_retefuente_data, nit_administrativo
                     )
                     
-                    # 🔧 FIX: Manejar casos válidos sin retención correctamente
+                    #  FIX: Manejar casos válidos sin retención correctamente
                     if resultado_retefuente_dict.get("calculo_exitoso", False) or not resultado_retefuente_dict.get("error"):
                         # Caso exitoso O caso válido sin retención
                         valor_retencion = resultado_retefuente_dict.get('valor_retencion', 0.0)
                         concepto = resultado_retefuente_dict.get("concepto", "")
                         
                         if valor_retencion > 0:
-                            logger.info(f"✅ Retefuente individual liquidada: ${valor_retencion:,.2f}")
+                            logger.info(f" Retefuente individual liquidada: ${valor_retencion:,.2f}")
                         else:
-                            logger.info(f"✅ Retefuente procesada (no aplica retención): {concepto}")
+                            logger.info(f" Retefuente procesada (no aplica retención): {concepto}")
                         
                         # Crear objeto que simula ResultadoLiquidacion
                         resultado_liquidacion = type('ResultadoLiquidacion', (object,), {
@@ -1291,7 +1296,7 @@ async def procesar_facturas_integrado(
                     else:
                         # Solo registrar como error si realmente hay un error técnico
                         error_msg = resultado_retefuente_dict.get('error', 'Error técnico en liquidación')
-                        logger.error(f"❌ Error técnico en liquidación individual: {error_msg}")
+                        logger.error(f" Error técnico en liquidación individual: {error_msg}")
                         
                         # Crear objeto con valores por defecto para errores técnicos
                         resultado_liquidacion = type('ResultadoLiquidacion', (object,), {
@@ -1304,7 +1309,7 @@ async def procesar_facturas_integrado(
                             'mensajes_error': [error_msg]
                         })()
                     
-                    # ✅ NUEVA ESTRUCTURA: Crear resultado con estructura "impuestos"
+                    #  NUEVA ESTRUCTURA: Crear resultado con estructura "impuestos"
                     resultado_final = {
                         "procesamiento_paralelo": False,
                         "impuestos_procesados": ["RETENCION_FUENTE"],
@@ -1326,17 +1331,17 @@ async def procesar_facturas_integrado(
                             "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
                             "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
                         },
-                        # 📊 CAMPOS LEGACY (compatibilidad temporal)
+                        #  CAMPOS LEGACY (compatibilidad temporal)
                         "aplica_retencion": resultado_liquidacion.puede_liquidar,
                         "valor_retencion": resultado_liquidacion.valor_retencion,
                         "concepto": resultado_liquidacion.concepto_aplicado,
                         "tarifa_retencion": resultado_liquidacion.tarifa_aplicada
                     }
                     
-                    # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
+                    #  AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
                     resultado_final.update(resultado_estampillas_individual)
                     
-                    # ✅ CALCULAR RESUMEN TOTAL PARA PROCESAMIENTO INDIVIDUAL
+                    #  CALCULAR RESUMEN TOTAL PARA PROCESAMIENTO INDIVIDUAL
                     valor_total_impuestos_individual = 0.0
                     if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
                         valor_total_impuestos_individual += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
@@ -1348,14 +1353,14 @@ async def procesar_facturas_integrado(
                     }
             
             elif impuesto_unico == "IVA_RETEIVA":
-                # Procesamiento individual de IVA - ✅ NUEVO FLUJO
+                # Procesamiento individual de IVA -  NUEVO FLUJO
                 analisis_iva = await clasificador.analizar_iva(documentos_clasificados)
                 
                 from Liquidador.liquidador_iva import LiquidadorIVA, convertir_resultado_a_dict
                 liquidador_iva = LiquidadorIVA()
                 resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
                 
-                # ✅ NUEVA ESTRUCTURA: IVA Individual
+                #  NUEVA ESTRUCTURA: IVA Individual
                 resultado_final = {
                     "procesamiento_paralelo": False,
                     "impuestos_procesados": ["IVA_RETEIVA"],
@@ -1371,10 +1376,10 @@ async def procesar_facturas_integrado(
                     }
                 }
                 
-                # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
+                #  AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
                 resultado_final.update(resultado_estampillas_individual)
                 
-                # ✅ CALCULAR RESUMEN TOTAL PARA OTROS IMPUESTOS
+                #  CALCULAR RESUMEN TOTAL PARA OTROS IMPUESTOS
                 valor_total_otros = 0.0
                 if "estampilla_universidad" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["estampilla_universidad"], dict):
                     valor_total_otros += resultado_final["impuestos"]["estampilla_universidad"].get("valor_estampilla", 0)
@@ -1395,7 +1400,7 @@ async def procesar_facturas_integrado(
                 liquidador_estampilla = LiquidadorEstampilla()
                 resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, nit_administrativo)
                 
-                # ✅ NUEVA ESTRUCTURA: Otros impuestos individuales
+                #  NUEVA ESTRUCTURA: Otros impuestos individuales
                 resultado_final = {
                     "procesamiento_paralelo": False,
                     "impuestos_procesados": [impuesto_unico],
@@ -1410,7 +1415,7 @@ async def procesar_facturas_integrado(
                     }
                 }
                 
-                # 🆕 AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
+                #  AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
                 resultado_final.update(resultado_estampillas_individual)
         
         # =================================
@@ -1434,10 +1439,10 @@ async def procesar_facturas_integrado(
         guardar_archivo_json(resultado_final, "resultado_final")
         
         # Log final de éxito
-        logger.info(f"✅ Procesamiento completado exitosamente")
-        logger.info(f"🏷️ Impuestos procesados: {resultado_final.get('impuestos_procesados', [])}")
+        logger.info(f" Procesamiento completado exitosamente")
+        logger.info(f"Impuestos procesados: {resultado_final.get('impuestos_procesados', [])}")
         if 'resumen_total' in resultado_final:
-            logger.info(f"💰 Total impuestos: ${resultado_final['resumen_total']['valor_total_impuestos']:,.2f}")
+            logger.info(f" Total impuestos: ${resultado_final['resumen_total']['valor_total_impuestos']:,.2f}")
         
         return JSONResponse(
             status_code=200,
@@ -1450,7 +1455,7 @@ async def procesar_facturas_integrado(
     except Exception as e:
         # Manejo de errores generales
         error_msg = f"Error en procesamiento integrado: {str(e)}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(f" {error_msg}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Guardar error para debugging
@@ -1704,7 +1709,7 @@ async def diagnostico_completo():
                     "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_rf else 'NO'} aplica retención fuente"
                 }
                 
-                # ✅ VERIFICAR ESTAMPILLA UNIVERSIDAD
+                #  VERIFICAR ESTAMPILLA UNIVERSIDAD
                 aplica_estampilla = nit_aplica_estampilla_universidad(primer_nit)
                 config_status["estampilla_universidad"] = {
                     "status": "OK",
@@ -1712,15 +1717,15 @@ async def diagnostico_completo():
                     "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_estampilla else 'NO'} aplica estampilla universidad"
                 }
                 
-                # 🏗️ VERIFICAR CONTRIBUCIÓN OBRA PÚBLICA
+                #  VERIFICAR CONTRIBUCIÓN OBRA PÚBLICA
                 aplica_obra_publica = nit_aplica_contribucion_obra_publica(primer_nit)
                 config_status["contribucion_obra_publica"] = {
                     "status": "OK",
                     "aplica_obra_publica": aplica_obra_publica,
                     "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_obra_publica else 'NO'} aplica contribución obra pública 5%"
                 }
-                
-                # ⚡ VERIFICAR DETECCIÓN AUTOMÁTICA INTEGRADA
+            
+                #  VERIFICAR DETECCIÓN AUTOMÁTICA INTEGRADA
                 try:
                     deteccion_auto = detectar_impuestos_aplicables(primer_nit)
                     config_status["deteccion_automatica"] = {
@@ -1832,7 +1837,8 @@ async def diagnostico_completo():
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info("🚀 Iniciando Preliquidador de Retefuente v2.0 - Sistema Integrado")
+
+    logger.info(" Iniciando Preliquidador de Retefuente v2.0 - Sistema Integrado")
     logger.info(" Funcionalidades: Retención en la fuente + Estampilla universidad + Obra pública 5%")
     logger.info(f" Gemini configurado: {bool(GEMINI_API_KEY)}")
     logger.info(f" Vision configurado: {bool(GOOGLE_CLOUD_CREDENTIALS)}")
@@ -1862,14 +1868,13 @@ if __name__ == "__main__":
         logger.info(f" Función detectar_impuestos_aplicables funcionando correctamente")
         
     except Exception as e:
-        logger.error(f"❌ Error con funciones de impuestos especiales: {e}")
+        logger.error(f" Error con funciones de impuestos especiales: {e}")
     
     uvicorn.run(
         "main:app",
         host="127.0.0.1",
         port=8080,
         reload=True,
-        # log_level="info",  # ✅ REMOVIDO: Evita conflicto con configuración profesional
         timeout_keep_alive=120,
         limit_max_requests=1000,
         limit_concurrency=100

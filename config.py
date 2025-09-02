@@ -1161,7 +1161,7 @@ def inicializar_configuracion():
         assert len(CONCEPTOS_RETEFUENTE) > 0, "Debe haber conceptos de retefuente configurados"
         assert len(NITS_IVA_RETEIVA) > 0, "Debe haber NITs configurados para IVA y ReteIVA"
         
-        logger.info("✅ Configuración inicializada correctamente")
+        logger.info(" Configuración inicializada correctamente")
         logger.info(f"   - UVT 2025: ${UVT_2025:,}")
         logger.info(f"   - NITs Estampilla: {len(NITS_ESTAMPILLA_UNIVERSIDAD)}")
         logger.info(f"   - NITs Obra Pública: {len(NITS_CONTRIBUCION_OBRA_PUBLICA)}")
@@ -1172,11 +1172,11 @@ def inicializar_configuracion():
         return True
         
     except Exception as e:
-        logger.error(f"❌ Error en inicialización: {e}")
+        logger.error(f" Error en inicialización: {e}")
         return False
 
 # Inicializar al importar
-try:
-    inicializar_configuracion()
-except Exception as e:
-    logger.warning(f"⚠️ Error en inicialización automática: {e}")
+#try:
+    #inicializar_configuracion()
+#except Exception as e:
+   # logger.warning(f" Error en inicialización automática: {e}")

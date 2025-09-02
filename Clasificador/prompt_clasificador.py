@@ -448,6 +448,10 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
     Límites de deducciones Art. 383:
     {json.dumps(constantes_art383['limites_deducciones'], indent=1, ensure_ascii=False)}
     
+    DOCUMENTOS DISPONIBLES:
+    
+    {_generar_seccion_archivos_directos(nombres_archivos_directos)}
+    
     FACTURA:
     {factura_texto}
     
@@ -456,6 +460,7 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
     
     ANEXOS:
     {anexos_texto if anexos_texto else "NO DISPONIBLES"}
+    
     
     INSTRUCCIONES:
     1. EXTRAE: nombre, NIT y % de cada consorciado (busca formato NIT_%, ej: 900123456_15.5%). en la factura principalmente si ahi no esta la informacion revisa los anexos.
@@ -818,6 +823,10 @@ def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, ane
     
     PAÍSES CON CONVENIO: {paises_convenio}
     
+    DOCUMENTOS DISPONIBLES:
+    
+    {_generar_seccion_archivos_directos(nombres_archivos_directos)} 
+    
     FACTURA:
     {factura_texto}
     
@@ -894,9 +903,9 @@ def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, ane
 
 def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_texto: str, anexos_texto: str, 
                                                        cotizaciones_texto: str, anexo_contrato: str, 
-                                                       nit_administrativo: str) -> str:
+                                                       nit_administrativo: str, nombres_archivos_directos: List[str] = None) -> str:
     """
-    🚀 PROMPT INTEGRADO OPTIMIZADO - OBRA PÚBLICA + ESTAMPILLA UNIVERSIDAD
+    PROMPT INTEGRADO OPTIMIZADO-MULTIMODAL - OBRA PÚBLICA + ESTAMPILLA UNIVERSIDAD
     
     Analiza documentos para detectar y calcular AMBOS impuestos simultáneamente:
     - Estampilla Pro Universidad Nacional (tarifas por rangos UVT)
@@ -964,6 +973,8 @@ IMPUESTO 2 - CONTRIBUCIÓN A OBRA PÚBLICA 5%:
 
 DOCUMENTOS DISPONIBLES:
 ━━━━━━━━━━━━━━━━━━━━━━━━
+{_generar_seccion_archivos_directos(nombres_archivos_directos)}
+
 
 FACTURA PRINCIPAL:
 {factura_texto}
@@ -1114,7 +1125,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON SIN TEXTO ADICIONAL:
 # ===============================
 
 def PROMPT_ANALISIS_IVA(factura_texto: str, rut_texto: str, anexos_texto: str, 
-                        cotizaciones_texto: str, anexo_contrato: str) -> str:
+                        cotizaciones_texto: str, anexo_contrato: str, nombres_archivos_directos: list[str] = None) -> str:
     """
     Genera el prompt para análisis especializado de IVA y ReteIVA.
     
@@ -1124,7 +1135,8 @@ def PROMPT_ANALISIS_IVA(factura_texto: str, rut_texto: str, anexos_texto: str,
         anexos_texto: Texto de anexos adicionales
         cotizaciones_texto: Texto de cotizaciones
         anexo_contrato: Texto del anexo de concepto de contrato
-        
+        nombres_archivos_directos: Lista de nombres de archivos directos
+
     Returns:
         str: Prompt formateado para enviar a Gemini
     """
@@ -1159,6 +1171,8 @@ CONFIGURACIÓN RETEIVA:
 
 DOCUMENTOS DISPONIBLES:
 ━━━━━━━━━━━━━━━━━━━━━━━━
+
+{_generar_seccion_archivos_directos(nombres_archivos_directos)}
 
 FACTURA (DOCUMENTO PRINCIPAL):
 {factura_texto}
@@ -1319,7 +1333,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
     """
 
 def PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(factura_texto: str, rut_texto: str, anexos_texto: str, 
-                                             cotizaciones_texto: str, anexo_contrato: str) -> str:
+                                             cotizaciones_texto: str, anexo_contrato: str, nombres_archivos_directos: list[str] = None) -> str:
     """
     🆕 NUEVO PROMPT: Análisis de 6 Estampillas Generales
     
@@ -1340,6 +1354,7 @@ def PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(factura_texto: str, rut_texto: str, an
         anexos_texto: Texto de anexos adicionales
         cotizaciones_texto: Texto de cotizaciones
         anexo_contrato: Texto del anexo de concepto de contrato
+        nombres_archivos_directos: Lista de nombres de archivos directos
         
     Returns:
         str: Prompt formateado para enviar a Gemini
@@ -1371,6 +1386,9 @@ Tu tarea es identificar información sobre 6 estampillas específicas en los doc
 
 DOCUMENTOS DISPONIBLES:
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+{_generar_seccion_archivos_directos(nombres_archivos_directos)}
+
 
 FACTURA PRINCIPAL:
 {factura_texto}

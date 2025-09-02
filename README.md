@@ -1,4 +1,49 @@
-### ✅ **NUEVA VERSIÓN v2.8.2 (2025-08-28)**
+### ✅ **NUEVA VERSIÓN v2.8.3 (2025-09-01)**
+
+**🛡️ VALIDACIÓN ROBUSTA DE PDFs - SOLUCIÓN CRÍTICA:**
+- 🐛 **CORREGIDO**: Error crítico "archivo no tiene páginas" en llamadas a API de Gemini
+- ✅ **Lectura segura**: Nueva función `_leer_archivo_seguro()` con single retry
+- 📝 **Validación PDF**: Nueva función `_validar_pdf_tiene_paginas()` con PyPDF2
+- 🆕 **Función mejorada**: `_llamar_gemini_hibrido_factura()` con validaciones robustas
+- ⚡ **Continuidad**: Archivos problemáticos se omiten sin fallar todo el procesamiento
+
+**🔧 Características de Validación:**
+```
+✅ Single retry: 2 intentos máx por archivo (no sobrecarga de sistema)
+📝 Validación PyPDF2: Verificación de páginas + contenido
+🚨 Omisión inteligente: Archivos problemáticos no interrumpen procesamiento
+🔍 Logging detallado: Estado de validación por cada archivo
+🛡️ Tamaño mínimo: 100 bytes para PDFs, detección de archivos vacíos
+```
+
+**📋 Tipos de Archivos Validados:**
+```
+PDFs: Validación completa con PyPDF2 (páginas + contenido)
+Imágenes: Validación básica de magic bytes y tamaño
+Otros: Detección por extensión + validación de tamaño mínimo
+```
+
+**📏 Ejemplo de Logging de Validación:**
+```
+✅ Archivo leído exitosamente: factura.pdf (2,543,128 bytes) - Intento 1
+✅ PDF validado correctamente: factura.pdf - 3 páginas
+✅ PDF VALIDADO para análisis: factura.pdf (2,543,128 bytes)
+🚀 Enviando análisis a Gemini: 2 elementos (1 archivos validados)
+✅ Análisis híbrido de factura completado: 3,492 caracteres
+```
+
+**🛡️ Beneficios de Confiabilidad:**
+```
+✅ Eliminación del error "archivo no tiene páginas"
+📈 Mayor tasa de éxito en procesamientos
+🔍 Debugging mejorado con logs específicos
+⚡ Performance optimizada con archivos válidos
+🧠 Solo archivos validados llegan a IA
+```
+
+---
+
+### ✅ **VERSIÓN v2.8.2 (2025-08-28)**
 
 **🚀 MULTIMODALIDAD INTEGRADA EN TODOS LOS IMPUESTOS:**
 - 📄 **PDFs e Imágenes**: Enviados directamente a Gemini sin extracción previa (nativo multimodal)

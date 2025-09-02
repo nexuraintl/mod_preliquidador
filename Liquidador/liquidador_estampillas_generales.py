@@ -73,7 +73,7 @@ def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> D
     Returns:
         Dict con resultado de validación y datos corregidos si es necesario
     """
-    logger.info("🔍 Validando formato de respuesta de estampillas generales")
+    logger.info(" Validando formato de respuesta de estampillas generales")
     
     try:
         validacion = {
@@ -139,21 +139,21 @@ def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> D
         # Validar usando modelo Pydantic
         try:
             resultado_validado = ResultadoEstampillasGenerales(**validacion["respuesta_validada"])
-            logger.info("✅ Validación Pydantic exitosa para estampillas generales")
+            logger.info(" Validación Pydantic exitosa para estampillas generales")
         except Exception as e:
             validacion["errores"].append(f"Error en validación Pydantic: {str(e)}")
             validacion["formato_valido"] = False
         
         # Log final
         if validacion["formato_valido"]:
-            logger.info(f"✅ Formato válido para estampillas generales. Corregido: {validacion['datos_corregidos']}")
+            logger.info(f" Formato válido para estampillas generales. Corregido: {validacion['datos_corregidos']}")
         else:
-            logger.error(f"❌ Formato inválido para estampillas generales. Errores: {len(validacion['errores'])}")
+            logger.error(f" Formato inválido para estampillas generales. Errores: {len(validacion['errores'])}")
         
         return validacion
         
     except Exception as e:
-        logger.error(f"❌ Error validando formato de estampillas: {e}")
+        logger.error(f"Error validando formato de estampillas: {e}")
         return {
             "formato_valido": False,
             "errores": [f"Error crítico en validación: {str(e)}"],
@@ -181,7 +181,7 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
     Returns:
         Dict con formato final para resultado_final.json
     """
-    logger.info("🎨 Presentando resultado final de estampillas generales")
+    logger.info(" Presentando resultado final de estampillas generales")
     
     try:
         # Extraer datos principales
@@ -242,12 +242,12 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
         resultado_final["estampillas_generales"]["observaciones_generales"] = observaciones_generales
         
         # Log informativo
-        logger.info(f"✅ Resultado final presentado - {completas} completas, {incompletas} incompletas")
+        logger.info(f" Resultado final presentado - {completas} completas, {incompletas} incompletas")
         
         return resultado_final
         
     except Exception as e:
-        logger.error(f"❌ Error presentando resultado de estampillas: {e}")
+        logger.error(f" Error presentando resultado de estampillas: {e}")
         return {
             "estampillas_generales": {
                 "procesamiento_exitoso": False,

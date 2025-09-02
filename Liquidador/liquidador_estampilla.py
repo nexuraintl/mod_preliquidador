@@ -141,9 +141,9 @@ class LiquidadorEstampilla:
     
     def __init__(self):
         self.uvt_2025 = UVT_2025
-        logger.info(f"🏛️ LiquidadorEstampilla INTEGRADO inicializado - UVT 2025: ${self.uvt_2025:,}")
-        logger.info(f"⚙️ Configuración: {len(NITS_ESTAMPILLA_UNIVERSIDAD)} NITs unificados")
-        logger.info(f"🚀 Modo: ANÁLISIS INTEGRADO (estampilla + obra pública)")
+        logger.info(f" LiquidadorEstampilla INTEGRADO inicializado - UVT 2025: ${self.uvt_2025:,}")
+        logger.info(f" Configuración: {len(NITS_ESTAMPILLA_UNIVERSIDAD)} NITs unificados")
+        logger.info(f" Modo: ANÁLISIS INTEGRADO (estampilla + obra pública)")
     
     def validar_nit_administrativo(self, nit: str) -> Tuple[bool, str]:
         """
@@ -311,7 +311,7 @@ class LiquidadorEstampilla:
         # Si no se proporciona valor de factura, usar el valor del contrato
         if valor_factura_sin_iva is None:
             valor_factura_sin_iva = valor_contrato_pesos
-            logger.warning("⚠️ No se proporcionó valor de factura, usando valor del contrato")
+            logger.warning(" No se proporcionó valor de factura, usando valor del contrato")
         
         # Obtener tarifa según valor del contrato en UVT
         info_tarifa = obtener_tarifa_estampilla_universidad(valor_contrato_pesos)
@@ -476,7 +476,7 @@ class LiquidadorEstampilla:
             # 5. ✅ CALCULAR ESTAMPILLA CON FÓRMULA CORRECTA
             if analisis_contrato.tercero and analisis_contrato.tercero.es_consorcio:
                 # MANEJO DE CONSORCIOS
-                logger.info("🏢 Calculando estampilla para consorcio")
+                logger.info(" Calculando estampilla para consorcio")
                 # Aquí se necesitaría información de los consorciados del análisis
                 # Por ahora, manejo básico
                 calculo = self.calcular_estampilla(
@@ -498,18 +498,18 @@ class LiquidadorEstampilla:
             resultado.rango_uvt = calculo["rango_uvt"]
             resultado.detalle_calculo = calculo
             
-            logger.info(f"✅ Estampilla calculada: ${resultado.valor_estampilla:,.2f} ({resultado.tarifa_aplicada*100:.1f}%)")
-            logger.info(f"📊 Fórmula aplicada: {calculo.get('formula_aplicada', 'N/A')}")
+            logger.info(f" Estampilla calculada: ${resultado.valor_estampilla:,.2f} ({resultado.tarifa_aplicada*100:.1f}%)")
+            logger.info(f"Fórmula aplicada: {calculo.get('formula_aplicada', 'N/A')}")
             
         except Exception as e:
-            logger.error(f"❌ Error calculando estampilla: {e}")
+            logger.error(f" Error calculando estampilla: {e}")
             resultado.mensajes_error.append(f"Error interno: {str(e)}")
             resultado.estado = "Preliquidación sin finalizar"
         
         return resultado
     
     def obtener_prompt_integrado_desde_clasificador(self, factura_texto: str, rut_texto: str, anexos_texto: str, 
-                                                     cotizaciones_texto: str, anexo_contrato: str, nit_administrativo: str) -> str:
+                                                     cotizaciones_texto: str, anexo_contrato: str, nit_administrativo: str, nombres_archivos_directos: List[str]=None) -> str:
         """
         🚀 NUEVA FUNCIÓN - Obtiene el prompt integrado optimizado desde prompt_clasificador.py
         
@@ -535,7 +535,8 @@ class LiquidadorEstampilla:
             anexos_texto=anexos_texto,
             cotizaciones_texto=cotizaciones_texto,
             anexo_contrato=anexo_contrato,
-            nit_administrativo=nit_administrativo
+            nit_administrativo=nit_administrativo,
+            nombres_archivos_directos=nombres_archivos_directos
         )
     
     # ===============================
@@ -570,7 +571,7 @@ class LiquidadorEstampilla:
         Returns:
             ResultadoContribucionObraPublica: Resultado completo del cálculo
         """
-        logger.info(f"🚧 Iniciando liquidación contribución obra pública - Valor: ${valor_factura_sin_iva:,.2f}")
+        logger.info(f" Iniciando liquidación contribución obra pública - Valor: ${valor_factura_sin_iva:,.2f}")
         
         fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         resultado = ResultadoContribucionObraPublica(
@@ -587,22 +588,22 @@ class LiquidadorEstampilla:
             # 1. ✅ VALIDAR NIT ADMINISTRATIVO
             if nit_aplica_contribucion_obra_publica(nit_administrativo):
                 resultado.nit_administrativo_valido = True
-                logger.info(f"✅ NIT válido para obra pública: {NITS_CONTRIBUCION_OBRA_PUBLICA[nit_administrativo]}")
+                logger.info(f" NIT válido para obra pública: {NITS_CONTRIBUCION_OBRA_PUBLICA[nit_administrativo]}")
             else:
                 resultado.mensajes_error.append(f"NIT {nit_administrativo} no aplica para contribución a obra pública")
                 resultado.estado = "No aplica el impuesto"
-                logger.warning(f"⚠️ NIT no válido: {nit_administrativo}")
+                logger.warning(f"NIT no válido: {nit_administrativo}")
                 return resultado
             
             # 2. ✅ VALIDAR TERCERO (solo si se proporciona nombre)
             if nombre_tercero:
                 if es_tercero_recursos_publicos(nombre_tercero):
                     resultado.tercero_valido = True
-                    logger.info(f"✅ Tercero válido: {nombre_tercero}")
+                    logger.info(f"Tercero válido: {nombre_tercero}")
                 else:
                     resultado.mensajes_error.append(f"Tercero '{nombre_tercero}' no administra recursos públicos")
                     resultado.estado = "No aplica el impuesto"
-                    logger.warning(f"⚠️ Tercero no válido: {nombre_tercero}")
+                    logger.warning(f"Tercero no válido: {nombre_tercero}")
                     return resultado
             else:
                 resultado.tercero_valido = True  # Si no se proporciona, asumimos válido
@@ -612,10 +613,10 @@ class LiquidadorEstampilla:
                 es_obra = self._es_contrato_obra(objeto_contrato)
                 if es_obra:
                     resultado.objeto_contrato_valido = True
-                    logger.info(f"✅ Objeto válido para obra pública: contrato de obra")
+                    logger.info(f" Objeto válido para obra pública: contrato de obra")
                 else:
                     resultado.mensajes_error.append("Cuando no se identifica el objeto del contrato como OBRA, asignar estado: Preliquidación sin finalizar")
-                    logger.warning(f"⚠️ Objeto no válido: {objeto_contrato}")
+                    logger.warning(f" Objeto no válido: {objeto_contrato}")
                     resultado.estado = "Preliquidación sin finalizar"
                     return resultado
             else:
@@ -643,15 +644,15 @@ class LiquidadorEstampilla:
             # 6. ✅ ESTADO FINAL CORRECTO
             if resultado.aplica and resultado.valor_contribucion > 0:
                 resultado.estado = "Preliquidado"  # ✅ CUMPLE REQUISITO: Si aplica → "Preliquidado"
-                logger.info(f"✅ Contribución obra pública calculada: ${resultado.valor_contribucion:,.2f}")
-                logger.info(f"📊 Fórmula: Valor factura sin IVA x 5% = ${valor_factura_sin_iva:,.2f} x 5% = ${resultado.valor_contribucion:,.2f}")
+                logger.info(f" Contribución obra pública calculada: ${resultado.valor_contribucion:,.2f}")
+                logger.info(f" Fórmula: Valor factura sin IVA x 5% = ${valor_factura_sin_iva:,.2f} x 5% = ${resultado.valor_contribucion:,.2f}")
             else:
                 resultado.estado = "No aplica el impuesto"
             
             return resultado
             
         except Exception as e:
-            logger.error(f"❌ Error liquidando obra pública: {e}")
+            logger.error(f" Error liquidando obra pública: {e}")
             resultado.mensajes_error.append(f"Error en cálculo: {str(e)}")
             resultado.estado = "Preliquidación sin finalizar"
             return resultado
@@ -744,7 +745,7 @@ class LiquidadorEstampilla:
         Returns:
             dict: Resultado consolidado con ambos impuestos
         """
-        logger.info(f"🚀 Liquidación integrada iniciada para NIT: {nit_administrativo}")
+        logger.info(f"Liquidación integrada iniciada para NIT: {nit_administrativo}")
         
         resultado_integrado = {
             "nit_administrativo": nit_administrativo,
@@ -757,8 +758,8 @@ class LiquidadorEstampilla:
             aplica_estampilla = nit_aplica_estampilla_universidad(nit_administrativo)
             aplica_obra_publica = nit_aplica_contribucion_obra_publica(nit_administrativo)
             
-            logger.info(f"🏦 Estampilla aplica: {aplica_estampilla}")
-            logger.info(f"🏧 Obra pública aplica: {aplica_obra_publica}")
+            logger.info(f" Estampilla aplica: {aplica_estampilla}")
+            logger.info(f" Obra pública aplica: {aplica_obra_publica}")
             
             # LIQUIDAR ESTAMPILLA UNIVERSIDAD (si aplica)
             if aplica_estampilla and analisis_especiales.get("estampilla_universidad"):
@@ -806,10 +807,10 @@ class LiquidadorEstampilla:
                         "fecha_calculo": resultado_estampilla.fecha_calculo
                     }
                     
-                    logger.info(f"✅ Estampilla procesada: ${resultado_estampilla.valor_estampilla:,.2f}")
+                    logger.info(f" Estampilla procesada: ${resultado_estampilla.valor_estampilla:,.2f}")
                     
                 except Exception as e:
-                    logger.error(f"❌ Error procesando estampilla: {e}")
+                    logger.error(f" Error procesando estampilla: {e}")
                     resultado_integrado["estampilla_universidad"] = {
                         "aplica": False,
                         "estado": "Error en procesamiento",
@@ -860,10 +861,10 @@ class LiquidadorEstampilla:
                         "fecha_calculo": resultado_obra_publica.fecha_calculo
                     }
                     
-                    logger.info(f"✅ Obra pública procesada: ${resultado_obra_publica.valor_contribucion:,.2f}")
+                    logger.info(f" Obra pública procesada: ${resultado_obra_publica.valor_contribucion:,.2f}")
                     
                 except Exception as e:
-                    logger.error(f"❌ Error procesando obra pública: {e}")
+                    logger.error(f" Error procesando obra pública: {e}")
                     resultado_integrado["contribucion_obra_publica"] = {
                         "aplica": False,
                         "estado": "Error en procesamiento",
@@ -888,12 +889,12 @@ class LiquidadorEstampilla:
                 "procesamiento_exitoso": True
             }
             
-            logger.info(f"💰 Total impuestos especiales: ${valor_total_estampilla + valor_total_obra_publica:,.2f}")
+            logger.info(f" Total impuestos especiales: ${valor_total_estampilla + valor_total_obra_publica:,.2f}")
             
             return resultado_integrado
             
         except Exception as e:
-            logger.error(f"❌ Error en liquidación integrada: {e}")
+            logger.error(f" Error en liquidación integrada: {e}")
             return {
                 "nit_administrativo": nit_administrativo,
                 "error": f"Error en liquidación integrada: {str(e)}",
@@ -908,7 +909,7 @@ class LiquidadorEstampilla:
 
 def crear_liquidador_estampilla() -> LiquidadorEstampilla:
     """Factory function para crear instancia del liquidador integrado (compatibilidad hacia atrás)"""
-    logger.info("🚀 Creando liquidador integrado - Modo estampilla + obra pública")
+    logger.info(" Creando liquidador integrado - Modo estampilla + obra pública")
     return LiquidadorEstampilla()
 
 # ✅ ALIAS INTEGRADO: Liquidador de Impuestos Especiales
@@ -916,7 +917,7 @@ LiquidadorImpuestosEspeciales = LiquidadorEstampilla
 
 def crear_liquidador_impuestos_especiales() -> LiquidadorEstampilla:
     """Factory function para crear instancia del liquidador integrado optimizado"""
-    logger.info("🚀 Creando liquidador integrado (estampilla + obra pública)")
+    logger.info(" Creando liquidador integrado (estampilla + obra pública)")
     return LiquidadorEstampilla()
 
 def validar_configuracion_estampilla() -> Dict[str, Any]:
@@ -953,7 +954,7 @@ def validar_configuracion_estampilla() -> Dict[str, Any]:
         from config import NITS_CONTRIBUCION_OBRA_PUBLICA
         if config["nits_validos"] == NITS_CONTRIBUCION_OBRA_PUBLICA:
             validacion["unificacion_exitosa"] = True
-            logger.info("✅ Validación exitosa: NITs unificados correctamente")
+            logger.info("Validación exitosa: NITs unificados correctamente")
         else:
             validacion["errores"].append("NITs de estampilla y obra pública no están unificados")
             validacion["valida"] = False
@@ -1001,7 +1002,7 @@ def validar_configuracion_impuestos_integrada() -> Dict[str, Any]:
         # ✅ Validación crítica: NITs unificados
         if config_estampilla["nits_validos"] == config_obra["nits_validos"]:
             validacion["nits_unificados_exitoso"] = True
-            logger.info("✅ NITs unificados correctamente entre ambos impuestos")
+            logger.info(" NITs unificados correctamente entre ambos impuestos")
         else:
             validacion["errores"].append("NITs no están unificados entre estampilla y obra pública")
             validacion["valida"] = False
@@ -1010,7 +1011,7 @@ def validar_configuracion_impuestos_integrada() -> Dict[str, Any]:
         try:
             from Clasificador.prompt_clasificador import PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO
             validacion["prompt_integrado_disponible"] = True
-            logger.info("✅ Prompt integrado disponible en prompt_clasificador.py")
+            logger.info(" Prompt integrado disponible en prompt_clasificador.py")
         except ImportError:
             validacion["errores"].append("Prompt integrado no encontrado en prompt_clasificador.py")
             validacion["valida"] = False
@@ -1026,7 +1027,7 @@ def validar_configuracion_impuestos_integrada() -> Dict[str, Any]:
         
         # Log final
         estado = "OK" if validacion["valida"] else "ERROR"
-        logger.info(f"🚀 Validación configuración INTEGRADA OPTIMIZADA: {estado}")
+        logger.info(f" Validación configuración INTEGRADA OPTIMIZADA: {estado}")
         if validacion["valida"]:
             logger.info(f"   ✓ {validacion['estampilla_universidad']['nits_configurados']} NITs unificados")
             logger.info(f"   ✓ {validacion['terceros_compartidos']} terceros compartidos")

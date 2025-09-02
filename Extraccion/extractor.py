@@ -94,28 +94,28 @@ class ProcesadorArchivos:
         """Verifica y reporta las dependencias disponibles para extracción PDF y conversión a imagen"""
         # Verificar PDF Plumber (método principal)
         if PDFPLUMBER_DISPONIBLE:
-            logger.info("✅ pdfplumber disponible para extracción principal de PDF")
+            logger.info(" pdfplumber disponible para extracción principal de PDF")
         else:
-            logger.warning("⚠️ pdfplumber no disponible. Usando PyPDF2 como principal")
+            logger.warning(" pdfplumber no disponible. Usando PyPDF2 como principal")
             logger.warning("   Instala: pip install pdfplumber")
         
         # Verificar PyPDF2 (fallback)
-        logger.info("✅ PyPDF2 disponible como fallback")
+        logger.info(" PyPDF2 disponible como fallback")
         
         # Verificar conversión PDF → Imagen para OCR
         if PDF2IMAGE_DISPONIBLE:
-            logger.info("✅ pdf2image disponible para conversión PDF → Imagen")
+            logger.info("pdf2image disponible para conversión PDF → Imagen")
         elif PYMUPDF_DISPONIBLE:
-            logger.info("✅ PyMuPDF disponible para conversión PDF → Imagen")
+            logger.info(" PyMuPDF disponible para conversión PDF → Imagen")
         else:
-            logger.warning("⚠️ Sin dependencias para PDF → Imagen. OCR fallback limitado")
+            logger.warning(" Sin dependencias para PDF → Imagen. OCR fallback limitado")
             logger.warning("   Instala: pip install pdf2image PyMuPDF")
         
         # Verificar dependencias de email
         if EXTRACT_MSG_DISPONIBLE:
-            logger.info("✅ extract-msg disponible para archivos .msg")
+            logger.info(" extract-msg disponible para archivos .msg")
         else:
-            logger.warning("⚠️ extract-msg no disponible. Archivos .msg limitados")
+            logger.warning(" extract-msg no disponible. Archivos .msg limitados")
             logger.warning("   Instala: pip install extract-msg")
     
     def _configurar_vision(self):
@@ -216,13 +216,13 @@ FIN DE LA EXTRACCIÓN
             with open(ruta_archivo, 'w', encoding='utf-8') as f:
                 f.write(contenido_completo)
             
-            logger.info(f"✅ Texto extraído guardado: {ruta_archivo}")
-            logger.info(f"📊 Caracteres extraídos: {len(texto_extraido)}")
+            logger.info(f" Texto extraído guardado: {ruta_archivo}")
+            logger.info(f" Caracteres extraídos: {len(texto_extraido)}")
             
             return str(ruta_archivo)
             
         except Exception as e:
-            logger.error(f"❌ Error guardando texto extraído: {e}")
+            logger.error(f" Error guardando texto extraído: {e}")
             return f"Error guardando: {str(e)}"
     
     def _validar_pdf(self, contenido_pdf: bytes, nombre_archivo: str) -> Dict[str, Any]:
@@ -307,7 +307,7 @@ FIN DE LA EXTRACCIÓN
         try:
             # Validar que el contenido no esté vacío
             if not contenido_pdf or len(contenido_pdf) < 100:
-                logger.error(f"❌ PDF demasiado pequeño o vacío: {len(contenido_pdf)} bytes")
+                logger.error(f" PDF demasiado pequeño o vacío: {len(contenido_pdf)} bytes")
                 return []
             
             # Intentar con pdf2image primero
@@ -315,7 +315,7 @@ FIN DE LA EXTRACCIÓN
                 try:
                     from pdf2image import convert_from_bytes
                     
-                    logger.info(f"🔄 Convirtiendo PDF a imágenes con pdf2image: {nombre_archivo}")
+                    logger.info(f" Convirtiendo PDF a imágenes con pdf2image: {nombre_archivo}")
                     
                     # Convertir PDF a imágenes con configuración robusta
                     pages = convert_from_bytes(
@@ -333,30 +333,30 @@ FIN DE LA EXTRACCIÓN
                         page.save(img_byte_arr, format='JPEG', quality=95)
                         imagenes.append(img_byte_arr.getvalue())
                     
-                    logger.info(f"✅ pdf2image: {len(imagenes)} páginas convertidas")
+                    logger.info(f" pdf2image: {len(imagenes)} páginas convertidas")
                     return imagenes
                     
                 except Exception as e:
-                    logger.error(f"❌ Error con pdf2image: {e}")
+                    logger.error(f" Error con pdf2image: {e}")
                     # Continuar con PyMuPDF
             
             # Intentar con PyMuPDF como alternativa
             if PYMUPDF_DISPONIBLE:
                 try:
-                    logger.info(f"🔄 Convirtiendo PDF a imágenes con PyMuPDF: {nombre_archivo}")
+                    logger.info(f" Convirtiendo PDF a imágenes con PyMuPDF: {nombre_archivo}")
                     
                     # Abrir PDF desde bytes
                     pdf_document = fitz.open(stream=contenido_pdf, filetype="pdf")
                     
                     # Verificar que el PDF se abrió correctamente
                     if pdf_document.page_count == 0:
-                        logger.error(f"❌ PDF sin páginas válidas")
+                        logger.error(f" PDF sin páginas válidas")
                         pdf_document.close()
                         return []
                     
                     # Limitar número de páginas
                     max_pages = min(pdf_document.page_count, 1000)
-                    logger.info(f"📄 Procesando {max_pages} de {pdf_document.page_count} páginas")
+                    logger.info(f" Procesando {max_pages} de {pdf_document.page_count} páginas")
                     
                     # Convertir cada página
                     for page_num in range(max_pages):
@@ -371,14 +371,14 @@ FIN DE LA EXTRACCIÓN
                         imagenes.append(img_data)
                     
                     pdf_document.close()
-                    logger.info(f"✅ PyMuPDF: {len(imagenes)} páginas convertidas")
+                    logger.info(f"PyMuPDF: {len(imagenes)} páginas convertidas")
                     return imagenes
                     
                 except Exception as e:
-                    logger.error(f"❌ Error con PyMuPDF: {e}")
+                    logger.error(f" Error con PyMuPDF: {e}")
             
             # Si llegamos aquí, ambos métodos fallaron
-            logger.error(f"❌ Todos los métodos de conversión PDF a imagen  fallaron")
+            logger.error(f" Todos los métodos de conversión PDF a imagen  fallaron")
             logger.error(f"   pdf2image disponible: {PDF2IMAGE_DISPONIBLE}")
             logger.error(f"   PyMuPDF disponible: {PYMUPDF_DISPONIBLE}")
             
@@ -389,7 +389,7 @@ FIN DE LA EXTRACCIÓN
             return []
                 
         except Exception as e:
-            logger.error(f"❌ Error general convirtiendo PDF a imágenes: {e}")
+            logger.error(f" Error general convirtiendo PDF a imágenes: {e}")
             logger.error(f"   Archivo: {nombre_archivo}")
             logger.error(f"   Tamaño: {len(contenido_pdf)} bytes")
             return []
@@ -414,7 +414,7 @@ FIN DE LA EXTRACCIÓN
         extension = Path(archivo.filename).suffix.lower()
         contenido = await archivo.read()
         
-        logger.info(f"📄 Procesando archivo: {archivo.filename} ({extension})")
+        logger.info(f" Procesando archivo: {archivo.filename} ({extension})")
         
         # Determinar método de extracción según extensión
         if extension == '.pdf':
@@ -515,13 +515,13 @@ FIN DE LA EXTRACCIÓN
         # MÉTODO PRINCIPAL: PDF PLUMBER
         if PDFPLUMBER_DISPONIBLE:
             try:
-                logger.info(f"🔄 Extrayendo texto con PDF Plumber (método principal): {nombre_archivo}")
+                logger.info(f" Extrayendo texto con PDF Plumber (método principal): {nombre_archivo}")
                 
                 with pdfplumber.open(io.BytesIO(contenido)) as pdf:
                     texto_completo = ""
                     num_paginas = len(pdf.pages)
                     
-                    logger.info(f"📖 Procesando PDF con {num_paginas} página(s) usando PDF Plumber")
+                    logger.info(f" Procesando PDF con {num_paginas} página(s) usando PDF Plumber")
                     
                     for i, page in enumerate(pdf.pages):
                         # Extraer texto como fluye naturalmente
@@ -547,44 +547,44 @@ FIN DE LA EXTRACCIÓN
                     
                     # SI NECESITA OCR, INTENTAR EXTRACCIÓN CON OCR INMEDIATAMENTE
                     if evaluacion["necesita_ocr"]:
-                        logger.warning(f"⚠️ PDF Plumber extrajo poco contenido útil: {evaluacion['razon_ocr']}")
-                        logger.info(f"🔄 Intentando OCR automáticamente...")
+                        logger.warning(f" PDF Plumber extrajo poco contenido útil: {evaluacion['razon_ocr']}")
+                        logger.info(f" Intentando OCR automáticamente...")
                         
                         try:
                             texto_ocr = await self.extraer_texto_pdf_con_ocr(contenido, nombre_archivo)
                             
                             if texto_ocr and not texto_ocr.startswith("Error") and len(texto_ocr.strip()) > evaluacion["caracteres_utiles"]:
-                                logger.info(f"✅ OCR proporcionó mejor resultado que PDF Plumber")
-                                logger.info(f"📊 Comparación: PDF Plumber ({evaluacion['caracteres_utiles']} caracteres útiles) vs OCR ({len(texto_ocr.strip())} caracteres)")
+                                logger.info(f" OCR proporcionó mejor resultado que PDF Plumber")
+                                logger.info(f" Comparación: PDF Plumber ({evaluacion['caracteres_utiles']} caracteres útiles) vs OCR ({len(texto_ocr.strip())} caracteres)")
                                 return texto_ocr  # Retornar resultado de OCR
                             else:
-                                logger.warning(f"⚠️ OCR no mejoró el resultado, manteniendo extracción de PDF Plumber")
+                                logger.warning(f" OCR no mejoró el resultado, manteniendo extracción de PDF Plumber")
                                 
                         except Exception as e:
-                            logger.error(f"❌ Error en OCR automático: {str(e)}")
-                            logger.info(f"🔄 Continuando con resultado de PDF Plumber")
+                            logger.error(f" Error en OCR automático: {str(e)}")
+                            logger.info(f" Continuando con resultado de PDF Plumber")
                     
                     # Guardar texto extraído automáticamente
                     archivo_guardado = self._guardar_texto_extraido(
                         nombre_archivo, texto_final, "PDF", metadatos
                     )
                     
-                    logger.info(f"✅ PDF Plumber: {len(texto_final)} caracteres extraídos")
+                    logger.info(f" PDF Plumber: {len(texto_final)} caracteres extraídos")
                     return texto_final
                     
             except Exception as e:
-                logger.warning(f"⚠️ PDF Plumber falló: {str(e)}")
-                logger.info(f"🔄 Intentando con PyPDF2 como fallback...")
+                logger.warning(f"PDF Plumber falló: {str(e)}")
+                logger.info(f"Intentando con PyPDF2 como fallback...")
         
         # MÉTODO FALLBACK: PyPDF2
         try:
-            logger.info(f"🔄 Extrayendo texto con PyPDF2 (fallback): {nombre_archivo}")
+            logger.info(f" Extrayendo texto con PyPDF2 (fallback): {nombre_archivo}")
             
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(contenido))
             texto_completo = ""
             
             num_paginas = len(pdf_reader.pages)
-            logger.info(f"📖 Procesando PDF con {num_paginas} página(s) usando PyPDF2")
+            logger.info(f" Procesando PDF con {num_paginas} página(s) usando PyPDF2")
             
             for i, page in enumerate(pdf_reader.pages):
                 texto_pagina = page.extract_text()
@@ -605,12 +605,12 @@ FIN DE LA EXTRACCIÓN
                 nombre_archivo, texto_final, "PDF", metadatos
             )
             
-            logger.info(f"✅ PyPDF2: {len(texto_final)} caracteres extraídos")
+            logger.info(f"PyPDF2: {len(texto_final)} caracteres extraídos")
             return texto_final
             
         except Exception as e:
             error_msg = f"Error procesando PDF con ambos métodos (PDF Plumber + PyPDF2): {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar también los errores para debugging
             self._guardar_texto_extraido(
@@ -637,7 +637,7 @@ FIN DE LA EXTRACCIÓN
             
             if not validacion["valido"]:
                 error_msg = f"PDF no válido para OCR: {validacion['error']}"
-                logger.error(f"❌ {error_msg}")
+                logger.error(f" {error_msg}")
                 
                 # Guardar error detallado
                 self._guardar_texto_extraido(
@@ -647,15 +647,15 @@ FIN DE LA EXTRACCIÓN
                 
                 return error_msg
             
-            logger.info(f"✅ PDF validado: {validacion['info']['paginas']} páginas, {validacion['info']['tamaño_bytes']} bytes")
-            logger.info(f"🔧 Método recomendado: {validacion['metodo_recomendado']}")
+            logger.info(f" PDF validado: {validacion['info']['paginas']} páginas, {validacion['info']['tamaño_bytes']} bytes")
+            logger.info(f" Método recomendado: {validacion['metodo_recomendado']}")
             
             # Convertir PDF a imágenes
             imagenes = self._convertir_pdf_a_imagenes(contenido_pdf, nombre_archivo)
             
             if not imagenes:
                 error_msg = "No se pudieron convertir páginas del PDF a imágenes"
-                logger.error(f"❌ {error_msg}")
+                logger.error(f" {error_msg}")
                 
                 self._guardar_texto_extraido(
                     nombre_archivo, error_msg, "PDF_OCR_ERROR", 
@@ -690,7 +690,7 @@ FIN DE LA EXTRACCIÓN
             
         except Exception as e:
             error_msg = f"Error en OCR de PDF: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -827,14 +827,14 @@ FIN DE LA EXTRACCIÓN
             
             if texts:
                 texto_extraido = texts[0].description
-                logger.debug(f"✅ OCR exitoso en {descripcion}: {len(texto_extraido)} caracteres")
+                logger.debug(f" OCR exitoso en {descripcion}: {len(texto_extraido)} caracteres")
                 return texto_extraido
             else:
-                logger.debug(f"⚠️ No se detectó texto en {descripcion}")
+                logger.debug(f" No se detectó texto en {descripcion}")
                 return ""
                 
         except Exception as e:
-            logger.error(f"❌ Error en OCR de {descripcion}: {e}")
+            logger.error(f" Error en OCR de {descripcion}: {e}")
             return f"Error en OCR: {str(e)}"
     
     async def extraer_texto_imagen(self, contenido: bytes, nombre_archivo: str = "imagen.jpg", metodo: str = "OCR") -> str:
@@ -852,7 +852,7 @@ FIN DE LA EXTRACCIÓN
         """
         if not self.vision_client:
             error_msg = "OCR no disponible - Google Vision no configurado"
-            logger.warning(f"⚠️ {error_msg}")
+            logger.warning(f" {error_msg}")
             
             # Guardar el error
             self._guardar_texto_extraido(
@@ -1060,7 +1060,7 @@ FIN DE LA EXTRACCIÓN
                 return await self._procesar_eml(contenido, nombre_archivo)
             else:
                 error_msg = f"Extensión de email no soportada: {extension}"
-                logger.error(f"❌ {error_msg}")
+                logger.error(f" {error_msg}")
                 
                 # Guardar error
                 self._guardar_texto_extraido(
@@ -1072,7 +1072,7 @@ FIN DE LA EXTRACCIÓN
                 
         except Exception as e:
             error_msg = f"Error procesando email: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -1095,7 +1095,7 @@ FIN DE LA EXTRACCIÓN
         """
         if not EXTRACT_MSG_DISPONIBLE:
             error_msg = "Librería extract-msg no disponible. Instale con: pip install extract-msg"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             self._guardar_texto_extraido(
                 nombre_archivo, error_msg, "MSG_ERROR", 
@@ -1145,8 +1145,8 @@ FIN DE LA EXTRACCIÓN
                     nombre_archivo, texto_formateado, "EMAIL_MSG", metadatos
                 )
                 
-                logger.info(f"✅ Email .msg procesado: {len(texto_formateado)} caracteres")
-                logger.info(f"📧 Asunto: {asunto[:50]}...")
+                logger.info(f" Email .msg procesado: {len(texto_formateado)} caracteres")
+                logger.info(f" Asunto: {asunto[:50]}...")
                 
                 return texto_formateado
                 
@@ -1160,7 +1160,7 @@ FIN DE LA EXTRACCIÓN
                     
         except Exception as e:
             error_msg = f"Error procesando archivo .msg: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             self._guardar_texto_extraido(
                 nombre_archivo, error_msg, "MSG_ERROR", 
@@ -1217,14 +1217,14 @@ FIN DE LA EXTRACCIÓN
                 nombre_archivo, texto_formateado, "EMAIL_EML", metadatos
             )
             
-            logger.info(f"✅ Email .eml procesado: {len(texto_formateado)} caracteres")
-            logger.info(f"📧 Asunto: {asunto[:50]}...")
+            logger.info(f" Email .eml procesado: {len(texto_formateado)} caracteres")
+            logger.info(f" Asunto: {asunto[:50]}...")
             
             return texto_formateado
             
         except Exception as e:
             error_msg = f"Error procesando archivo .eml: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f"{error_msg}")
             
             self._guardar_texto_extraido(
                 nombre_archivo, error_msg, "EML_ERROR", 

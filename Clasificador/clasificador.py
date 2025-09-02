@@ -27,6 +27,10 @@ from typing import List, Optional
 # Importación adicional para archivos directos
 from fastapi import UploadFile
 
+# ✅ NUEVAS IMPORTACIONES PARA VALIDACIÓN ROBUSTA DE PDF
+import PyPDF2
+from io import BytesIO
+
 # Configuración de logging
 logger = logging.getLogger(__name__)
 
@@ -126,7 +130,7 @@ class ProcesadorGemini:
         
         # Configurar modelo con configuración estándar
         self.modelo = genai.GenerativeModel(
-            'gemini-2.5-flash',
+            'gemini-2.5-flash-lite',
             generation_config=genai.types.GenerationConfig(
                 temperature=0.4,
                 max_output_tokens=65536,
@@ -184,15 +188,15 @@ class ProcesadorGemini:
             # DETECTAR TIPO DE ENTRADA
             if isinstance(textos_archivos_o_directos, dict):
                 # MODO LEGACY: Dict[str, str] - signatura original de main.py
-                logger.info(f"🔙 MODO LEGACY detectado: {len(textos_archivos_o_directos)} textos recibidos")
-                logger.info("📋 Convirtiendo a modo híbrido interno...")
+                logger.info(f" MODO LEGACY detectado: {len(textos_archivos_o_directos)} textos recibidos")
+                logger.info(" Convirtiendo a modo híbrido interno...")
                 
                 archivos_directos = []
                 textos_preprocesados = textos_archivos_o_directos
                 
             elif isinstance(textos_archivos_o_directos, list):
                 # MODO HÍBRIDO: List[UploadFile] - nueva signatura híbrida
-                logger.info(f"🆕 MODO HÍBRIDO detectado: {len(textos_archivos_o_directos)} archivos directos")
+                logger.info(f" MODO HÍBRIDO detectado: {len(textos_archivos_o_directos)} archivos directos")
                 
                 archivos_directos = textos_archivos_o_directos
                 textos_preprocesados = textos_preprocesados or {}
@@ -201,12 +205,12 @@ class ProcesadorGemini:
                 # MODO DESCONOCIDO: Error
                 tipo_recibido = type(textos_archivos_o_directos).__name__
                 error_msg = f"Tipo de entrada no soportado: {tipo_recibido}. Se esperaba Dict[str, str] (legacy) o List[UploadFile] (híbrido)"
-                logger.error(f"❌ {error_msg}")
+                logger.error(f"{error_msg}")
                 raise ValueError(error_msg)
         
         else:
             # MODO HÍBRIDO EXPLÍCITO: usar parámetros específicos
-            logger.info("🆕 MODO HÍBRIDO EXPLÍCITO detectado")
+            logger.info(" MODO HÍBRIDO EXPLÍCITO detectado")
             archivos_directos = archivos_directos or []
             textos_preprocesados = textos_preprocesados or {}
         
@@ -215,15 +219,15 @@ class ProcesadorGemini:
         textos_preprocesados = textos_preprocesados or {}        
         total_archivos = len(archivos_directos) + len(textos_preprocesados)
         
-        logger.info(f"🔄 CLASIFICACIÓN HÍBRIDA iniciada:")
-        logger.info(f"📄 Archivos directos (PDFs/Imágenes): {len(archivos_directos)}")
-        logger.info(f"📊 Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
-        logger.info(f"📋 Total archivos a clasificar: {total_archivos}")
+        logger.info(f" CLASIFICACIÓN HÍBRIDA iniciada:")
+        logger.info(f" Archivos directos (PDFs/Imágenes): {len(archivos_directos)}")
+        logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
+        logger.info(f" Total archivos a clasificar: {total_archivos}")
         
         # ✅ VALIDACIÓN: Límite de archivos directos (20)
         if len(archivos_directos) > 20:
             error_msg = f"Límite excedido: {len(archivos_directos)} archivos directos (máximo 20)"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             from fastapi import HTTPException
             raise HTTPException(
                 status_code=400,
@@ -239,7 +243,7 @@ class ProcesadorGemini:
         # ✅ VALIDACIÓN: Al menos un archivo debe estar presente
         if total_archivos == 0:
             error_msg = "No se recibieron archivos para clasificar"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             raise ValueError(error_msg)
         
         try:
@@ -252,11 +256,11 @@ class ProcesadorGemini:
                     else:
                         nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
                 except Exception as e:
-                    logger.warning(f"⚠️ Error obteniendo filename: {e}")
+                    logger.warning(f" Error obteniendo filename: {e}")
                     nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
             
-            logger.info(f"📋 Archivos directos para Gemini: {nombres_archivos_directos}")
-            logger.info(f"📋 Textos preprocesados: {list(textos_preprocesados.keys())}")
+            logger.info(f" Archivos directos para Gemini: {nombres_archivos_directos}")
+            logger.info(f" Textos preprocesados: {list(textos_preprocesados.keys())}")
             
             # PASO 2: Generar prompt híbrido usando función modificada
             prompt = PROMPT_CLASIFICACION(textos_preprocesados, nombres_archivos_directos)
@@ -282,20 +286,20 @@ class ProcesadorGemini:
                     
                     # Obtener nombre seguro para logging
                     nombre_archivo = nombres_archivos_directos[i] if i < len(nombres_archivos_directos) else f"archivo_{i+1}"
-                    logger.info(f"➕ Archivo directo agregado: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
+                    logger.info(f" Archivo directo agregado: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
                     
                 except Exception as e:
-                    logger.error(f"❌ Error procesando archivo directo {i+1}: {e}")
+                    logger.error(f" Error procesando archivo directo {i+1}: {e}")
                     # Continuar con el siguiente archivo en lugar de fallar completamente
                     continue
             
             # PASO 4: Llamar a Gemini con contenido híbrido
-            logger.info(f"🧠 Llamando a Gemini con {len(contents)} elementos: 1 prompt + {len(archivos_directos)} archivos")
+            logger.info(f"Llamando a Gemini con {len(contents)} elementos: 1 prompt + {len(archivos_directos)} archivos")
             
             # Usar el modelo directamente en lugar de _llamar_gemini para archivos directos
             respuesta = await self._llamar_gemini_hibrido(contents)
             
-            logger.info(f"✅ Respuesta híbrida de Gemini recibida: {respuesta[:500]}...")
+            logger.info(f" Respuesta híbrida de Gemini recibida: {respuesta[:500]}...")
             
             # PASO 5: Procesar respuesta (igual que antes)
             # Limpiar respuesta si viene con texto extra
@@ -328,27 +332,27 @@ class ProcesadorGemini:
             await self._guardar_respuesta("clasificacion_documentos_hibrido.json", clasificacion_data_hibrida)
             
             # PASO 7: Logging de resultados
-            logger.info(f"✅ Clasificación híbrida exitosa: {len(clasificacion)} documentos clasificados")
-            logger.info(f"🏢 Consorcio detectado: {es_consorcio}")
-            logger.info(f"🌍 Facturación extranjera detectada: {es_facturacion_extranjera}")
+            logger.info(f" Clasificación híbrida exitosa: {len(clasificacion)} documentos clasificados")
+            logger.info(f" Consorcio detectado: {es_consorcio}")
+            logger.info(f" Facturación extranjera detectada: {es_facturacion_extranjera}")
             if es_facturacion_extranjera and indicadores_extranjera:
-                logger.info(f"🔍 Indicadores extranjera: {indicadores_extranjera}")
+                logger.info(f" Indicadores extranjera: {indicadores_extranjera}")
             
             # PASO 8: Logging detallado por archivo
             for nombre_archivo, categoria in clasificacion.items():
                 origen = "DIRECTO" if nombre_archivo in nombres_archivos_directos else "PREPROCESADO"
-                logger.info(f"📄 {nombre_archivo} → {categoria} ({origen})")
+                logger.info(f" {nombre_archivo} → {categoria} ({origen})")
             
             return clasificacion, es_consorcio, es_facturacion_extranjera
             
         except json.JSONDecodeError as e:
-            logger.error(f"❌ Error parseando JSON híbrido de Gemini: {e}")
+            logger.error(f" Error parseando JSON híbrido de Gemini: {e}")
             logger.error(f"Respuesta problemática: {respuesta}")
             # Fallback: clasificar manualmente basado en nombres
             clasificacion_fb = self._clasificacion_fallback_hibrida(archivos_directos, textos_preprocesados)
             return clasificacion_fb, False, False  # Asumir que no es consorcio ni extranjera en fallback
         except Exception as e:
-            logger.error(f"❌ Error en clasificación híbrida de documentos: {e}")
+            logger.error(f" Error en clasificación híbrida de documentos: {e}")
             # Logging seguro de archivos directos fallidos
             archivos_fallidos_nombres = []
             for archivo in archivos_directos:
@@ -360,8 +364,8 @@ class ProcesadorGemini:
                 except Exception:
                     archivos_fallidos_nombres.append("archivo_con_error")
             
-            logger.error(f"📊 Archivos directos fallidos: {archivos_fallidos_nombres}")
-            logger.error(f"📊 Textos preprocesados fallidos: {list(textos_preprocesados.keys())}")
+            logger.error(f" Archivos directos fallidos: {archivos_fallidos_nombres}")
+            logger.error(f" Textos preprocesados fallidos: {list(textos_preprocesados.keys())}")
             raise ValueError(f"Error en clasificación híbrida: {str(e)}")
 
     # ===============================
@@ -386,8 +390,8 @@ class ProcesadorGemini:
         try:
             timeout_segundos = 90.0
             
-            logger.info(f"🧠 Llamada híbrida a Gemini con timeout de {timeout_segundos}s")
-            logger.info(f"📋 Contenido: 1 prompt + {len(contents) - 1} archivos directos")
+            logger.info(f" Llamada híbrida a Gemini con timeout de {timeout_segundos}s")
+            logger.info(f" Contenido: 1 prompt + {len(contents) - 1} archivos directos")
             
             # ✅ CREAR CONTENIDO MULTIMODAL CORRECTO
             contenido_multimodal = []
@@ -396,7 +400,7 @@ class ProcesadorGemini:
             if contents:
                 prompt_texto = contents[0]
                 contenido_multimodal.append(prompt_texto)
-                logger.info(f"✅ Prompt agregado: {len(prompt_texto):,} caracteres")
+                logger.info(f" Prompt agregado: {len(prompt_texto):,} caracteres")
             
             # ✅ PROCESAR ARCHIVOS DIRECTOS CORRECTAMENTE
             archivos_directos = contents[1:] if len(contents) > 1 else []
@@ -412,7 +416,7 @@ class ProcesadorGemini:
                                 "mime_type": "application/pdf",
                                 "data": archivo_elemento
                             }
-                            logger.info(f"✅ PDF detectado por magic bytes: {len(archivo_elemento):,} bytes")
+                            logger.info(f" PDF detectado por magic bytes: {len(archivo_elemento):,} bytes")
                         elif archivo_elemento.startswith((b'\xff\xd8\xff', b'\x89PNG')):
                             # Es imagen JPEG o PNG
                             if archivo_elemento.startswith(b'\xff\xd8\xff'):
@@ -423,14 +427,14 @@ class ProcesadorGemini:
                                 "mime_type": mime_type,
                                 "data": archivo_elemento
                             }
-                            logger.info(f"✅ Imagen detectada por magic bytes: {mime_type}, {len(archivo_elemento):,} bytes")
+                            logger.info(f" Imagen detectada por magic bytes: {mime_type}, {len(archivo_elemento):,} bytes")
                         else:
                             # Tipo genérico
                             archivo_objeto = {
                                 "mime_type": "application/octet-stream",
                                 "data": archivo_elemento
                             }
-                            logger.info(f"✅ Archivo genérico: {len(archivo_elemento):,} bytes")
+                            logger.info(f" Archivo genérico: {len(archivo_elemento):,} bytes")
                     
                     elif hasattr(archivo_elemento, 'read'):
                         # Es un UploadFile que no se ha leído aún
@@ -462,11 +466,11 @@ class ProcesadorGemini:
                             "mime_type": mime_type,
                             "data": archivo_bytes
                         }
-                        logger.info(f"✅ Archivo {i+1} procesado: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
+                        logger.info(f" Archivo {i+1} procesado: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
                     
                     else:
                         # Tipo desconocido, intentar convertir
-                        logger.warning(f"⚠️ Tipo de archivo desconocido: {type(archivo_elemento)}")
+                        logger.warning(f" Tipo de archivo desconocido: {type(archivo_elemento)}")
                         archivo_objeto = {
                             "mime_type": "application/octet-stream",
                             "data": bytes(archivo_elemento) if not isinstance(archivo_elemento, bytes) else archivo_elemento
@@ -475,11 +479,11 @@ class ProcesadorGemini:
                     contenido_multimodal.append(archivo_objeto)
                     
                 except Exception as e:
-                    logger.error(f"❌ Error procesando archivo {i+1}: {e}")
+                    logger.error(f" Error procesando archivo {i+1}: {e}")
                     continue
             
             # ✅ LLAMAR A GEMINI CON CONTENIDO MULTIMODAL CORRECTO
-            logger.info(f"🚀 Enviando a Gemini: {len(contenido_multimodal)} elementos multimodales")
+            logger.info(f" Enviando a Gemini: {len(contenido_multimodal)} elementos multimodales")
             
             loop = asyncio.get_event_loop()
             
@@ -502,16 +506,16 @@ class ProcesadorGemini:
             if not texto_respuesta:
                 raise ValueError("Gemini devolvió texto vacío en modo híbrido")
                 
-            logger.info(f"✅ Respuesta híbrida de Gemini recibida: {len(texto_respuesta):,} caracteres")
+            logger.info(f" Respuesta híbrida de Gemini recibida: {len(texto_respuesta):,} caracteres")
             return texto_respuesta
             
         except asyncio.TimeoutError:
             error_msg = f"Gemini tardó más de {timeout_segundos}s en procesar archivos directos"
-            logger.error(f"❌ Timeout híbrido: {error_msg}")
+            logger.error(f" Timeout híbrido: {error_msg}")
             raise ValueError(error_msg)
         except Exception as e:
-            logger.error(f"❌ Error llamando a Gemini en modo híbrido: {e}")
-            logger.error(f"🔍 Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
+            logger.error(f" Error llamando a Gemini en modo híbrido: {e}")
+            logger.error(f" Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
             raise ValueError(f"Error híbrido de Gemini: {str(e)}")
     
     def _clasificacion_fallback_hibrida(
@@ -547,7 +551,7 @@ class ProcesadorGemini:
         for nombre_archivo in textos_preprocesados.keys():
             resultado[nombre_archivo] = self._clasificar_por_nombre(nombre_archivo)
         
-        logger.warning(f"⚠️ Usando clasificación híbrida fallback para {len(resultado)} archivos")
+        logger.warning(f" Usando clasificación híbrida fallback para {len(resultado)} archivos")
         return resultado
     
     def _clasificar_por_nombre(self, nombre_archivo: str) -> str:
@@ -577,20 +581,23 @@ class ProcesadorGemini:
         self, 
         documentos_clasificados: Dict[str, Dict], 
         es_facturacion_extranjera: bool = False,
-        archivos_directos: List[UploadFile] = None  # 🆕 NUEVO: Soporte multimodal
+        archivos_directos: List[UploadFile] = None,  # 🆕 NUEVO: Soporte multimodal
+        cache_archivos: Dict[str, bytes] = None  # 🆕 NUEVO: Cache para workers paralelos
     ) -> AnalisisFactura:
         """
         🔄 ANÁLISIS HÍBRIDO MULTIMODAL: Analizar factura con archivos directos + textos preprocesados.
         
-        FUNCIONALIDAD HÍBRIDA:
+        FUNCIONALIDAD HÍBRIDA CON CACHE:
         ✅ Archivos directos (PDFs/imágenes): Enviados nativamente a Gemini
         ✅ Textos preprocesados: Documentos ya extraidos localmente
+        ✅ Cache para workers: Solución a problemas de concurrencia en workers paralelos
         ✅ Combinación inteligente: Una sola llamada con contenido mixto
         
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
             es_facturacion_extranjera: Si es facturación extranjera (usa prompts especializados)
             archivos_directos: Lista de archivos para envío directo a Gemini (PDFs/imágenes)
+            cache_archivos: Cache de archivos para workers paralelos (evita problemas de concurrencia)
             
         Returns:
             AnalisisFactura: Análisis completo de la factura
@@ -598,15 +605,25 @@ class ProcesadorGemini:
         Raises:
             ValueError: Si no se encuentra factura o hay error en procesamiento
         """
-        # 📊 LOGGING HÍBRIDO: Identificar estrategia de procesamiento
+        # 📊 LOGGING HÍBRIDO CON CACHE: Identificar estrategia de procesamiento
         archivos_directos = archivos_directos or []
-        total_archivos_directos = len(archivos_directos)
+        cache_archivos = cache_archivos or {}
+        
+        # 🆕 USAR CACHE SI ESTÁ DISPONIBLE (para workers paralelos)
+        if cache_archivos:
+            logger.info(f" Usando cache de archivos para análisis (workers paralelos): {len(cache_archivos)} archivos")
+            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
+            total_archivos_directos = len(archivos_directos)
+        else:
+            total_archivos_directos = len(archivos_directos)
+            logger.info(f" Usando archivos directos originales (sin cache): {total_archivos_directos} archivos")
+        
         total_textos_preprocesados = len(documentos_clasificados)
         
         if total_archivos_directos > 0:
-            logger.info(f"🔄 Analizando factura HÍBRIDO: {total_archivos_directos} directos + {total_textos_preprocesados} preprocesados")
+            logger.info(f" Analizando factura HÍBRIDO: {total_archivos_directos} directos + {total_textos_preprocesados} preprocesados")
         else:
-            logger.info(f"📄 Analizando factura TRADICIONAL: {total_textos_preprocesados} textos preprocesados")
+            logger.info(f" Analizando factura TRADICIONAL: {total_textos_preprocesados} textos preprocesados")
         
         # Extraer documentos por categoría
         factura_texto = ""
@@ -619,17 +636,25 @@ class ProcesadorGemini:
             if info["categoria"] == "FACTURA":
                 factura_texto = info["texto"]
                 logger.info(f"Factura encontrada: {nombre_archivo}")
+                logger.info(f"Extracto factura: {factura_texto[:30]}")
             elif info["categoria"] == "RUT":
                 rut_texto = info["texto"]
                 logger.info(f"RUT encontrado: {nombre_archivo}")
+                logger.info(f"Extracto RUT: {rut_texto[:30]}")  
             elif info["categoria"] == "ANEXO":
                 anexos_texto += f"\n\n--- ANEXO: {nombre_archivo} ---\n{info['texto']}"
+                logger.info(f"Anexo encontrado: {nombre_archivo}")
+                logger.info(f"Extracto anexo: {info['texto'][:30]}")
             elif info["categoria"] == "COTIZACION":
                 cotizaciones_texto += f"\n\n--- COTIZACIÓN: {nombre_archivo} ---\n{info['texto']}"
+                logger.info(f"Cotización encontrada: {nombre_archivo}")
+                logger.info(f"Extracto cotización: {info['texto'][:30]}")
             elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
                 anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
-        
-        # ✅ VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
+                logger.info(f"Anexo concepto de contrato encontrado: {nombre_archivo}")
+                logger.info(f"Extracto anexo concepto de contrato: {info['texto'][:30]}")
+
+        #  VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
         hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
         nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
         posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
@@ -639,10 +664,10 @@ class ProcesadorGemini:
         
         try:
             # 🔄 DECIDIR ESTRATEGIA: HÍBRIDO vs TRADICIONAL
-            usar_hibrido = total_archivos_directos > 0
+            usar_hibrido = total_archivos_directos > 0 or bool(cache_archivos)
             
             if usar_hibrido:
-                logger.info("⚡ Usando análisis HÍBRIDO con archivos directos + textos preprocesados")
+                logger.info(" Usando análisis HÍBRIDO con archivos directos + textos preprocesados")
                 
                 # 📄 CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
                 nombres_archivos_directos = []
@@ -653,12 +678,12 @@ class ProcesadorGemini:
                         else:
                             nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
                     except Exception as e:
-                        logger.warning(f"⚠️ Error obteniendo nombre de archivo: {e}")
+                        logger.warning(f" Error obteniendo nombre de archivo: {e}")
                         nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
                 
                 # GENERAR PROMPT HÍBRIDO
                 if es_facturacion_extranjera:
-                    logger.info("🌍 Prompt híbrido para facturación extranjera")
+                    logger.info(" Prompt híbrido para facturación extranjera")
                     conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
                     paises_convenio = self._obtener_paises_convenio()
                     preguntas_fuente = self._obtener_preguntas_fuente_nacional()
@@ -684,7 +709,7 @@ class ProcesadorGemini:
                 
             else:
                 # 📄 FLUJO TRADICIONAL (solo textos preprocesados)
-                logger.info("📄 Usando análisis TRADICIONAL con solo textos preprocesados")
+                logger.info(" Usando análisis TRADICIONAL con solo textos preprocesados")
                 
                 if es_facturacion_extranjera:
                     logger.info("Usando prompt especializado para facturación extranjera")
@@ -710,12 +735,12 @@ class ProcesadorGemini:
                 respuesta = await self._llamar_gemini(prompt)
             # ✅ LOG DE RESPUESTA SEGÚN ESTRATEGIA
             if usar_hibrido:
-                logger.info(f"⚡ Respuesta análisis HÍBRIDO: {len(respuesta):,} caracteres")
+                logger.info(f" Respuesta análisis HÍBRIDO: {len(respuesta):,} caracteres")
             else:
-                logger.info(f"📄 Respuesta análisis tradicional: {len(respuesta):,} caracteres")
+                logger.info(f" Respuesta análisis tradicional: {len(respuesta):,} caracteres")
             
             # Log de muestra para debugging (primeros 500 caracteres)
-            logger.info(f"📝 Muestra de respuesta: {respuesta[:500]}...")
+            logger.info(f" Muestra de respuesta: {respuesta[:500]}...")
             
             # Limpiar respuesta si viene con texto extra
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
@@ -741,13 +766,15 @@ class ProcesadorGemini:
             logger.error(f"Error en análisis de factura: {e}")
             raise ValueError(f"Error analizando factura: {str(e)}")
     
-    async def analizar_consorcio(self, documentos_clasificados: Dict[str, Dict], es_facturacion_extranjera: bool = False) -> Dict[str, Any]:
+    async def analizar_consorcio(self, documentos_clasificados: Dict[str, Dict], es_facturacion_extranjera: bool = False, archivos_directos : List[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
         """
-        Llamada a Gemini especializada para analizar consorcios.
+        Llamada a Gemini especializada para analizar consorcios CON CACHE.
         
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
             es_facturacion_extranjera: Si es facturación extranjera (usa prompts especializados)
+            archivos_directos: Lista de archivos directos (para compatibilidad)
+            cache_archivos: Cache de archivos para workers paralelos
             
         Returns:
             Dict[str, Any]: Análisis completo del consorcio en formato compatible
@@ -756,6 +783,14 @@ class ProcesadorGemini:
             ValueError: Si no se encuentra factura o hay error en procesamiento
         """
         logger.info("Analizando CONSORCIO con Gemini")
+        
+        # 💾 USAR CACHE SI ESTÁ DISPONIBLE
+        archivos_directos = archivos_directos or []
+        if cache_archivos:
+            logger.info(f" Consorcio usando cache de archivos: {len(cache_archivos)} archivos")
+            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
+        elif archivos_directos:
+            logger.info(f"📄 Consorcio usando archivos directos originales: {len(archivos_directos)} archivos")
         
         # Extraer documentos por categoría (mismo proceso que factura normal)
         factura_texto = ""
@@ -778,9 +813,24 @@ class ProcesadorGemini:
             elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
                 anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
         
-        if not factura_texto:
-            raise ValueError("No se encontró una FACTURA en los documentos del consorcio")
+        hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
+        nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
+        posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
         
+        if not factura_texto and not posibles_facturas_directas:
+            raise ValueError("No se encontró una FACTURA en los documentos del consorcio")
+        logger.info("Se identificó correctamente la factura del consorcio")
+       
+        for archivo in archivos_directos:
+            try:
+                if hasattr(archivo, 'filename') and archivo.filename:
+                    nombres_archivos_directos.append(archivo.filename)
+                else:
+                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+            except Exception as e: 
+                logger.warning(f" Error obteniendo nombre de archivo: {e}")
+                nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                
         try:
             if es_facturacion_extranjera:
                 # NUEVA FUNCIONALIDAD: Usar prompts especializados para consorcios extranjeros
@@ -792,7 +842,7 @@ class ProcesadorGemini:
                 prompt = PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(
                     factura_texto, rut_texto, anexos_texto, 
                     cotizaciones_texto, anexo_contrato, 
-                    conceptos_extranjeros_dict, paises_convenio, preguntas_fuente
+                    conceptos_extranjeros_dict, paises_convenio, preguntas_fuente, nombres_archivos_directos=nombres_archivos_directos
                 )
             else:
                 # Flujo original para consorcios nacionales
@@ -801,14 +851,13 @@ class ProcesadorGemini:
                 
                 prompt = PROMPT_ANALISIS_CONSORCIO(
                     factura_texto, rut_texto, anexos_texto, 
-                    cotizaciones_texto, anexo_contrato, conceptos_dict
+                    cotizaciones_texto, anexo_contrato, conceptos_dict, nombres_archivos_directos=nombres_archivos_directos 
                 )
             
             # Llamar a Gemini con modelo especial para consorcios
-            respuesta = await self._llamar_gemini(prompt, usar_modelo_consorcio=True)
+            respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos=archivos_directos)
             logger.info(f"Respuesta análisis consorcio: {respuesta}...")
-            
-            # ✅ ELIMINADO: Código de fallback truncado - NUNCA REDUCIR LA CALIDAD
+        
             
             # Limpiar respuesta
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
@@ -845,13 +894,15 @@ class ProcesadorGemini:
         except Exception as e:
             logger.error(f"Error en análisis de consorcio: {e}")
             return self._consorcio_fallback(str(e))
-    
-    async def analizar_estampilla(self, documentos_clasificados: Dict[str, Dict]) -> Dict[str, Any]:
+
+    async def analizar_estampilla(self, documentos_clasificados: Dict[str, Dict], archivos_directos: List[str] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
         """
-        Análisis integrado de impuestos especiales (estampilla + obra pública)
+        Análisis integrado de impuestos especiales (estampilla + obra pública) Multimodal CON CACHE.
         
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
+            archivos_directos: Lista de archivos directos (para compatibilidad)
+            cache_archivos: Cache de archivos para workers paralelos
             
         Returns:
             Dict[str, Any]: Análisis completo integrado
@@ -859,8 +910,16 @@ class ProcesadorGemini:
         Raises:
             ValueError: Si hay error en el procesamiento
         """
-        logger.info("🏦 Analizando IMPUESTOS ESPECIALES INTEGRADOS con Gemini")
-        logger.info("✅ Impuestos: ESTAMPILLA_UNIVERSIDAD + CONTRIBUCION_OBRA_PUBLICA")
+        logger.info(" Analizando IMPUESTOS ESPECIALES INTEGRADOS con Gemini")
+        logger.info(" Impuestos: ESTAMPILLA_UNIVERSIDAD + CONTRIBUCION_OBRA_PUBLICA")
+        
+        # 💾 USAR CACHE SI ESTÁ DISPONIBLE
+        archivos_directos = archivos_directos or []
+        if cache_archivos:
+            logger.info(f"Estampillas usando cache de archivos: {len(cache_archivos)} archivos")
+            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
+        elif archivos_directos:
+            logger.info(f" Estampillas usando archivos directos originales: {len(archivos_directos)} archivos")
         
         # Importar liquidador integrado
         try:
@@ -875,7 +934,7 @@ class ProcesadorGemini:
         for nombre_archivo, info in documentos_clasificados.items():
             texto_completo += f"\n\n--- {info['categoria']}: {nombre_archivo} ---\n{info['texto']}"
         
-        logger.info(f"✅ Analizando impuestos especiales con TEXTO COMPLETO: {len(texto_completo):,} caracteres (sin límites)")
+        logger.info(f" Analizando impuestos especiales con TEXTO COMPLETO: {len(texto_completo):,} caracteres (sin límites)")
         
         try:
             # Extraer documentos por categoría
@@ -896,19 +955,39 @@ class ProcesadorGemini:
                     cotizaciones_texto += f"\n\n--- COTIZACIÓN: {nombre_archivo} ---\n{info['texto']}"
                 elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
                     anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
+                    
+            # ✅ VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
+            hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
+            nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
+            posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
+        
+            if not hay_factura_texto and not posibles_facturas_directas:
+                raise ValueError("No se encontró una FACTURA en los documentos (ni texto ni archivo directo)")
             
-            # ✅ CORREGIDO: Usar método que SÍ existe con parámetros correctos
+            nombres_archivos_directos = []
+            for archivo  in archivos_directos:
+                try:
+                    if hasattr(archivo, 'filename') and archivo.filename:
+                        nombres_archivos_directos.append(archivo.filename)
+                    else:
+                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                except Exception as e:
+                    logger.warning(f" Error obteniendo nombre de archivo: {e}")
+                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+
+
+            # Modo multimodal
             prompt = liquidador.obtener_prompt_integrado_desde_clasificador(
                 factura_texto=factura_texto,
                 rut_texto=rut_texto,
                 anexos_texto=anexos_texto,
                 cotizaciones_texto=cotizaciones_texto,
                 anexo_contrato=anexo_contrato,
-                nit_administrativo="" # Se puede obtener del contexto si es necesario
+                nit_administrativo="", nombres_archivos_directos=nombres_archivos_directos # Se puede obtener del contexto si es necesario
             )
             
             # Llamar a Gemini
-            respuesta = await self._llamar_gemini(prompt)
+            respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos)
             logger.info(f"Respuesta análisis impuestos especiales: {respuesta[:500]}...")
             
             # Limpiar respuesta
@@ -946,8 +1025,8 @@ class ProcesadorGemini:
                 "observaciones": resultado.get("observaciones", [])
             }
             
-            logger.info(f"✅ Análisis de impuestos especiales completado exitosamente")
-            logger.info(f"📊 Impuestos detectados: {respuesta_integrada['deteccion_automatica']['impuestos_detectados']}")
+            logger.info(f" Análisis de impuestos especiales completado exitosamente")
+            logger.info(f" Impuestos detectados: {respuesta_integrada['deteccion_automatica']['impuestos_detectados']}")
             
             return respuesta_integrada
             
@@ -984,50 +1063,57 @@ class ProcesadorGemini:
          """
         try:
             # Timeout extendido para análisis de facturas (más complejo que clasificación)
-            timeout_segundos = 120.0  # 2 minutos para análisis detallado
-            
-            logger.info(f"🧠 Análisis híbrido de factura con timeout de {timeout_segundos}s")
-            logger.info(f"📋 Contenido: 1 prompt de análisis + {len(archivos_directos)} archivos directos")
+            timeout_segundos = 280.0  # 4 minutos para análisis detallado
+
+            logger.info(f" Análisis híbrido de factura con timeout de {timeout_segundos}s")
+            logger.info(f" Contenido: 1 prompt de análisis + {len(archivos_directos)} archivos directos")
             
             # ✅ CREAR CONTENIDO MULTIMODAL CORRECTO PARA ANÁLISIS
             contenido_multimodal = []
             
             # Agregar prompt de análisis (primer elemento)
             contenido_multimodal.append(prompt)
-            logger.info(f"✅ Prompt de análisis agregado: {len(prompt):,} caracteres")
+            logger.info(f"Prompt de análisis agregado: {len(prompt):,} caracteres")
             
-            # ✅ PROCESAR ARCHIVOS DIRECTOS PARA ANÁLISIS
+            # ✅ PROCESAR ARCHIVOS DIRECTOS CON VALIDACIÓN ROBUSTA
             for i, archivo in enumerate(archivos_directos):
                 try:
-                    # Resetear puntero y leer archivo
-                    if hasattr(archivo, 'seek'):
-                        await archivo.seek(0)
+                    # 🔍 LOGGING INICIAL PARA DIAGNÓSTICO
+                    nombre_archivo_debug = getattr(archivo, 'filename', f'archivo_sin_nombre_{i+1}')
+                    tipo_archivo = type(archivo).__name__
+                    logger.info(f" Procesando archivo {i+1}/{len(archivos_directos)}: {nombre_archivo_debug} (Tipo: {tipo_archivo})")
                     
-                    archivo_bytes = await archivo.read()
+                    # 🆕 PASO 1: LECTURA SEGURA CON RETRY MEJORADA
+                    archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
                     
-                    # Determinar MIME type por magic bytes o extensión
-                    nombre_archivo = getattr(archivo, 'filename', f'archivo_analisis_{i+1}')
-                    
+                    # 🆕 PASO 2: VALIDACIÓN ESPECÍFICA PARA PDFs
                     if archivo_bytes.startswith(b'%PDF'):
-                        # PDF
+                        # 🚨 VALIDACIÓN CRÍTICA: Verificar que el PDF tiene páginas
+                        if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
+                            logger.error(f"PDF inválido o sin páginas, omitiendo: {nombre_archivo}")
+                            continue  # Saltar este archivo problemaático
+                        
                         archivo_objeto = {
                             "mime_type": "application/pdf",
                             "data": archivo_bytes
                         }
-                        logger.info(f"✅ PDF para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
+                        logger.info(f" PDF VALIDADO para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
+                        
                     elif archivo_bytes.startswith((b'\xff\xd8\xff', b'\x89PNG')):
-                        # Imagen JPEG o PNG
+                        # Imágenes - validación básica
                         if archivo_bytes.startswith(b'\xff\xd8\xff'):
                             mime_type = "image/jpeg"
                         else:
                             mime_type = "image/png"
+                        
                         archivo_objeto = {
                             "mime_type": mime_type,
                             "data": archivo_bytes
                         }
-                        logger.info(f"✅ Imagen para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
+                        logger.info(f" Imagen validada para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
+                        
                     else:
-                        # Detectar por extensión como fallback
+                        # Detectar por extensión y validar tamaño mínimo
                         extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
                         
                         mime_type_map = {
@@ -1039,20 +1125,45 @@ class ProcesadorGemini:
                         }
                         mime_type = mime_type_map.get(extension, 'application/octet-stream')
                         
+                        # 🚨 VALIDACIÓN ADICIONAL PARA PDFs POR EXTENSIÓN
+                        if extension == 'pdf':
+                            if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
+                                logger.error(f" PDF detectado por extensión inválido, omitiendo: {nombre_archivo}")
+                                continue
+                        
                         archivo_objeto = {
                             "mime_type": mime_type,
                             "data": archivo_bytes
                         }
-                        logger.info(f"✅ Archivo para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
+                        logger.info(f" Archivo validado para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
                     
                     contenido_multimodal.append(archivo_objeto)
                     
+                except ValueError as ve:
+                    # Errores específicos de validación
+                    logger.error(f" Error de validación en archivo {i+1}: {ve}")
+                    logger.warning(f" Omitiendo archivo problemaático: {getattr(archivo, 'filename', f'archivo_{i+1}')}")
+                    continue
                 except Exception as e:
-                    logger.error(f"❌ Error procesando archivo {i+1} para análisis: {e}")
+                    # Otros errores inesperados
+                    logger.error(f" Error inesperado procesando archivo {i+1}: {e}")
+                    logger.warning(f" Omitiendo archivo con error: {getattr(archivo, 'filename', f'archivo_{i+1}')}")
                     continue
             
-            # ✅ LLAMAR A GEMINI CON CONTENIDO MULTIMODAL PARA ANÁLISIS
-            logger.info(f"🚀 Enviando análisis a Gemini: {len(contenido_multimodal)} elementos")
+            # 🚨 VALIDACIÓN FINAL: Verificar que tenemos archivos válidos para enviar
+            archivos_validos = len(contenido_multimodal) - 1  # -1 porque el primer elemento es el prompt
+            
+            if archivos_validos == 0:
+                error_msg = "No se pudo validar ningún archivo para análisis - todos los archivos presentaron problemas"
+                logger.error(f" {error_msg}")
+                raise ValueError(error_msg)
+            
+            if archivos_validos < len(archivos_directos):
+                archivos_omitidos = len(archivos_directos) - archivos_validos
+                logger.warning(f"Se omitieron {archivos_omitidos} archivos problemáticos de {len(archivos_directos)} archivos totales")
+            
+            # ✅ LLAMAR A GEMINI CON CONTENIDO MULTIMODAL VALIDADO
+            logger.info(f" Enviando análisis a Gemini: {len(contenido_multimodal)} elementos ({archivos_validos} archivos validados)")
             
             loop = asyncio.get_event_loop()
             
@@ -1065,28 +1176,362 @@ class ProcesadorGemini:
             )
             
             if not respuesta:
-                raise ValueError("Gemini devolvió respuesta None en análisis híbrido")
+                raise ValueError("Gemini devolvió respuesta None en análisis híbrido - posible problema de validación de archivos")
                 
             if not hasattr(respuesta, 'text') or not respuesta.text:
-                raise ValueError("Gemini devolvió respuesta sin texto en análisis híbrido")
+                raise ValueError(" Gemini devolvió respuesta sin texto - archivos validados correctamente pero sin respuesta")
                 
             texto_respuesta = respuesta.text.strip()
             
             if not texto_respuesta:
-                raise ValueError("Gemini devolvió texto vacío en análisis híbrido")
+                raise ValueError(" Gemini devolvió texto vacío - validación exitosa pero respuesta vacía")
                 
-            logger.info(f"✅ Análisis híbrido de factura completado: {len(texto_respuesta):,} caracteres")
+            logger.info(f" Análisis híbrido de factura completado: {len(texto_respuesta):,} caracteres")
             return texto_respuesta
             
         except asyncio.TimeoutError:
             error_msg = f"Análisis híbrido tardó más de {timeout_segundos}s en completarse"
-            logger.error(f"❌ Timeout en análisis híbrido: {error_msg}")
+            logger.error(f" Timeout en análisis híbrido: {error_msg}")
             raise ValueError(error_msg)
         except Exception as e:
-            logger.error(f"❌ Error en análisis híbrido de factura: {e}")
-            logger.error(f"🔍 Archivos enviados: {[getattr(archivo, 'filename', 'sin_nombre') for archivo in archivos_directos]}")
+            logger.error(f" Error en análisis híbrido de factura: {e}")
+            logger.error(f" Archivos enviados: {[getattr(archivo, 'filename', 'sin_nombre') for archivo in archivos_directos]}")
             raise ValueError(f"Error híbrido en análisis de factura: {str(e)}")
+    
+    # ===============================
+    # 🆕 NUEVAS FUNCIONES DE VALIDACIÓN ROBUSTA - SINGLE RETRY
+    # ===============================
+    
+    def _clonar_uploadfile_para_worker(self, archivo_bytes: bytes, nombre_archivo: str) -> 'UploadFile':
+        """
+        Crea un UploadFile clonado a partir de bytes para uso independiente en workers paralelos.
         
+        SOLUCIÓN PARA CONCURRENCIA: Cada worker necesita su propia copia del archivo.
+        
+        Args:
+            archivo_bytes: Contenido del archivo en bytes
+            nombre_archivo: Nombre del archivo
+            
+        Returns:
+            UploadFile: Nuevo objeto UploadFile independiente
+        """
+        from io import BytesIO
+        from starlette.datastructures import UploadFile
+        
+        # Crear un nuevo stream independiente
+        stream = BytesIO(archivo_bytes)
+        
+        # Crear nuevo UploadFile con el stream clonado
+        archivo_clonado = UploadFile(
+            filename=nombre_archivo,
+            file=stream,
+            content_type="application/pdf" if nombre_archivo.lower().endswith('.pdf') else "application/octet-stream"
+        )
+        
+        logger.info(f" Archivo clonado para worker independiente: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
+        return archivo_clonado
+    
+    async def _crear_cache_archivos_para_workers(self, archivos_directos: List[UploadFile]) -> Dict[str, bytes]:
+        """
+        Crea cache de archivos en memoria para uso independiente por múltiples workers.
+        
+        SOLUCIÓN CONCURRENCIA: Leer todos los archivos UNA VEZ y cachearlos para workers paralelos.
+        
+        Args:
+            archivos_directos: Lista de archivos UploadFile originales
+            
+        Returns:
+            Dict[str, bytes]: Cache {nombre_archivo: contenido_bytes}
+        """
+        cache_archivos = {}
+        
+        logger.info(f" Creando cache de archivos para workers paralelos: {len(archivos_directos)} archivos")
+        
+        for i, archivo in enumerate(archivos_directos):
+            try:
+                # Leer archivo UNA VEZ usando nuestra función segura
+                archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
+                
+                # Validar PDF si corresponde
+                if archivo_bytes.startswith(b'%PDF'):
+                    if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
+                        logger.error(f" PDF inválido en cache, omitiendo: {nombre_archivo}")
+                        continue
+                
+                # Guardar en cache
+                cache_archivos[nombre_archivo] = archivo_bytes
+                logger.info(f" Archivo cacheado: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
+                
+            except Exception as e:
+                logger.error(f" Error cacheando archivo {i+1}: {e}")
+                continue
+        
+        logger.info(f" Cache creado exitosamente: {len(cache_archivos)} archivos listos para workers")
+        return cache_archivos
+    
+    def _obtener_archivos_clonados_desde_cache(self, cache_archivos: Dict[str, bytes]) -> List[UploadFile]:
+        """
+        Genera lista de UploadFiles clonados desde cache para un worker específico.
+        
+        Args:
+            cache_archivos: Cache de archivos {nombre: bytes}
+            
+        Returns:
+            List[UploadFile]: Lista de archivos clonados independientes
+        """
+        archivos_clonados = []
+        
+        for nombre_archivo, archivo_bytes in cache_archivos.items():
+            try:
+                archivo_clonado = self.crear_archivo_clon_para_worker(archivo_bytes, nombre_archivo)
+                archivos_clonados.append(archivo_clonado)
+            except Exception as e:
+                logger.error(f" Error clonando archivo {nombre_archivo}: {e}")
+                continue
+        
+        logger.info(f" {len(archivos_clonados)} archivos clonados para worker independiente")
+        return archivos_clonados
+    
+    # ===============================
+    # 🆕 FUNCIÓN COORDINADORA PARA CONCURRENCIA
+    # ===============================
+    
+    async def preparar_archivos_para_workers_paralelos(self, archivos_directos: List[UploadFile]) -> Dict[str, bytes]:
+        """
+        SOLUCIÓN CONCURRENCIA: Lee archivos UNA VEZ y crea cache para workers paralelos.
+        
+        Esta función soluciona el problema donde múltiples workers paralelos
+        intentan leer el mismo objeto UploadFile simultáneamente.
+        
+        Args:
+            archivos_directos: Lista de archivos UploadFile originales
+            
+        Returns:
+            Dict[str, bytes]: Cache {nombre_archivo: contenido_bytes}
+        """
+        if not archivos_directos:
+            return {}
+            
+        logger.info(f" SOLUCIONANDO CONCURRENCIA: Preparando cache para workers paralelos")
+        logger.info(f" Archivos a procesar: {len(archivos_directos)}")
+        
+        cache_archivos = {}
+        
+        for i, archivo in enumerate(archivos_directos):
+            try:
+                # Leer archivo UNA SOLA VEZ usando validación robusta
+                archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
+                
+                # Validar PDF si es necesario
+                if archivo_bytes.startswith(b'%PDF'):
+                    if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
+                        logger.error(f" PDF inválido omitido del cache: {nombre_archivo}")
+                        continue
+                
+                # Guardar en cache para workers
+                cache_archivos[nombre_archivo] = archivo_bytes
+                logger.info(f" Archivo cacheado para workers: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
+                
+            except Exception as e:
+                logger.error(f" Error cacheando archivo {i+1}: {e}")
+                continue
+        
+        logger.info(f" Cache preparado: {len(cache_archivos)} archivos listos para workers paralelos")
+        return cache_archivos
+    
+    def crear_archivo_clon_para_worker(self, archivo_bytes: bytes, nombre_archivo: str) -> UploadFile:
+        """
+        Crea un UploadFile independiente para un worker específico.
+        
+        CORREGIDO: Compatible con todas las versiones de Starlette/FastAPI.
+        
+        Args:
+            archivo_bytes: Contenido del archivo
+            nombre_archivo: Nombre del archivo
+            
+        Returns:
+            UploadFile: Archivo clonado independiente
+        """
+        from io import BytesIO
+        from starlette.datastructures import UploadFile
+        
+        # Stream independiente para este worker
+        stream = BytesIO(archivo_bytes)
+        
+        # ✅ SOLUCIÓN: UploadFile sin content_type (compatible con todas las versiones)
+        try:
+            # Intentar con content_type (versiones más nuevas)
+            archivo_clonado = UploadFile(
+                filename=nombre_archivo,
+                file=stream,
+                content_type="application/pdf" if nombre_archivo.lower().endswith('.pdf') else "application/octet-stream"
+            )
+        except TypeError:
+            # Fallback sin content_type (versiones más antiguas)
+            archivo_clonado = UploadFile(
+                filename=nombre_archivo,
+                file=stream
+            )
+        
+        return archivo_clonado
+    
+    def obtener_archivos_para_worker_desde_cache(self, cache_archivos: Dict[str, bytes]) -> List[UploadFile]:
+        """
+        Obtiene lista de archivos clonados para un worker específico.
+        
+        Args:
+            cache_archivos: Cache de archivos
+            
+        Returns:
+            List[UploadFile]: Archivos independientes para el worker
+        """
+        archivos_worker = []
+        
+        for nombre_archivo, archivo_bytes in cache_archivos.items():
+            try:
+                archivo_clon = self.crear_archivo_clon_para_worker(archivo_bytes, nombre_archivo)
+                archivos_worker.append(archivo_clon)
+            except Exception as e:
+                logger.error(f" Error clonando {nombre_archivo} para worker: {e}")
+                continue
+        
+        return archivos_worker
+    
+    async def _leer_archivo_seguro(self, archivo: UploadFile) -> tuple[bytes, str]:
+        """
+        Lectura segura de archivo con single retry para prevenir errores de "archivo sin páginas".
+        
+        CORREGIDO: Manejo mejorado de UploadFile para evitar falsos positivos de "archivo vacío".
+        
+        Returns:
+            tuple: (archivo_bytes, nombre_archivo)
+            
+        Raises:
+            ValueError: Si no se pudo leer el archivo después del retry
+        """
+        nombre_archivo = getattr(archivo, 'filename', 'sin_nombre')
+        
+        # ✅ SINGLE RETRY como solicitado (no 3 intentos)
+        for intento in range(1, 3):  # Solo 2 intentos: 1 y 2
+            try:
+                # 🔧 RESETEAR POSICIÓN DE FORMA MÁS ROBUSTA
+                if hasattr(archivo, 'seek'):
+                    try:
+                        await archivo.seek(0)
+                        logger.info(f" Archivo posicionado al inicio: {nombre_archivo} - Intento {intento}")
+                    except Exception as seek_error:
+                        logger.warning(f" Error en seek para {nombre_archivo}: {seek_error}")
+                        # Continuar de todas formas, algunos UploadFile no soportan seek
+                
+                # 📖 LEER CONTENIDO CON MANEJO MEJORADO
+                if hasattr(archivo, 'read'):
+                    archivo_bytes = await archivo.read()
+                elif hasattr(archivo, 'file') and hasattr(archivo.file, 'read'):
+                    # Algunos UploadFile tienen el contenido en .file
+                    archivo_bytes = archivo.file.read()
+                    if not isinstance(archivo_bytes, bytes):
+                        archivo_bytes = archivo_bytes.encode('utf-8') if isinstance(archivo_bytes, str) else bytes(archivo_bytes)
+                else:
+                    # Fallback: intentar convertir directamente
+                    archivo_bytes = bytes(archivo) if not isinstance(archivo, bytes) else archivo
+                
+                logger.info(f" Lectura completada: {nombre_archivo} - {len(archivo_bytes) if archivo_bytes else 0} bytes leídos")
+                
+                # 🚨 VALIDACIÓN CRÍTICA MEJORADA
+                if not archivo_bytes:
+                    logger.error(f"Archivo vacío en intento {intento}: {nombre_archivo} - 0 bytes")
+                    if intento < 2:  # Solo un retry más
+                        logger.info(f" Reintentando lectura para: {nombre_archivo}")
+                        await asyncio.sleep(0.1)  # Pequeña pausa
+                        continue
+                    else:
+                        raise ValueError(f"Archivo {nombre_archivo} está vacío después de {intento} intentos")
+                
+                if len(archivo_bytes) < 50:  # Reducido de 100 a 50 para ser menos restrictivo
+                    logger.error(f" Archivo demasiado pequeño en intento {intento}: {nombre_archivo} ({len(archivo_bytes)} bytes)")
+                    if intento < 2:
+                        await asyncio.sleep(0.1)
+                        continue
+                    else:
+                        raise ValueError(f"Archivo {nombre_archivo} demasiado pequeño: {len(archivo_bytes)} bytes")
+                
+                # ✅ VALIDACIÓN ADICIONAL PARA PDFs
+                if archivo_bytes.startswith(b'%PDF'):
+                    logger.info(f" PDF detectado con magic bytes: {nombre_archivo}")
+                elif nombre_archivo.lower().endswith('.pdf'):
+                    logger.warning(f" Archivo con extensión PDF pero sin magic bytes: {nombre_archivo}")
+                    # Aún así intentar procesarlo
+                
+                logger.info(f" Archivo leído exitosamente: {nombre_archivo} ({len(archivo_bytes):,} bytes) - Intento {intento}")
+                return archivo_bytes, nombre_archivo
+                
+            except Exception as e:
+                logger.error(f" Error leyendo archivo en intento {intento}: {e}")
+                logger.error(f"Tipo de archivo: {type(archivo)}, Atributos: {dir(archivo)[:5]}...")  # Limitar debug info
+                if intento < 2:  # Solo un retry más
+                    await asyncio.sleep(0.2)
+                    continue
+                else:
+                    raise ValueError(f"No se pudo leer el archivo {nombre_archivo}: {str(e)}")
+        
+        raise ValueError(f"Error inesperado leyendo archivo {nombre_archivo}")                
+    
+    async def _validar_pdf_tiene_paginas(self, pdf_bytes: bytes, nombre_archivo: str) -> bool:
+        """
+        Valida que el PDF tenga páginas antes de enviarlo a Gemini para prevenir error "no tiene páginas".
+        
+        Args:
+            pdf_bytes: Contenido del PDF en bytes
+            nombre_archivo: Nombre del archivo para logging
+            
+        Returns:
+            bool: True si el PDF es válido y tiene páginas
+            
+        Raises:
+            ValueError: Si hay error crítico en la validación
+        """
+        try:
+            pdf_stream = BytesIO(pdf_bytes)
+            pdf_reader = PyPDF2.PdfReader(pdf_stream)
+            
+            # 🚨 VALIDACIÓN CRÍTICA: Verificar número de páginas
+            num_paginas = len(pdf_reader.pages)
+            
+            if num_paginas == 0:
+                logger.error(f" PDF sin páginas: {nombre_archivo}")
+                return False
+            
+            # ✅ VALIDACIÓN ADICIONAL: Verificar que al menos una página tenga contenido
+            try:
+                primera_pagina = pdf_reader.pages[0]
+                contenido = primera_pagina.extract_text()
+                
+                if not contenido.strip():
+                    logger.warning(f" PDF posiblemente escaneado (sin texto extraíble): {nombre_archivo}")
+                    # ✅ Aún así es válido para Gemini (puede leer imágenes en PDFs)
+                    logger.info(f" PDF escaneado aceptado para Gemini: {nombre_archivo}")
+                else:
+                    logger.info(f" PDF con texto extraíble validado: {nombre_archivo}")
+                    
+            except Exception as e:
+                logger.warning(f" No se pudo extraer texto de {nombre_archivo}: {e}")
+                # No es crítico, Gemini puede procesar PDFs sin texto extraíble
+            
+            # ✅ VALIDACIÓN FINAL EXITOSA
+            logger.info(f" PDF validado correctamente: {nombre_archivo} - {num_paginas} páginas")
+            return True
+            
+        except Exception as e:
+            logger.error(f" Error validando PDF {nombre_archivo}: {e}")
+            # 🚨 Por seguridad, considerar inválido si no se puede validar
+            return False
+        finally:
+            # Limpiar stream
+            try:
+                pdf_stream.close()
+            except:
+                pass
+    
     async def _llamar_gemini(self, prompt: str, usar_modelo_consorcio: bool = False) -> str:
         """
         Realiza llamada a Gemini con manejo de errores y timeout MEJORADO.
@@ -1138,16 +1583,16 @@ class ProcesadorGemini:
             if not texto_respuesta:
                 raise ValueError("Gemini devolvió texto vacío")
                 
-            logger.info(f"✅ Respuesta de Gemini recibida: {len(texto_respuesta):,} caracteres")
+            logger.info(f" Respuesta de Gemini recibida: {len(texto_respuesta):,} caracteres")
             return texto_respuesta
             
         except asyncio.TimeoutError:
             # ✅ MEJORADO: Mensaje específico con timeout usado
             error_msg = f"Gemini tardó más de {timeout_segundos}s en responder"
-            logger.error(f"❌ Timeout llamando a Gemini ({timeout_segundos}s)")
+            logger.error(f" Timeout llamando a Gemini ({timeout_segundos}s)")
             raise ValueError(error_msg)
         except Exception as e:
-            logger.error(f"❌ Error llamando a Gemini: {e}")
+            logger.error(f" Error llamando a Gemini: {e}")
             raise ValueError(f"Error de Gemini: {str(e)}")
     
     def _limpiar_respuesta_json(self, respuesta: str) -> str:
@@ -1273,9 +1718,9 @@ class ProcesadorGemini:
             return conceptos_dict
                 
         except ImportError as e:
-            logger.warning(f"⚠️ No se pudo importar desde config.py: {e}")
+            logger.warning(f" No se pudo importar desde config.py: {e}")
             # Fallback: usar conceptos hardcodeados
-            logger.warning("⚠️ Usando conceptos hardcodeados como fallback")
+            logger.warning(" Usando conceptos hardcodeados como fallback")
             return self._conceptos_hardcodeados()
         except Exception as e:
             logger.error(f"Error obteniendo conceptos: {e}")
@@ -1329,10 +1774,10 @@ class ProcesadorGemini:
             with open(ruta_archivo, "w", encoding="utf-8") as f:
                 json.dump(contenido, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"✅ Respuesta guardada en {ruta_archivo}")
+            logger.info(f" Respuesta guardada en {ruta_archivo}")
             
         except Exception as e:
-            logger.error(f"❌ Error guardando respuesta: {e}")
+            logger.error(f" Error guardando respuesta: {e}")
             # Fallback mejorado: usar directorio actual
             try:
                 timestamp = datetime.now().strftime("%H-%M-%S")
@@ -1342,10 +1787,10 @@ class ProcesadorGemini:
                 with open(ruta_fallback, "w", encoding="utf-8") as f:
                     json.dump(contenido, f, indent=2, ensure_ascii=False)
                 
-                logger.info(f"✅ Respuesta guardada en fallback: {ruta_fallback}")
+                logger.info(f" Respuesta guardada en fallback: {ruta_fallback}")
                 
             except Exception as e2:
-                logger.error(f"❌ Error guardando fallback: {e2}")
+                logger.error(f" Error guardando fallback: {e2}")
     
     def _obtener_conceptos_completos(self) -> dict:
         """
@@ -1548,13 +1993,16 @@ class ProcesadorGemini:
     # ===============================
     # ✅ NUEVA FUNCIONALIDAD: ANÁLISIS DE IVA Y RETEIVA
     # ===============================
-    
-    async def analizar_iva(self, documentos_clasificados: Dict[str, Dict]) -> Dict[str, Any]:
+
+    async def analizar_iva(self, documentos_clasificados: Dict[str, Dict], archivos_directos: List[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
         """
-        Nueva funcionalidad: Análisis especializado de IVA y ReteIVA.
+        Nueva funcionalidad: Análisis especializado de IVA y ReteIVA CON CACHE.
         
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
+            archivos_directos: Lista de archivos directos (para compatibilidad)
+            cache_archivos: Cache de archivos para workers paralelos
+            
             
         Returns:
             Dict[str, Any]: Análisis completo de IVA y ReteIVA
@@ -1563,6 +2011,14 @@ class ProcesadorGemini:
             ValueError: Si hay error en el procesamiento
         """
         logger.info(" Analizando IVA y ReteIVA con Gemini")
+        
+        # 💾 USAR CACHE SI ESTÁ DISPONIBLE
+        archivos_directos = archivos_directos or []
+        if cache_archivos:
+            logger.info(f" IVA usando cache de archivos: {len(cache_archivos)} archivos")
+            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
+        elif archivos_directos:
+            logger.info(f" IVA usando archivos directos originales: {len(archivos_directos)} archivos")
         
         try:
             # Extraer documentos por categoría
@@ -1586,21 +2042,39 @@ class ProcesadorGemini:
                 elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
                     anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
             
-            if not factura_texto:
-                raise ValueError("No se encontró una FACTURA en los documentos para análisis de IVA")
+                    #  VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
+
+            hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
+            nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
+            posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
             
+            if not factura_texto and not posibles_facturas_directas:
+                raise ValueError("No se encontró una FACTURA en los documentos para análisis de IVA")
+
+            logger.info(f"Factura encontrada para analisis IVA")
+            for archivo in archivos_directos:
+                try:
+                    if hasattr(archivo, 'filename') and archivo.filename:
+                        nombres_archivos_directos.append(archivo.filename)
+                    else:
+                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                except Exception as e:
+                    logger.warning(f" Error obteniendo nombre de archivo: {e}")
+                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+
             # Generar prompt especializado de IVA
             prompt = PROMPT_ANALISIS_IVA(
                 factura_texto=factura_texto,
                 rut_texto=rut_texto,
                 anexos_texto=anexos_texto,
                 cotizaciones_texto=cotizaciones_texto,
-                anexo_contrato=anexo_contrato
+                anexo_contrato=anexo_contrato,
+                nombres_archivos_directos=nombres_archivos_directos
             )
             
             # Llamar a Gemini
-            respuesta = await self._llamar_gemini(prompt)
-            logger.info(f"🧠 Respuesta análisis IVA: {respuesta[:500]}...")
+            respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos)
+            logger.info(f"Respuesta análisis IVA: {respuesta[:500]}...")
             
             # Limpiar respuesta
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
@@ -1615,7 +2089,7 @@ class ProcesadorGemini:
             campos_requeridos = ["analisis_iva", "analisis_fuente_ingreso", "calculo_reteiva", "estado_liquidacion"]
             for campo in campos_requeridos:
                 if campo not in resultado:
-                    logger.warning(f"⚠️ Campo '{campo}' no encontrado en respuesta de IVA")
+                    logger.warning(f" Campo '{campo}' no encontrado en respuesta de IVA")
                     resultado[campo] = self._obtener_campo_iva_default(campo)
             
             # Extraer información clave para logging
@@ -1626,16 +2100,16 @@ class ProcesadorGemini:
             valor_iva = iva_identificado.get("valor_iva_total", 0.0)
             estado = estado_data.get("estado", "No definido")
             
-            logger.info(f"✅ Análisis IVA completado: Valor IVA=${valor_iva:,.2f}, Estado={estado}")
+            logger.info(f" Análisis IVA completado: Valor IVA=${valor_iva:,.2f}, Estado={estado}")
             
             return resultado
             
         except json.JSONDecodeError as e:
-            logger.error(f"❌ Error parseando JSON de análisis IVA: {e}")
+            logger.error(f" Error parseando JSON de análisis IVA: {e}")
             logger.error(f"Respuesta problemática: {respuesta}")
             return self._iva_fallback("Error parseando respuesta JSON de Gemini")
         except Exception as e:
-            logger.error(f"❌ Error en análisis de IVA: {e}")
+            logger.error(f" Error en análisis de IVA: {e}")
             return self._iva_fallback(str(e))
     
     def _obtener_campo_iva_default(self, campo: str) -> Dict[str, Any]:
@@ -1770,8 +2244,8 @@ class ProcesadorGemini:
     # ===============================
     # 🆕 NUEVA FUNCIONALIDAD: ANÁLISIS DE ESTAMPILLAS GENERALES
     # ===============================
-    
-    async def analizar_estampillas_generales(self, documentos_clasificados: Dict[str, Dict]) -> Dict[str, Any]:
+
+    async def analizar_estampillas_generales(self, documentos_clasificados: Dict[str, Dict], archivos_directos: list[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
         """
         🆕 Nueva funcionalidad: Análisis de 6 Estampillas Generales.
         
@@ -1794,7 +2268,15 @@ class ProcesadorGemini:
         Raises:
             ValueError: Si hay error en el procesamiento
         """
-        logger.info("🎨 Analizando 6 estampillas generales con Gemini")
+        logger.info(" Analizando 6 estampillas generales con Gemini")
+        
+        # 💾 USAR CACHE SI ESTÁ DISPONIBLE (igual que otras funciones)
+        archivos_directos = archivos_directos or []
+        if cache_archivos:
+            logger.info(f" Estampillas generales usando cache de archivos: {len(cache_archivos)} archivos")
+            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
+        elif archivos_directos:
+            logger.info(f" Estampillas generales usando archivos directos originales: {len(archivos_directos)} archivos")
         
         try:
             # Extraer documentos por categoría
@@ -1807,10 +2289,10 @@ class ProcesadorGemini:
             for nombre_archivo, info in documentos_clasificados.items():
                 if info["categoria"] == "FACTURA":
                     factura_texto = info["texto"]
-                    logger.info(f"📄 Factura encontrada para análisis estampillas: {nombre_archivo}")
+                    logger.info(f" Factura encontrada para análisis estampillas: {nombre_archivo}")
                 elif info["categoria"] == "RUT":
                     rut_texto = info["texto"]
-                    logger.info(f"🏛️ RUT encontrado para análisis estampillas: {nombre_archivo}")
+                    logger.info(f" RUT encontrado para análisis estampillas: {nombre_archivo}")
                 elif info["categoria"] == "ANEXO":
                     anexos_texto += f"\n\n--- ANEXO: {nombre_archivo} ---\n{info['texto']}"
                 elif info["categoria"] == "COTIZACION":
@@ -1818,8 +2300,27 @@ class ProcesadorGemini:
                 elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
                     anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
             
-            if not factura_texto:
+            # ✅ VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
+            hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
+            
+            # 💾 OBTENER NOMBRES DE ARCHIVOS (compatible con cache)
+            nombres_archivos_directos = []
+            if archivos_directos:
+                for archivo in archivos_directos:
+                    try:
+                        if hasattr(archivo, 'filename') and archivo.filename:
+                            nombres_archivos_directos.append(archivo.filename)
+                        else:
+                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                    except Exception as e:
+                        logger.warning(f" Error obteniendo nombre de archivo: {e}")
+                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+            
+            posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
+            
+            if not hay_factura_texto and not posibles_facturas_directas:
                 raise ValueError("No se encontró una FACTURA en los documentos para análisis de estampillas")
+            logger.info(f"Factura encontrada para análisis estampillas generales")
             
             # Generar prompt especializado de estampillas generales
             prompt = PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(
@@ -1827,12 +2328,13 @@ class ProcesadorGemini:
                 rut_texto=rut_texto,
                 anexos_texto=anexos_texto,
                 cotizaciones_texto=cotizaciones_texto,
-                anexo_contrato=anexo_contrato
+                anexo_contrato=anexo_contrato,
+                nombres_archivos_directos=nombres_archivos_directos
             )
             
             # Llamar a Gemini
-            respuesta = await self._llamar_gemini(prompt)
-            logger.info(f"🧠 Respuesta análisis estampillas: {respuesta[:500]}...")
+            respuesta = await self._llamar_gemini_hibrido_factura(prompt,archivos_directos)
+            logger.info(f" Respuesta análisis estampillas: {respuesta[:500]}...")
             
             # Limpiar respuesta
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
@@ -1845,11 +2347,11 @@ class ProcesadorGemini:
             
             # Validar estructura mínima requerida
             if "estampillas_generales" not in resultado:
-                logger.warning("⚠️ Campo 'estampillas_generales' no encontrado en respuesta")
+                logger.warning(" Campo 'estampillas_generales' no encontrado en respuesta")
                 resultado["estampillas_generales"] = self._obtener_estampillas_default()
             
             if "resumen_analisis" not in resultado:
-                logger.warning("⚠️ Campo 'resumen_analisis' no encontrado en respuesta")
+                logger.warning(" Campo 'resumen_analisis' no encontrado en respuesta")
                 resultado["resumen_analisis"] = self._obtener_resumen_default(resultado.get("estampillas_generales", []))
             
             # Extraer información clave para logging
@@ -1860,16 +2362,16 @@ class ProcesadorGemini:
             completas = resumen_data.get("estampillas_completas", 0)
             incompletas = resumen_data.get("estampillas_incompletas", 0)
             
-            logger.info(f"✅ Análisis estampillas completado: {total_identificadas} identificadas, {completas} completas, {incompletas} incompletas")
+            logger.info(f" Análisis estampillas completado: {total_identificadas} identificadas, {completas} completas, {incompletas} incompletas")
             
             return resultado
             
         except json.JSONDecodeError as e:
-            logger.error(f"❌ Error parseando JSON de análisis estampillas: {e}")
+            logger.error(f" Error parseando JSON de análisis estampillas: {e}")
             logger.error(f"Respuesta problemática: {respuesta}")
             return self._estampillas_fallback("Error parseando respuesta JSON de Gemini")
         except Exception as e:
-            logger.error(f"❌ Error en análisis de estampillas: {e}")
+            logger.error(f" Error en análisis de estampillas: {e}")
             return self._estampillas_fallback(str(e))
     
     def _obtener_estampillas_default(self) -> List[Dict[str, Any]]:

@@ -78,7 +78,7 @@ class LiquidadorIVA:
     def __init__(self):
         """Inicializa el liquidador de IVA con configuración actual"""
         self.config_iva = obtener_configuracion_iva()
-        logger.info("✅ LiquidadorIVA inicializado correctamente")
+        logger.info(" LiquidadorIVA inicializado correctamente")
     
     def liquidar_iva_completo(self, analisis_iva: Dict[str, Any], 
                              nit_administrativo: str) -> ResultadoLiquidacionIVA:
@@ -96,7 +96,7 @@ class LiquidadorIVA:
             ValueError: Si el NIT no aplica para IVA o datos inválidos
             Exception: Errores de cálculo
         """
-        logger.info(f"💰 Iniciando liquidación de IVA para NIT: {nit_administrativo}")
+        logger.info(f" Iniciando liquidación de IVA para NIT: {nit_administrativo}")
         
         try:
             # 1. Validar NIT administrativo
@@ -129,11 +129,11 @@ class LiquidadorIVA:
                 resultado_calculo=resultado_calculo
             )
             
-            logger.info(f"✅ Liquidación completada: ReteIVA=${resultado.valor_reteiva:,.2f}")
+            logger.info(f" Liquidación completada: ReteIVA=${resultado.valor_reteiva:,.2f}")
             return resultado
             
         except Exception as e:
-            error_msg = f"❌ Error en liquidación de IVA: {str(e)}"
+            error_msg = f" Error en liquidación de IVA: {str(e)}"
             logger.error(error_msg)
             
             return self._crear_resultado_error(
@@ -198,12 +198,12 @@ class LiquidadorIVA:
                 "observaciones": estado_data.get("observaciones", [])
             }
             
-            logger.info(f"📊 Datos extraídos: IVA=${datos['valor_iva_total']:,.2f}, Estado={datos['estado_liquidacion']}")
+            logger.info(f" Datos extraídos: IVA=${datos['valor_iva_total']:,.2f}, Estado={datos['estado_liquidacion']}")
             return datos
             
         except Exception as e:
             error_msg = f"Error extrayendo datos del análisis: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             raise ValueError(error_msg)
     
     def _validar_estado_liquidacion(self, datos_iva: Dict[str, Any]) -> Tuple[bool, str]:
@@ -289,12 +289,12 @@ class LiquidadorIVA:
                 "calculo_formula": f"${valor_iva:,.2f} x {porcentaje_texto} = ${float(valor_reteiva_redondeado):,.2f}"
             }
             
-            logger.info(f"🧮 Cálculo ReteIVA: {resultado['calculo_formula']}")
+            logger.info(f" Cálculo ReteIVA: {resultado['calculo_formula']}")
             return resultado
             
         except Exception as e:
             error_msg = f"Error en cálculo preciso de ReteIVA: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             raise ValueError(error_msg)
     
     def _construir_resultado_exitoso(self, nit_administrativo: str,
@@ -466,11 +466,11 @@ class LiquidadorIVA:
             if tarifas["tarifa_fuente_extranjera"] != 1.0:
                 validacion.setdefault("advertencias", []).append("Tarifa fuente extranjera no es 100%")
             
-            logger.info("✅ Configuración de liquidador IVA validada")
+            logger.info(" Configuración de liquidador IVA validada")
             return validacion
             
         except Exception as e:
-            logger.error(f"❌ Error validando configuración: {str(e)}")
+            logger.error(f" Error validando configuración: {str(e)}")
             return {
                 "configuracion_valida": False,
                 "error": str(e)
@@ -586,7 +586,7 @@ if __name__ == "__main__":
     )
     
     # Mostrar resultado
-    print(f"✅ Liquidación completada:")
+    print(f" Liquidación completada:")
     print(f"   - Estado: {resultado.estado_liquidacion}")
     print(f"   - IVA identificado: ${resultado.valor_iva_identificado:,.2f}")
     print(f"   - ReteIVA ({resultado.porcentaje_reteiva_texto}): ${resultado.valor_reteiva:,.2f}")
