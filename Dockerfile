@@ -7,36 +7,43 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements y instalar dependencias
+# Copiar requirements e instalar dependencias
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
 
 # Etapa final
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copiar dependencias instaladas
-COPY --from=builder /root/.local /root/.local
+# Instalar dependencias del sistema necesarias para tiempo de ejecución
+RUN apt-get update && apt-get install -y \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
 
 # Crear usuario no-root para seguridad
 RUN useradd --create-home --shell /bin/bash app
 
-# Copiar código fuente
+
+# Copiar dependencias instaladas y código fuente
+COPY --from=builder /usr/local /usr/local
 COPY --chown=app:app . .
 
 # Variables de entorno para Python
-ENV PYTHONPATH=/root/.local/bin:$PYTHONPATH
-ENV PATH=/root/.local/bin:$PATH
-ENV PYTHONUNBUFFERED=1
 
-# Puerto de la aplicación
-EXPOSE 8000
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
+
 
 # Cambiar a usuario no-root
 USER app
+
+# Puerto de la aplicación
+EXPOSE 8080
 
 # Comando de inicio
 CMD ["python", "main.py"]

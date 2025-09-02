@@ -220,6 +220,7 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
        - Si encuentras servicios específicos en anexos, mapea al concepto más cercano del diccionario
        - Si hay valores distribuidos por concepto en anexos, especifica la base_gravable para cada uno
        - Si solo hay un valor total, usa ese valor para el concepto identificado
+       -Si hay mas de un concepto en la factura, identifica cada uno de los conceptos y sus valores
     
     3.  **VALIDACIONES**:
        - Verifica que el valor supere la base mínima del concepto
@@ -337,6 +338,7 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
     - NO generalices régimen especial como ordinario - mantén la diferenciación específica
     - Para Art. 383: Si faltan soportes obligatorios, aplicar tarifa convencional
     - EL DOCUMENTO " SOPORTE EN ADQUISICIONES EFECTUADAS A NO OBLIGADOS A FACTURAR " ES EQUIVALENTE A UNA " FACTURA ".
+    
     
     RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
     {{
@@ -564,7 +566,9 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
     - Si no puedes determinar la naturaleza del tercero, marca como null
     - Para regimen_tributario usa EXACTAMENTE: "SIMPLE", "ORDINARIO" o "ESPECIAL" según lo que encuentres en el RUT
     - NO generalices régimen especial como ordinario - mantén la diferenciación específica
-    
+     -Si hay varios conceptos en la factura, identifica cada uno de los conceptos y sus valores.
+
+
     RESPONDE SOLO JSON:
     {{
         "es_consorcio": true,

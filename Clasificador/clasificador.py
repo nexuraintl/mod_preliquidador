@@ -154,22 +154,22 @@ class ProcesadorGemini:
     
     async def clasificar_documentos(
         self, 
-        textos_archivos_o_directos = None,  # ✅ COMPATIBILIDAD TOTAL: Acepta cualquier tipo
-        archivos_directos: List[UploadFile] = None,  # 🆕 NUEVO: Archivos directos
-        textos_preprocesados: Dict[str, str] = None  # 🆕 NUEVO: Textos preprocesados
+        textos_archivos_o_directos = None,  #  COMPATIBILIDAD TOTAL: Acepta cualquier tipo
+        archivos_directos: List[UploadFile] = None,  #  NUEVO: Archivos directos
+        textos_preprocesados: Dict[str, str] = None  #  NUEVO: Textos preprocesados
     ) -> Tuple[Dict[str, str], bool, bool]:
         """
-        🔄 FUNCIÓN HÍBRIDA CON COMPATIBILIDAD: Clasificación con archivos directos + textos preprocesados.
+         FUNCIÓN HÍBRIDA CON COMPATIBILIDAD: Clasificación con archivos directos + textos preprocesados.
         
         MODOS DE USO:
-        ✅ MODO LEGACY: clasificar_documentos(textos_archivos) - Funciona como antes
-        ✅ MODO HÍBRIDO: clasificar_documentos(archivos_directos=[], textos_preprocesados={})
+         MODO LEGACY: clasificar_documentos(textos_archivos) - Funciona como antes
+         MODO HÍBRIDO: clasificar_documentos(archivos_directos=[], textos_preprocesados={})
         
         ENFOQUE HÍBRIDO IMPLEMENTADO:
-        ✅ PDFs e Imágenes → Enviados directamente a Gemini (multimodal)
-        ✅ Excel/Email/Word → Procesados localmente y enviados como texto
-        ✅ Límite: Máximo 20 archivos directos
-        ✅ Mantener prompts existentes con modificaciones mínimas
+         PDFs e Imágenes → Enviados directamente a Gemini (multimodal)
+         Excel/Email/Word → Procesados localmente y enviados como texto
+         Límite: Máximo 20 archivos directos
+         Mantener prompts existentes con modificaciones mínimas
         
         Args:
             textos_archivos: [LEGACY] Diccionario {nombre_archivo: texto_extraido} - Compatibilidad
@@ -183,11 +183,11 @@ class ProcesadorGemini:
             ValueError: Si hay error en el procesamiento con Gemini
             HTTPException: Si se excede límite de archivos directos
         """
-        # 🔄 DETECCIÓN AUTOMÁTICA DE MODO MEJORADA
+        #  DETECCIÓN AUTOMÁTICA DE MODO MEJORADA
         if textos_archivos_o_directos is not None:
             # DETECTAR TIPO DE ENTRADA
             if isinstance(textos_archivos_o_directos, dict):
-                # MODO LEGACY: Dict[str, str] - signatura original de main.py
+                # MODO LEGACY: Dict[str, str] -  original de main.py
                 logger.info(f" MODO LEGACY detectado: {len(textos_archivos_o_directos)} textos recibidos")
                 logger.info(" Convirtiendo a modo híbrido interno...")
                 
@@ -348,9 +348,9 @@ class ProcesadorGemini:
         except json.JSONDecodeError as e:
             logger.error(f" Error parseando JSON híbrido de Gemini: {e}")
             logger.error(f"Respuesta problemática: {respuesta}")
-            # Fallback: clasificar manualmente basado en nombres
-            clasificacion_fb = self._clasificacion_fallback_hibrida(archivos_directos, textos_preprocesados)
-            return clasificacion_fb, False, False  # Asumir que no es consorcio ni extranjera en fallback
+            
+            raise ValueError(f"Error en JSON clasificación híbrida: {str(e)}")
+        
         except Exception as e:
             logger.error(f" Error en clasificación híbrida de documentos: {e}")
             # Logging seguro de archivos directos fallidos
@@ -393,7 +393,7 @@ class ProcesadorGemini:
             logger.info(f" Llamada híbrida a Gemini con timeout de {timeout_segundos}s")
             logger.info(f" Contenido: 1 prompt + {len(contents) - 1} archivos directos")
             
-            # ✅ CREAR CONTENIDO MULTIMODAL CORRECTO
+            #  CREAR CONTENIDO MULTIMODAL CORRECTO
             contenido_multimodal = []
             
             # Agregar prompt (primer elemento)
@@ -402,7 +402,7 @@ class ProcesadorGemini:
                 contenido_multimodal.append(prompt_texto)
                 logger.info(f" Prompt agregado: {len(prompt_texto):,} caracteres")
             
-            # ✅ PROCESAR ARCHIVOS DIRECTOS CORRECTAMENTE
+            #  PROCESAR ARCHIVOS DIRECTOS CORRECTAMENTE
             archivos_directos = contents[1:] if len(contents) > 1 else []
             for i, archivo_elemento in enumerate(archivos_directos):
                 try:
@@ -517,81 +517,23 @@ class ProcesadorGemini:
             logger.error(f" Error llamando a Gemini en modo híbrido: {e}")
             logger.error(f" Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
             raise ValueError(f"Error híbrido de Gemini: {str(e)}")
-    
-    def _clasificacion_fallback_hibrida(
-        self, 
-        archivos_directos: List[UploadFile], 
-        textos_preprocesados: Dict[str, str]
-    ) -> Dict[str, str]:
-        """
-        Clasificación de emergencia híbrida basada en nombres de archivo.
-        
-        Args:
-            archivos_directos: Lista de archivos directos
-            textos_preprocesados: Diccionario con textos preprocesados
-            
-        Returns:
-            Dict[str, str]: Clasificación basada en nombres
-        """
-        resultado = {}
-        
-        # Clasificar archivos directos (con manejo seguro)
-        for i, archivo in enumerate(archivos_directos):
-            try:
-                if hasattr(archivo, 'filename') and archivo.filename:
-                    nombre_archivo = archivo.filename
-                else:
-                    nombre_archivo = f"archivo_directo_{i+1}"
-            except Exception:
-                nombre_archivo = f"archivo_directo_{i+1}"
-                
-            resultado[nombre_archivo] = self._clasificar_por_nombre(nombre_archivo)
-        
-        # Clasificar textos preprocesados
-        for nombre_archivo in textos_preprocesados.keys():
-            resultado[nombre_archivo] = self._clasificar_por_nombre(nombre_archivo)
-        
-        logger.warning(f" Usando clasificación híbrida fallback para {len(resultado)} archivos")
-        return resultado
-    
-    def _clasificar_por_nombre(self, nombre_archivo: str) -> str:
-        """
-        Clasifica un archivo basándose únicamente en su nombre.
-        
-        Args:
-            nombre_archivo: Nombre del archivo
-            
-        Returns:
-            str: Categoría asignada
-        """
-        nombre_lower = nombre_archivo.lower()
-        
-        if 'factura' in nombre_lower or 'fact' in nombre_lower:
-            return "FACTURA"
-        elif 'rut' in nombre_lower:
-            return "RUT"
-        elif 'cotiz' in nombre_lower or 'presupuesto' in nombre_lower:
-            return "COTIZACION"
-        elif 'contrato' in nombre_lower:
-            return "ANEXO CONCEPTO DE CONTRATO"
-        else:
-            return "ANEXO"
 
+   
     async def analizar_factura(
         self, 
         documentos_clasificados: Dict[str, Dict], 
         es_facturacion_extranjera: bool = False,
-        archivos_directos: List[UploadFile] = None,  # 🆕 NUEVO: Soporte multimodal
-        cache_archivos: Dict[str, bytes] = None  # 🆕 NUEVO: Cache para workers paralelos
+        archivos_directos: List[UploadFile] = None,  #  NUEVO: Soporte multimodal
+        cache_archivos: Dict[str, bytes] = None  #  NUEVO: Cache para workers paralelos
     ) -> AnalisisFactura:
         """
-        🔄 ANÁLISIS HÍBRIDO MULTIMODAL: Analizar factura con archivos directos + textos preprocesados.
+         ANÁLISIS HÍBRIDO MULTIMODAL: Analizar factura con archivos directos + textos preprocesados.
         
         FUNCIONALIDAD HÍBRIDA CON CACHE:
-        ✅ Archivos directos (PDFs/imágenes): Enviados nativamente a Gemini
-        ✅ Textos preprocesados: Documentos ya extraidos localmente
-        ✅ Cache para workers: Solución a problemas de concurrencia en workers paralelos
-        ✅ Combinación inteligente: Una sola llamada con contenido mixto
+         Archivos directos (PDFs/imágenes): Enviados nativamente a Gemini
+         Textos preprocesados: Documentos ya extraidos localmente
+         Cache para workers: Solución a problemas de concurrencia en workers paralelos
+         Combinación inteligente: Una sola llamada con contenido mixto
         
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
@@ -605,11 +547,11 @@ class ProcesadorGemini:
         Raises:
             ValueError: Si no se encuentra factura o hay error en procesamiento
         """
-        # 📊 LOGGING HÍBRIDO CON CACHE: Identificar estrategia de procesamiento
+        #  LOGGING HÍBRIDO CON CACHE: Identificar estrategia de procesamiento
         archivos_directos = archivos_directos or []
         cache_archivos = cache_archivos or {}
         
-        # 🆕 USAR CACHE SI ESTÁ DISPONIBLE (para workers paralelos)
+        #  USAR CACHE SI ESTÁ DISPONIBLE (para workers paralelos)
         if cache_archivos:
             logger.info(f" Usando cache de archivos para análisis (workers paralelos): {len(cache_archivos)} archivos")
             archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
@@ -663,13 +605,13 @@ class ProcesadorGemini:
             raise ValueError("No se encontró una FACTURA en los documentos (ni texto ni archivo directo)")
         
         try:
-            # 🔄 DECIDIR ESTRATEGIA: HÍBRIDO vs TRADICIONAL
+            #  DECIDIR ESTRATEGIA: HÍBRIDO vs TRADICIONAL
             usar_hibrido = total_archivos_directos > 0 or bool(cache_archivos)
             
             if usar_hibrido:
                 logger.info(" Usando análisis HÍBRIDO con archivos directos + textos preprocesados")
                 
-                # 📄 CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
+                #  CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
                 nombres_archivos_directos = []
                 for archivo in archivos_directos:
                     try:
@@ -692,7 +634,7 @@ class ProcesadorGemini:
                         factura_texto, rut_texto, anexos_texto, 
                         cotizaciones_texto, anexo_contrato, 
                         conceptos_extranjeros_dict, paises_convenio, preguntas_fuente,
-                        nombres_archivos_directos  # 🆕 NUEVO PARÁMETRO
+                        nombres_archivos_directos  #  NUEVO PARÁMETRO
                     )
                 else:
                     logger.info("🇨🇴 Prompt híbrido para facturación nacional")
@@ -701,14 +643,14 @@ class ProcesadorGemini:
                     prompt = PROMPT_ANALISIS_FACTURA(
                         factura_texto, rut_texto, anexos_texto, 
                         cotizaciones_texto, anexo_contrato, conceptos_dict,
-                        nombres_archivos_directos  # 🆕 NUEVO PARÁMETRO
+                        nombres_archivos_directos  #  NUEVO PARÁMETRO
                     )
                 
-                # ⚡ LLAMAR A GEMINI HÍBRIDO
+                #  LLAMAR A GEMINI HÍBRIDO
                 respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos)
                 
             else:
-                # 📄 FLUJO TRADICIONAL (solo textos preprocesados)
+                #  FLUJO TRADICIONAL (solo textos preprocesados)
                 logger.info(" Usando análisis TRADICIONAL con solo textos preprocesados")
                 
                 if es_facturacion_extranjera:
@@ -731,9 +673,9 @@ class ProcesadorGemini:
                         cotizaciones_texto, anexo_contrato, conceptos_dict
                     )
                 
-                # 📄 LLAMAR A GEMINI TRADICIONAL
+                #  LLAMAR A GEMINI TRADICIONAL
                 respuesta = await self._llamar_gemini(prompt)
-            # ✅ LOG DE RESPUESTA SEGÚN ESTRATEGIA
+            #  LOG DE RESPUESTA SEGÚN ESTRATEGIA
             if usar_hibrido:
                 logger.info(f" Respuesta análisis HÍBRIDO: {len(respuesta):,} caracteres")
             else:
@@ -1355,7 +1297,7 @@ class ProcesadorGemini:
         from io import BytesIO
         from starlette.datastructures import UploadFile
         
-        # Stream independiente para este worker
+        # Stream independiente para este worker 
         stream = BytesIO(archivo_bytes)
         
         # ✅ SOLUCIÓN: UploadFile sin content_type (compatible con todas las versiones)

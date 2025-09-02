@@ -137,7 +137,7 @@ def preprocesar_excel_limpio(contenido: bytes, nombre_archivo: str = "archivo.xl
                 filas_orig = len(dataframe)
                 cols_orig = len(dataframe.columns)
                 
-                # 🧹 LIMPIEZA SIMPLE: Eliminar filas y columnas completamente vacías
+                #  LIMPIEZA SIMPLE: Eliminar filas y columnas completamente vacías
                 df_limpio = dataframe.dropna(how='all')  # Filas vacías
                 df_limpio = df_limpio.dropna(axis=1, how='all')  # Columnas vacías
                 
@@ -636,7 +636,7 @@ async def procesar_facturas_integrado(
     nit_administrativo: str = Form(...)
 ) -> JSONResponse:
     """
-     ENDPOINT PRINCIPAL ÚNICO - SISTEMA INTEGRADO v2.0
+     ENDPOINT PRINCIPAL - SISTEMA INTEGRADO v2.0
     
     Procesa facturas y calcula múltiples impuestos en paralelo:
      RETENCIÓN EN LA FUENTE (funcionalidad original)
@@ -960,7 +960,7 @@ async def procesar_facturas_integrado(
                 "nombre_entidad": nombre_entidad,
                 "timestamp": datetime.now().isoformat(),
                 "version": "2.4.0",
-                "impuestos": {}  # 🆕 NUEVA ESTRUCTURA PARA TODOS LOS IMPUESTOS
+                "impuestos": {}  # NUEVA ESTRUCTURA PARA TODOS LOS IMPUESTOS
             }
             
             # Liquidar Retefuente
@@ -1872,7 +1872,7 @@ if __name__ == "__main__":
     
     uvicorn.run(
         "main:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=8080,
         reload=True,
         timeout_keep_alive=120,

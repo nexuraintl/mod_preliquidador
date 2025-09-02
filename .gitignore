@@ -52,3 +52,5 @@ logs/
 # CONFIGURACIÓN LOCAL
 config.local.py
 local_settings.py
+
+INSTRUCCIONES_CLAUDE_v2.md
