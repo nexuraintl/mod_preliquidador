@@ -25,6 +25,14 @@ class ConceptoIdentificado(BaseModel):
     tarifa_retencion: float
     base_gravable: Optional[float] = None
 
+# 🆕 NUEVO MODELO PARA DETALLES POR CONCEPTO
+class DetalleConcepto(BaseModel):
+    """Detalle individual de cada concepto liquidado"""
+    concepto: str
+    tarifa_retencion: float
+    base_gravable: float
+    valor_retencion: float
+
 class NaturalezaTercero(BaseModel):
     es_persona_natural: Optional[bool] = None
     es_declarante: Optional[bool] = None
@@ -67,6 +75,7 @@ class InformacionArticulo383(BaseModel):
     calculo: CalculoArticulo383 = CalculoArticulo383()
 
 class AnalisisFactura(BaseModel):
+    aplica_retencion: bool  #  CAMPO SINCRONIZADO AGREGADO
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
     articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
@@ -78,11 +87,12 @@ class AnalisisFactura(BaseModel):
 class ResultadoLiquidacion(BaseModel):
     valor_base_retencion: float
     valor_retencion: float
-    tarifa_aplicada: float
-    concepto_aplicado: str
+    conceptos_aplicados: List[DetalleConcepto]  # 🆕 NUEVO: Detalles por concepto
+    resumen_conceptos: str  #  NUEVO: Resumen descriptivo - Puede que no sea necesario
     fecha_calculo: str
     puede_liquidar: bool
     mensajes_error: List[str]
+    
 
 # ===============================
 # LIQUIDADOR DE RETENCIÓN
@@ -142,7 +152,6 @@ class LiquidadorRetencion:
         # Agregar advertencias por conceptos no identificados
         if conceptos_no_identificados:
             mensajes_error.append(f"Se encontraron {len(conceptos_no_identificados)} concepto(s) no identificado(s) que no serán liquidados")
-            mensajes_error.append("Revise la factura manualmente para los conceptos no identificados")
             logger.warning(f"Conceptos no identificados: {len(conceptos_no_identificados)}")
         
         # Verificar si hay al menos un concepto identificado
@@ -154,47 +163,29 @@ class LiquidadorRetencion:
         if not puede_liquidar:
             return self._crear_resultado_no_liquidable(mensajes_error)
         
-        # VALIDACIÓN ESPECIAL: ARTÍCULO 383 PARA PERSONAS NATURALES
-        # Si aplica Art. 383, usar tarifas progresivas en lugar de tarifas convencionales
-        if (analisis.articulo_383 and 
-            analisis.articulo_383.aplica and 
-            analisis.articulo_383.condiciones_cumplidas.es_persona_natural and
-            analisis.articulo_383.condiciones_cumplidas.concepto_aplicable and
-            analisis.articulo_383.condiciones_cumplidas.planilla_seguridad_social and
-            analisis.articulo_383.condiciones_cumplidas.cuenta_cobro):
-            
-            logger.info("Aplicando Artículo 383 - Tarifas progresivas para persona natural")
-            resultado_art383 = self._calcular_retencion_articulo_383(analisis)
+        #  VALIDACIÓN SEPARADA: ARTÍCULO 383 PARA PERSONAS NATURALES
+        # Verificar si se analizó Art 383 y si aplica
+        if analisis.articulo_383 and analisis.articulo_383.aplica:
+            logger.info(" Aplicando Artículo 383 - Tarifas progresivas para persona natural")
+    
+            # Usar función separada para Art 383
+            resultado_art383 = self._calcular_retencion_articulo_383_separado(analisis)
             
             if resultado_art383["puede_liquidar"]:
+                logger.info(f" Artículo 383 liquidado exitosamente: ${resultado_art383['resultado'].valor_retencion:,.2f}")
                 return resultado_art383["resultado"]
             else:
                 # Si falla el cálculo del Art. 383, continuar con cálculo tradicional
                 mensajes_error.extend(resultado_art383["mensajes_error"])
                 mensajes_error.append("Aplicando tarifa convencional por fallos en Art. 383")
-                logger.warning("Fallback a tarifa convencional por errores en Art. 383")
+                logger.warning(" Fallback a tarifa convencional por errores en Art. 383")
         
         elif analisis.articulo_383 and not analisis.articulo_383.aplica:
             # Explicar por qué no aplica Art. 383
-            condiciones = analisis.articulo_383.condiciones_cumplidas
-            razones_no_aplica = []
-            
-            if not condiciones.es_persona_natural:
-                razones_no_aplica.append("no es persona natural")
-            if not condiciones.concepto_aplicable:
-                razones_no_aplica.append("concepto no aplica para Art. 383")
-            if not condiciones.planilla_seguridad_social:
-                razones_no_aplica.append("falta planilla de seguridad social")
-            if not condiciones.cuenta_cobro:
-                razones_no_aplica.append("falta cuenta de cobro")
-            
-            if razones_no_aplica:
-                mensajes_error.append(f"Art. 383 no aplica: {', '.join(razones_no_aplica)}")
-                mensajes_error.append("Aplicando tarifas convencionales")
-                logger.info(f"Art. 383 no aplica: {', '.join(razones_no_aplica)}")
+            self._agregar_observaciones_art383_no_aplica(analisis.articulo_383, mensajes_error)
         
         # CÁLCULO DE RETENCIÓN CONVENCIONAL
-        logger.info(f"Calculando retención para {len(conceptos_identificados)} concepto(s)")
+        logger.info(f" Calculando retención para {len(conceptos_identificados)} concepto(s) con bases individuales")
         
         # Obtener conceptos de retefuente
         conceptos_retefuente = self._obtener_conceptos_retefuente()
@@ -205,9 +196,13 @@ class LiquidadorRetencion:
         tarifas_aplicadas = []
         detalles_calculo = []
         
-        for concepto_item in conceptos_identificados:
+        #  CORRECCIÓN CRÍTICA: Validar bases individuales por concepto
+        conceptos_con_bases = self._validar_bases_individuales_conceptos(conceptos_identificados, valor_base_total)
+
+        for concepto_item in conceptos_con_bases:
+            logger.info(f" Procesando concepto: {concepto_item.concepto} - Base: ${concepto_item.base_gravable:,.2f}")
             resultado_concepto = self._calcular_retencion_concepto(
-                concepto_item, valor_base_total, conceptos_retefuente
+                concepto_item, conceptos_retefuente
             )
             
             if resultado_concepto["aplica_retencion"]:
@@ -231,26 +226,45 @@ class LiquidadorRetencion:
         if not puede_liquidar:
             return self._crear_resultado_no_liquidable(mensajes_error)
         
-        # PREPARAR RESULTADO FINAL
-        concepto_aplicado = ", ".join(conceptos_aplicados) if conceptos_aplicados else "N/A"
-        tarifa_promedio = sum(tarifas_aplicadas) / len(tarifas_aplicadas) if tarifas_aplicadas else 0
+        #  PREPARAR RESULTADO FINAL CON ESTRUCTURA MEJORADA
+        # Crear lista de detalles por concepto
+        detalles_conceptos = []
+        conceptos_resumen = []
         
-        # Agregar detalles del cálculo a los mensajes
+        # Agregar detalles del cálculo a los mensajes (mantener funcionalidad existente)
         if detalles_calculo:
             mensajes_error.append("Detalle del cálculo:")
+            
             for detalle in detalles_calculo:
+                # Agregar al mensaje de error como antes
                 mensajes_error.append(
                     f"  • {detalle['concepto']}: ${detalle['base_gravable']:,.0f} x {detalle['tarifa']:.1f}% = ${detalle['valor_retencion']:,.0f}"
                 )
+                
+                # Crear objeto DetalleConcepto para nueva estructura
+                detalle_concepto = DetalleConcepto(
+                    concepto=detalle['concepto'],
+                    tarifa_retencion=detalle['tarifa'],
+                    base_gravable=detalle['base_gravable'],
+                    valor_retencion=detalle['valor_retencion']
+                )
+                detalles_conceptos.append(detalle_concepto)
+                
+                # Crear resumen descriptivo para cada concepto
+                conceptos_resumen.append(f"{detalle['concepto']} ({detalle['tarifa']:.1f}%)")
         
+        # Generar resumen descriptivo completo
+        resumen_descriptivo = " + ".join(conceptos_resumen) if conceptos_resumen else "No aplica retención"
+        
+        # Crear resultado con nueva estructura
         resultado = ResultadoLiquidacion(
             valor_base_retencion=valor_base_total,
             valor_retencion=valor_retencion_total,
-            tarifa_aplicada=tarifa_promedio,
-            concepto_aplicado=concepto_aplicado,
+            conceptos_aplicados=detalles_conceptos,  #  NUEVO: Lista de conceptos individuales
+            resumen_conceptos=resumen_descriptivo,   #  NUEVO: Resumen descriptivo
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=True,
-            mensajes_error=mensajes_error
+            mensajes_error=mensajes_error,
         )
         
         logger.info(f"Retención calculada exitosamente: ${valor_retencion_total:,.0f}")
@@ -377,15 +391,29 @@ class LiquidadorRetencion:
                 f"  • Retención calculada: ${valor_retencion_art383:,.0f}"
             ])
             
-            # PASO 9: Crear resultado
+            # PASO 9: Crear resultado con nueva estructura
+            concepto_original = analisis.conceptos_identificados[0].concepto if analisis.conceptos_identificados else "Honorarios y servicios"
+            concepto_art383 = f"Artículo 383 - {concepto_original}"
+            
+            # 🆕 NUEVA ESTRUCTURA: Crear detalle del concepto Art. 383
+            detalle_concepto_art383 = DetalleConcepto(
+                concepto=concepto_art383,
+                tarifa_retencion=tarifa_art383,
+                base_gravable=base_gravable_final,
+                valor_retencion=valor_retencion_art383
+            )
+            
+            # Generar resumen descriptivo
+            resumen_art383 = f"{concepto_art383} ({tarifa_art383*100:.1f}%)"
+            
             resultado = ResultadoLiquidacion(
                 valor_base_retencion=base_gravable_final,
                 valor_retencion=valor_retencion_art383,
-                tarifa_aplicada=tarifa_art383 * 100,  # Convertir a porcentaje
-                concepto_aplicado=f"Artículo 383 - {analisis.conceptos_identificados[0].concepto if analisis.conceptos_identificados else 'Honorarios y servicios'}",
+                conceptos_aplicados=[detalle_concepto_art383],  # 🆕 NUEVO: Lista con concepto individual
+                resumen_conceptos=resumen_art383,  # 🆕 NUEVO: Resumen descriptivo
                 fecha_calculo=datetime.now().isoformat(),
                 puede_liquidar=True,
-                mensajes_error=mensajes_detalle
+                mensajes_error=mensajes_detalle,
             )
             
             return {
@@ -400,6 +428,307 @@ class LiquidadorRetencion:
                 "puede_liquidar": False,
                 "mensajes_error": [f"Error en cálculo Art. 383: {str(e)}"]
             }
+    
+    def _calcular_retencion_articulo_383_separado(self, analisis: AnalisisFactura) -> Dict[str, Any]:
+        """
+         NUEVA FUNCIÓN SEPARADA: Cálculo del Artículo 383 con análisis independiente.
+        
+        Esta función procesa los resultados del análisis separado de Gemini para el Artículo 383
+        y realiza los cálculos de retención con tarifas progresivas.
+        
+        Args:
+            analisis: Análisis de factura que incluye el resultado del Art 383 de Gemini
+            
+        Returns:
+            Dict[str, Any]: Resultado del cálculo separado del Art. 383
+        """
+        logger.info(" Iniciando cálculo separado del Artículo 383")
+        
+        try:
+            # Verificar que existe información del Art 383
+            if not analisis.articulo_383 or not analisis.articulo_383.aplica:
+                return {
+                    "puede_liquidar": False,
+                    "mensajes_error": ["No se puede calcular Art 383: análisis indica que no aplica"]
+                }
+            
+            art383 = analisis.articulo_383
+            
+            # Importar constantes del Artículo 383
+            from config import (
+                UVT_2025, SMMLV_2025, obtener_tarifa_articulo_383, 
+                calcular_limite_deduccion, LIMITES_DEDUCCIONES_ART383
+            )
+            
+            # PASO 1: Extraer información del ingreso bruto desde los conceptos identificados
+            ingreso_bruto = analisis.valor_total or 0.0
+            if ingreso_bruto <= 0:
+                # Intentar calcular desde conceptos identificados
+                for concepto in analisis.conceptos_identificados:
+                    if concepto.base_gravable and concepto.base_gravable > 0:
+                        ingreso_bruto = concepto.base_gravable
+                        break
+                
+                if ingreso_bruto <= 0:
+                    return {
+                        "puede_liquidar": False,
+                        "mensajes_error": ["No se pudo determinar el ingreso bruto para Art. 383"]
+                    }
+            
+            logger.info(f" Ingreso bruto identificado: ${ingreso_bruto:,.2f}")
+            
+            # PASO 2: Calcular aportes a seguridad social (40% del ingreso)
+            aportes_seguridad_social = ingreso_bruto * LIMITES_DEDUCCIONES_ART383["seguridad_social_porcentaje"]
+            logger.info(f" Aportes seguridad social (40%): ${aportes_seguridad_social:,.2f}")
+            
+            # PASO 3: Procesar deducciones identificadas por Gemini
+            deducciones_aplicables = self._procesar_deducciones_art383(art383.deducciones_identificadas, ingreso_bruto)
+            total_deducciones = sum(deducciones_aplicables.values())
+            
+            # PASO 4: Aplicar límite máximo del 40% del ingreso bruto
+            limite_maximo_deducciones = ingreso_bruto * LIMITES_DEDUCCIONES_ART383["deducciones_maximas_porcentaje"]
+            deducciones_limitadas = min(total_deducciones, limite_maximo_deducciones)
+            
+            if total_deducciones > limite_maximo_deducciones:
+                logger.warning(f" Deducciones limitadas al 40%: ${deducciones_limitadas:,.2f} (original: ${total_deducciones:,.2f})")
+            
+            # PASO 5: Calcular base gravable final
+            base_gravable_final = ingreso_bruto - aportes_seguridad_social - deducciones_limitadas
+            
+            # Verificar que la base gravable no sea negativa
+            if base_gravable_final < 0:
+                logger.warning(" Base gravable negativa, estableciendo en 0")
+                base_gravable_final = 0
+            
+            logger.info(f" Base gravable final: ${base_gravable_final:,.2f}")
+            
+            # PASO 6: Convertir base gravable a UVT
+            base_gravable_uvt = base_gravable_final / UVT_2025
+            logger.info(f" Base gravable en UVT: {base_gravable_uvt:.2f} UVT")
+            
+            # PASO 7: Aplicar tarifa progresiva del Artículo 383
+            tarifa_art383 = obtener_tarifa_articulo_383(base_gravable_final)
+            valor_retencion_art383 = base_gravable_final * tarifa_art383
+            
+            logger.info(f" Tarifa Art. 383: {tarifa_art383*100:.1f}%")
+            logger.info(f" Retención Art. 383: ${valor_retencion_art383:,.2f}")
+            
+            # PASO 8: Preparar mensajes explicativos
+            mensajes_detalle = self._generar_mensajes_detalle_art383(
+                ingreso_bruto, aportes_seguridad_social, deducciones_limitadas, 
+                deducciones_aplicables, base_gravable_final, base_gravable_uvt, 
+                tarifa_art383, valor_retencion_art383
+            )
+            
+            # PASO 9: Crear resultado con nueva estructura
+            concepto_original = analisis.conceptos_identificados[0].concepto if analisis.conceptos_identificados else "Honorarios y servicios"
+            concepto_art383_separado = f"Artículo 383 - {concepto_original}"
+            
+            # 🆕 NUEVA ESTRUCTURA: Crear detalle del concepto Art. 383 separado
+            detalle_concepto_art383_separado = DetalleConcepto(
+                concepto=concepto_art383_separado,
+                tarifa_retencion=tarifa_art383,
+                base_gravable=base_gravable_final,
+                valor_retencion=valor_retencion_art383
+            )
+            
+            # Generar resumen descriptivo
+            resumen_art383_separado = f"{concepto_art383_separado} ({tarifa_art383*100:.1f}%)"
+            
+            resultado = ResultadoLiquidacion(
+                valor_base_retencion=base_gravable_final,
+                valor_retencion=valor_retencion_art383,
+                conceptos_aplicados=[detalle_concepto_art383_separado],  # 🆕 NUEVO: Lista con concepto individual
+                resumen_conceptos=resumen_art383_separado,  # 🆕 NUEVO: Resumen descriptivo
+                fecha_calculo=datetime.now().isoformat(),
+                puede_liquidar=True,
+                mensajes_error=mensajes_detalle,
+        
+            )
+            
+            return {
+                "puede_liquidar": True,
+                "resultado": resultado,
+                "mensajes_error": []
+            }
+            
+        except Exception as e:
+            logger.error(f"💥 Error en cálculo separado Art. 383: {e}")
+            return {
+                "puede_liquidar": False,
+                "mensajes_error": [f"Error en cálculo separado Art. 383: {str(e)}"]
+            }
+    
+    def _procesar_deducciones_art383(self, deducciones_identificadas, ingreso_bruto: float) -> Dict[str, float]:
+        """
+        Procesa las deducciones identificadas por Gemini y aplica límites según normativa.
+        
+        Args:
+            deducciones_identificadas: Deducciones identificadas por Gemini
+            ingreso_bruto: Ingreso bruto para calcular límites
+            
+        Returns:
+            Dict[str, float]: Deducciones aplicables con límites aplicados
+        """
+        from config import calcular_limite_deduccion
+        
+        deducciones_aplicables = {
+            "intereses_vivienda": 0.0,
+            "dependientes_economicos": 0.0,
+            "medicina_prepagada": 0.0,
+            "rentas_exentas": 0.0
+        }
+        
+        # Intereses por vivienda
+        if (deducciones_identificadas.intereses_vivienda.tiene_soporte and 
+            deducciones_identificadas.intereses_vivienda.valor > 0):
+            deducciones_aplicables["intereses_vivienda"] = calcular_limite_deduccion(
+                "intereses_vivienda", ingreso_bruto, deducciones_identificadas.intereses_vivienda.valor
+            )
+            logger.info(f" Intereses vivienda aplicados: ${deducciones_aplicables['intereses_vivienda']:,.2f}")
+        
+        # Dependientes económicos
+        if (deducciones_identificadas.dependientes_economicos.tiene_soporte and 
+            deducciones_identificadas.dependientes_economicos.valor > 0):
+            deducciones_aplicables["dependientes_economicos"] = calcular_limite_deduccion(
+                "dependientes_economicos", ingreso_bruto, deducciones_identificadas.dependientes_economicos.valor
+            )
+            logger.info(f" Dependientes económicos aplicados: ${deducciones_aplicables['dependientes_economicos']:,.2f}")
+        
+        # Medicina prepagada
+        if (deducciones_identificadas.medicina_prepagada.tiene_soporte and 
+            deducciones_identificadas.medicina_prepagada.valor > 0):
+            deducciones_aplicables["medicina_prepagada"] = calcular_limite_deduccion(
+                "medicina_prepagada", ingreso_bruto, deducciones_identificadas.medicina_prepagada.valor
+            )
+            logger.info(f" Medicina prepagada aplicada: ${deducciones_aplicables['medicina_prepagada']:,.2f}")
+        
+        # Rentas exentas
+        if (deducciones_identificadas.rentas_exentas.tiene_soporte and 
+            deducciones_identificadas.rentas_exentas.valor > 0):
+            deducciones_aplicables["rentas_exentas"] = calcular_limite_deduccion(
+                "rentas_exentas", ingreso_bruto, deducciones_identificadas.rentas_exentas.valor
+            )
+            logger.info(f" Rentas exentas aplicadas: ${deducciones_aplicables['rentas_exentas']:,.2f}")
+        
+        return deducciones_aplicables
+    
+    def _generar_mensajes_detalle_art383(self, ingreso_bruto: float, aportes_seguridad_social: float, 
+                                        deducciones_limitadas: float, deducciones_aplicables: Dict[str, float],
+                                        base_gravable_final: float, base_gravable_uvt: float, 
+                                        tarifa_art383: float, valor_retencion_art383: float) -> List[str]:
+        """
+        Genera mensajes detallados explicando el cálculo del Artículo 383.
+        
+        Returns:
+            List[str]: Lista de mensajes explicativos
+        """
+        mensajes_detalle = [
+            "📜 Cálculo bajo Artículo 383 del Estatuto Tributario (ANÁLISIS SEPARADO):",
+            f"  • Ingreso bruto: ${ingreso_bruto:,.2f}",
+            f"  • Aportes seguridad social (40%): ${aportes_seguridad_social:,.2f}",
+            f"  • Deducciones aplicables: ${deducciones_limitadas:,.2f}"
+        ]
+        
+        # Detallar deducciones aplicadas
+        for tipo, valor in deducciones_aplicables.items():
+            if valor > 0:
+                nombre_deduccion = tipo.replace("_", " ").title()
+                mensajes_detalle.append(f"    - {nombre_deduccion}: ${valor:,.2f}")
+        
+        mensajes_detalle.extend([
+            f"  • Base gravable final: ${base_gravable_final:,.2f}",
+            f"  • Base gravable en UVT: {base_gravable_uvt:.2f} UVT",
+            f"  • Tarifa aplicada: {tarifa_art383*100:.1f}%",
+            f"  • Retención calculada: ${valor_retencion_art383:,.2f}",
+            "✅ Cálculo completado con análisis separado de Gemini"
+        ])
+        
+        return mensajes_detalle
+    
+    def _agregar_observaciones_art383_no_aplica(self, articulo_383, mensajes_error: List[str]) -> None:
+        """
+        🆕 NUEVA FUNCIÓN: Agrega observaciones cuando el Artículo 383 no aplica.
+        
+        Args:
+            articulo_383: Información del Art 383 del análisis
+            mensajes_error: Lista de mensajes a la que agregar observaciones
+        """
+        condiciones = articulo_383.condiciones_cumplidas
+        razones_no_aplica = []
+        
+        if not condiciones.es_persona_natural:
+            razones_no_aplica.append("no es persona natural")
+        if not condiciones.concepto_aplicable:
+            razones_no_aplica.append("concepto no aplicable para Art. 383")
+        if not condiciones.cuenta_cobro:
+            razones_no_aplica.append("falta cuenta de cobro")
+        if not condiciones.planilla_seguridad_social:
+            razones_no_aplica.append("falta planilla de seguridad social")
+        if not condiciones.es_primer_pago:
+            razones_no_aplica.append("no es primer pago y falta planilla")
+        
+        if razones_no_aplica:
+            mensajes_error.append(f" Art. 383 no aplica: {', '.join(razones_no_aplica)}")
+            mensajes_error.append(" Aplicando tarifas convencionales de retefuente")
+            logger.info(f" Art. 383 no aplica: {', '.join(razones_no_aplica)}")
+    
+    def _validar_bases_individuales_conceptos(self, conceptos_identificados: List[ConceptoIdentificado], valor_base_total: float) -> List[ConceptoIdentificado]:
+        """
+        FUNCIÓN MODIFICADA: Valida que TODOS los conceptos tengan base gravable.
+        
+        Si algún concepto no tiene base específica, PARA la liquidación con error.
+        
+        Args:
+            conceptos_identificados: Lista de conceptos identificados por Gemini
+            valor_base_total: Valor total de la factura para validaciones
+            
+        Returns:
+            List[ConceptoIdentificado]: Conceptos validados con bases gravables
+            
+        Raises:
+            ValueError: Si algún concepto no tiene base gravable definida
+        """
+        
+        #  VALIDACIÓN CRÍTICA: Todos los conceptos DEBEN tener base gravable
+        conceptos_sin_base = []
+        conceptos_validos = []
+        
+        for concepto in conceptos_identificados:
+            if not concepto.base_gravable or concepto.base_gravable <= 0:
+                conceptos_sin_base.append(concepto.concepto)
+                logger.error(f" Concepto sin base gravable: {concepto.concepto}")
+            else:
+                conceptos_validos.append(concepto)
+                logger.info(f" Concepto válido: {concepto.concepto} = ${concepto.base_gravable:,.2f}")
+
+        #  SI HAY CONCEPTOS SIN BASE ENTONCES PARAR LIQUIDACIÓN
+        if conceptos_sin_base:
+            error_msg = f""" ERROR EN ANÁLISIS DE CONCEPTOS 
+            Los siguientes conceptos no tienen base gravable definida:
+            {chr(10).join(f'• {concepto}' for concepto in conceptos_sin_base)}
+            ACCIÓN REQUERIDA:
+            - Revisar el análisis de la IA (Gemini)
+            - Verificar que el documento contenga valores específicos para cada concepto
+            - Mejorar la extracción de texto si es necesario
+
+            LIQUIDACIÓN DETENIDA - No se puede proceder sin bases gravables válidas
+            """
+            logger.error(error_msg)
+            raise ValueError(f"Conceptos sin base gravable: {', '.join(conceptos_sin_base)}")
+        
+        # ✅ VALIDACIÓN ADICIONAL: Verificar coherencia con total (tolerancia 0%)
+        suma_bases = sum(c.base_gravable for c in conceptos_validos)
+        diferencia_absoluta = abs(suma_bases - valor_base_total)
+        
+        if diferencia_absoluta > 0:  # Tolerancia del 0%
+            logger.warning(f"⚠️ Diferencia detectada: Suma bases ${suma_bases:,.2f} vs Total factura ${valor_base_total:,.2f} (${diferencia_absoluta:,.2f})")
+        
+        logger.info(f"✅ VALIDACIÓN EXITOSA: {len(conceptos_validos)} conceptos - Total bases: ${suma_bases:,.2f}")
+        
+        return conceptos_validos
+    
+    
     
     def _validar_naturaleza_tercero(self, naturaleza: Optional[NaturalezaTercero]) -> Dict[str, Any]:
         """
@@ -448,8 +777,7 @@ class LiquidadorRetencion:
             
             # Validar datos faltantes de forma segura
             datos_faltantes = []
-            if not hasattr(naturaleza, 'es_declarante') or naturaleza.es_declarante is None:
-                datos_faltantes.append("condición de declarante")
+          
             if not hasattr(naturaleza, 'regimen_tributario') or naturaleza.regimen_tributario is None:
                 datos_faltantes.append("régimen tributario")
             if not hasattr(naturaleza, 'es_autorretenedor') or naturaleza.es_autorretenedor is None:
@@ -462,7 +790,11 @@ class LiquidadorRetencion:
                     f"Faltan datos: {', '.join(datos_faltantes)}. "
                     "Por favor adjunte el RUT para completar la información."
                 )
-                logger.warning(f"Datos faltantes del tercero: {datos_faltantes}")
+                resultado["puede_continuar"] = False
+                resultado["mensajes"].append(f"Datos faltantes de la naturaleza del tercero - NO se puede practicar retención : {datos_faltantes}")
+                logger.warning(f"Datos faltantes de la naturaleza del tercero: {datos_faltantes}")
+                return resultado
+                
             
         except AttributeError as e:
             logger.error(f"Error accediendo a atributos de naturaleza_tercero: {e}")
@@ -474,26 +806,33 @@ class LiquidadorRetencion:
         return resultado
     
     def _calcular_retencion_concepto(self, concepto_item: ConceptoIdentificado, 
-                                   valor_base_total: float, conceptos_retefuente: Dict) -> Dict[str, Any]:
+                                   conceptos_retefuente: Dict) -> Dict[str, Any]:
         """
-        Calcula retención para un concepto específico.
+        CORREGIDO: Calcula retención para un concepto específico usando SOLO su base gravable.
         
         Args:
-            concepto_item: Concepto identificado por Gemini
-            valor_base_total: Valor total de la factura
+            concepto_item: Concepto identificado por Gemini con base_gravable específica
             conceptos_retefuente: Diccionario de conceptos con tarifas y bases
             
         Returns:
             Dict con resultado del cálculo para este concepto
         """
         concepto_aplicado = concepto_item.concepto
-        base_concepto = concepto_item.base_gravable or valor_base_total
+        base_concepto = concepto_item.base_gravable  # CORRECCIÓN: Solo base específica
+
+        # VALIDACIÓN ESPECIAL: Base cero por falta de valor disponible
+        if base_concepto <= 0:
+            return {
+                "aplica_retencion": False,
+                "mensaje_error": f"{concepto_aplicado}: Sin base gravable disponible (${base_concepto:,.2f})",
+                "concepto": concepto_aplicado
+            }
         
         # Buscar concepto exacto en el diccionario
         if concepto_aplicado not in conceptos_retefuente:
             return {
                 "aplica_retencion": False,
-                "mensaje_error": f"Concepto '{concepto_aplicado}' no encontrado en la tabla de retefuente",
+                "mensaje_error": f"Concepto (IA) '{concepto_aplicado}' no encontrado en la tabla de retefuente",
                 "concepto": concepto_aplicado
             }
         
@@ -615,12 +954,15 @@ class LiquidadorRetencion:
                 concepto_descriptivo = "No aplica - base inferior al mínimo"
             elif "concepto" in primer_mensaje and "identificado" in primer_mensaje:
                 concepto_descriptivo = "No aplica - conceptos no identificados"
+            elif "faltantes" in primer_mensaje and "Datos" in primer_mensaje:
+                concepto_descriptivo = "No aplica - datos del tercero incompletos"
         
+        # 🆕 NUEVA ESTRUCTURA: Crear resultado con nueva estructura
         return ResultadoLiquidacion(
             valor_base_retencion=0,
             valor_retencion=0,
-            tarifa_aplicada=0,
-            concepto_aplicado=concepto_descriptivo,  # 🔧 FIX: Concepto descriptivo
+            conceptos_aplicados=[],  # 🆕 NUEVO: Lista vacía para casos sin retención
+            resumen_conceptos=concepto_descriptivo,  # 🆕 NUEVO: Descripción clara del motivo
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=False,
             mensajes_error=mensajes_error
@@ -676,37 +1018,76 @@ class LiquidadorRetencion:
         # Tomar el primer concepto identificado (para extranjeras normalmente es uno)
         concepto_principal = analisis_factura.conceptos_identificados[0]
 
+        # 🔧 CORRECCIÓN CRÍTICA: Usar base específica del concepto
         # Verificar si el concepto tiene tarifa aplicada (viene del prompt extranjero)
         if hasattr(concepto_principal, 'tarifa_aplicada') and concepto_principal.tarifa_aplicada > 0:
-            valor_base = concepto_principal.base_gravable or analisis_factura.valor_total or 0
+            # 🔧 CORREGIDO: Usar SOLO base_gravable del concepto
+            if not concepto_principal.base_gravable or concepto_principal.base_gravable <= 0:
+                # Si no tiene base específica, usar valor total como fallback
+                valor_base = analisis_factura.valor_total or 0
+                logger.warning(f"⚠️ Factura extranjera: Concepto sin base específica, usando valor total: ${valor_base:,.2f}")
+            else:
+                valor_base = concepto_principal.base_gravable
+                logger.info(f"💰 Factura extranjera: Usando base específica del concepto: ${valor_base:,.2f}")
+            
             valor_retencion = valor_base * concepto_principal.tarifa_aplicada
+            
+            # 🆕 NUEVA ESTRUCTURA: Crear detalle del concepto extranjero
+            detalle_concepto_extranjero = DetalleConcepto(
+                concepto=concepto_principal.concepto,
+                tarifa_retencion=concepto_principal.tarifa_aplicada * 100,  # Convertir a porcentaje
+                base_gravable=valor_base,
+                valor_retencion=valor_retencion
+            )
+            
+            # Generar resumen descriptivo
+            resumen_extranjero = f"{concepto_principal.concepto} ({concepto_principal.tarifa_aplicada*100:.1f}%)"
             
             resultado = ResultadoLiquidacion(
                 valor_base_retencion=valor_base,
                 valor_retencion=valor_retencion,
-                tarifa_aplicada=concepto_principal.tarifa_aplicada * 100,  # Convertir a porcentaje
-                concepto_aplicado=concepto_principal.concepto,
+                conceptos_aplicados=[detalle_concepto_extranjero],  # 🆕 NUEVO: Lista con concepto individual
+                resumen_conceptos=resumen_extranjero,  # 🆕 NUEVO: Resumen descriptivo
                 fecha_calculo=datetime.now().isoformat(),
                 puede_liquidar=True,
-                mensajes_error=[]
+                mensajes_error=[],
             )
             
             logger.info(f"Retención extranjera calculada: ${valor_retencion:,.0f} ({concepto_principal.tarifa_aplicada*100:.1f}%)")
             return resultado
         
-        # Si no tiene tarifa aplicada, usar tarifa estándar del concepto
-        valor_base = concepto_principal.base_gravable or analisis_factura.valor_total or 0
+        # 🔧 CORRECCIÓN CRÍTICA: Si no tiene tarifa aplicada, usar tarifa estándar del concepto
+        if not concepto_principal.base_gravable or concepto_principal.base_gravable <= 0:
+            # Si no tiene base específica, usar valor total como fallback
+            valor_base = analisis_factura.valor_total or 0
+            logger.warning(f"⚠️ Factura extranjera: Concepto sin base específica (tarifa estándar), usando valor total: ${valor_base:,.2f}")
+        else:
+            valor_base = concepto_principal.base_gravable
+            logger.info(f"💰 Factura extranjera: Usando base específica del concepto (tarifa estándar): ${valor_base:,.2f}")
+        
         tarifa_concepto = concepto_principal.tarifa_retencion  # Ya viene en decimal del prompt
         valor_retencion = valor_base * tarifa_concepto
+        
+        # 🆕 NUEVA ESTRUCTURA: Crear detalle del concepto extranjero (tarifa estándar)
+        detalle_concepto_estandar = DetalleConcepto(
+            concepto=concepto_principal.concepto,
+            tarifa_retencion=tarifa_concepto,
+            base_gravable=valor_base,
+            valor_retencion=valor_retencion
+        )
+        
+        # Generar resumen descriptivo
+        resumen_estandar = f"{concepto_principal.concepto} ({tarifa_concepto*100:.1f}%)"
         
         resultado = ResultadoLiquidacion(
             valor_base_retencion=valor_base,
             valor_retencion=valor_retencion,
-            tarifa_aplicada=tarifa_concepto * 100,  # Convertir a porcentaje para respuesta
-            concepto_aplicado=concepto_principal.concepto,
+            conceptos_aplicados=[detalle_concepto_estandar],  # 🆕 NUEVO: Lista con concepto individual
+            resumen_conceptos=resumen_estandar,  # 🆕 NUEVO: Resumen descriptivo
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=True,
-            mensajes_error=analisis_factura.observaciones
+            mensajes_error=analisis_factura.observaciones,
+
         )
         
         logger.info(f"Retención extranjera calculada: ${valor_retencion:,.0f} ({tarifa_concepto*100:.1f}%)")

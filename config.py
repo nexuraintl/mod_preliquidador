@@ -520,10 +520,7 @@ def calcular_limite_deduccion(tipo_deduccion: str, ingreso_bruto: float, valor_d
         return min(valor_deducido, limites["medicina_prepagada"] * UVT_2025)
     
     elif tipo_deduccion == "rentas_exentas":
-        # Solo aplica si el ingreso supera SMMLV
-        if ingreso_bruto <= SMMLV_2025:
-            return 0
-        
+        #AGREGAR CONDICION DE DIVIDIR EL MONTO IDENTIFICADO POR LA IA POR 12 
         limite_porcentaje = ingreso_bruto * limites["rentas_exentas_porcentaje"]
         limite_uvt_mensual = (limites["rentas_exentas_uvt_anual"] * UVT_2025) / 12
         return min(valor_deducido, limite_porcentaje, limite_uvt_mensual)

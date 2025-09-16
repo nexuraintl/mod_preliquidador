@@ -409,6 +409,7 @@ class InformacionArticulo383(BaseModel):
     calculo: Optional[CalculoArticulo383] = CalculoArticulo383()
 
 class AnalisisFactura(BaseModel):
+    aplica_retencion: bool  # 🆕 CAMPO SINCRONIZADO AGREGADO
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
     articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
@@ -417,14 +418,7 @@ class AnalisisFactura(BaseModel):
     iva: Optional[float]
     observaciones: List[str]
 
-class ResultadoLiquidacion(BaseModel):
-    valor_base_retencion: float
-    valor_retencion: float
-    tarifa_aplicada: float
-    concepto_aplicado: str
-    fecha_calculo: str
-    puede_liquidar: bool
-    mensajes_error: List[str]
+
 
 # ===============================
 #  FUNCIÓN DE LIQUIDACIÓN SEGURA DE RETEFUENTE
@@ -522,7 +516,6 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
         
         naturaleza_obj = NaturalezaTercero(
             es_persona_natural=naturaleza_data.get("es_persona_natural", None),
-            es_declarante=naturaleza_data.get("es_declarante", None),
             regimen_tributario=naturaleza_data.get("regimen_tributario", None),
             es_autorretenedor=naturaleza_data.get("es_autorretenedor", None),
             es_responsable_iva=naturaleza_data.get("es_responsable_iva", None)
@@ -530,8 +523,10 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
         
         # Crear objeto completo
         analisis_obj = AnalisisFactura(
+            aplica_retencion=datos_analisis.get("aplica_retencion", True),  # CAMPO OBLIGATORIO 
             conceptos_identificados=conceptos,
             naturaleza_tercero=naturaleza_obj,
+            articulo_383=datos_analisis.get("articulo_383", None),  #  CAMPO SINCRONIZADO 
             es_facturacion_exterior=datos_analisis.get("es_facturacion_exterior", False),
             valor_total=datos_analisis.get("valor_total", None),
             iva=datos_analisis.get("iva", None),
@@ -544,16 +539,18 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
         liquidador_retencion = LiquidadorRetencion()
         resultado = liquidador_retencion.liquidar_factura(analisis_obj, nit_administrativo)
         
-        # Convertir resultado a dict
+        #  CONVERTIR RESULTADO CON NUEVA ESTRUCTURA
         resultado_dict = {
             "aplica": resultado.puede_liquidar,
             "valor_retencion": resultado.valor_retencion,
-            "tarifa_aplicada": resultado.tarifa_aplicada,
-            "concepto": resultado.concepto_aplicado,
             "base_gravable": resultado.valor_base_retencion,
             "fecha_calculo": resultado.fecha_calculo,
             "observaciones": resultado.mensajes_error,
-            "calculo_exitoso": resultado.puede_liquidar
+            "calculo_exitoso": resultado.puede_liquidar,
+            #  NUEVOS CAMPOS CON ESTRUCTURA MEJORADA:
+            "conceptos_aplicados": [concepto.dict() for concepto in resultado.conceptos_aplicados] if resultado.conceptos_aplicados else [],
+            "resumen_conceptos": resultado.resumen_conceptos,
+            
         }
         
         if resultado.puede_liquidar:
@@ -598,6 +595,7 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
                 f"Error técnico: {str(e)}"
             ]
         }
+        
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -681,7 +679,7 @@ async def procesar_facturas_integrado(
         aplica_retencion = "RETENCION_FUENTE" in impuestos_aplicables
         aplica_estampilla = deteccion_impuestos["aplica_estampilla_universidad"]
         aplica_obra_publica = deteccion_impuestos["aplica_contribucion_obra_publica"]
-        aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # ✅ NUEVA VALIDACIÓN IVA
+        aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # VALIDACIÓN IVA
         
         # Determinar estrategia de procesamiento
         impuestos_a_procesar = []
@@ -959,7 +957,7 @@ async def procesar_facturas_integrado(
                 "nit_administrativo": nit_administrativo,
                 "nombre_entidad": nombre_entidad,
                 "timestamp": datetime.now().isoformat(),
-                "version": "2.4.0",
+                "version": "2.9.3",
                 "impuestos": {}  # NUEVA ESTRUCTURA PARA TODOS LOS IMPUESTOS
             }
             
@@ -995,23 +993,25 @@ async def procesar_facturas_integrado(
                         #  FIX: Manejar casos válidos sin retención correctamente
                         if resultado_retefuente_dict.get("calculo_exitoso", False) or not resultado_retefuente_dict.get("error"):
                             # Caso exitoso O caso válido sin retención
+                           
                             valor_retencion = resultado_retefuente_dict.get('valor_retencion', 0.0)
-                            concepto = resultado_retefuente_dict.get("concepto", "")
                             
+
                             if valor_retencion > 0:
                                 logger.info(f" Retefuente paralela liquidada: ${valor_retencion:,.2f}")
                             else:
-                                logger.info(f"Retefuente procesada (no aplica retención): {concepto}")
+                                logger.info(f"Retefuente procesada (no aplica retención)")
                             
                             # Crear objeto mock que simula ResultadoLiquidacion
                             resultado_retefuente = type('ResultadoLiquidacion', (object,), {
                                 'puede_liquidar': resultado_retefuente_dict.get("aplica", False),
-                                'valor_retencion': valor_retencion,
-                                'concepto_aplicado': concepto,
-                                'tarifa_aplicada': resultado_retefuente_dict.get("tarifa_aplicada", 0.0),
+                                'valor_retencion': resultado_retefuente_dict.get('valor_retencion', 0.0),
+                                'conceptos_aplicados': resultado_retefuente_dict.get("conceptos_aplicados", []),
                                 'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
                                 'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
-                                'mensajes_error': resultado_retefuente_dict.get("observaciones", [])
+                                'mensajes_error': resultado_retefuente_dict.get("observaciones", []),
+                                'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A")
+                          
                             })()
                         else:
                             # Solo registrar como error si realmente hay un error técnico
@@ -1022,25 +1022,25 @@ async def procesar_facturas_integrado(
                             resultado_retefuente = type('ResultadoLiquidacion', (object,), {
                                 'puede_liquidar': False,
                                 'valor_retencion': 0.0,
-                                'concepto_aplicado': "Error técnico en liquidación",
-                                'tarifa_aplicada': 0.0,
+                                'conceptos_aplicados': ["Error técnico en liquidación"],
                                 'valor_base_retencion': 0.0,
                                 'fecha_calculo': datetime.now().isoformat(),
-                                'mensajes_error': [error_msg]
+                                'mensajes_error': [error_msg],
+                                'resumen_conceptos': 'N/A'
                             })()
                     
-                    #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["retefuente"]
+                    #  ESTRUCTURA FINAL CONSOLIDADA
                     if hasattr(resultado_retefuente, 'valor_retencion'):
+                        
                         resultado_final["impuestos"]["retefuente"] = {
-                            "aplica": resultado_retefuente.puede_liquidar,
-                            "valor_retencion": resultado_retefuente.valor_retencion,
-                            "concepto": resultado_retefuente.concepto_aplicado,
-                            "tarifa_retencion": resultado_retefuente.tarifa_aplicada,
-                            "valor_base": resultado_retefuente.valor_base_retencion,
-                            "fecha_calculo": resultado_retefuente.fecha_calculo,
-                            "mensajes_error": resultado_retefuente.mensajes_error
+                        "aplica": resultado_retefuente_dict.get("aplica", False),
+                        "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
+                        "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
+                        "mensajes_error": resultado_retefuente_dict.get("observaciones", []),
+                        "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
                         }
-                        logger.info(f" Retefuente liquidada: ${resultado_retefuente.valor_retencion:,.2f}")
+                        logger.info(f" Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0.0):,.2f}")
+
                     else:
                         # Es un diccionario (resultado de consorcio)
                         resultado_final["impuestos"]["retefuente"] = resultado_retefuente
@@ -1230,7 +1230,7 @@ async def procesar_facturas_integrado(
                         "nit_administrativo": nit_administrativo,
                         "nombre_entidad": nombre_entidad,
                         "timestamp": datetime.now().isoformat(),
-                        "version": "2.4.0",
+                        "version": "2.9.3",
                         "impuestos": {
                             "retefuente": resultado_liquidacion,  # Viene como dict del consorcio
                             "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
@@ -1309,33 +1309,41 @@ async def procesar_facturas_integrado(
                             'mensajes_error': [error_msg]
                         })()
                     
-                    #  NUEVA ESTRUCTURA: Crear resultado con estructura "impuestos"
+                    #  🆕 NUEVA ESTRUCTURA: Usar directamente el diccionario con nueva estructura
                     resultado_final = {
                         "procesamiento_paralelo": False,
                         "impuestos_procesados": ["RETENCION_FUENTE"],
                         "nit_administrativo": nit_administrativo,
                         "nombre_entidad": nombre_entidad,
                         "timestamp": datetime.now().isoformat(),
-                        "version": "2.4.0",
+                        "version": "2.9.3",
                         "impuestos": {
                             "retefuente": {
-                                "aplica": resultado_liquidacion.puede_liquidar,
-                                "valor_retencion": resultado_liquidacion.valor_retencion,
-                                "concepto": resultado_liquidacion.concepto_aplicado,
-                                "tarifa_retencion": resultado_liquidacion.tarifa_aplicada,
-                                "valor_base": resultado_liquidacion.valor_base_retencion,
-                                "fecha_calculo": resultado_liquidacion.fecha_calculo,
-                                "mensajes_error": resultado_liquidacion.mensajes_error
+                                # 🆕 USAR DIRECTAMENTE EL DICCIONARIO CON NUEVA ESTRUCTURA
+                                "aplica": resultado_retefuente_dict.get("aplica", False),
+                                "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
+                                "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
+                                "fecha_calculo": resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
+                                "mensajes_error": resultado_retefuente_dict.get("observaciones", []),
+                                # 🆕 NUEVOS CAMPOS CON ESTRUCTURA MEJORADA:
+                                "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
+                                "resumen_conceptos": resultado_retefuente_dict.get("resumen_conceptos", "N/A"),
+                                # 🗑️ CAMPOS DEPRECATED (mantenidos por compatibilidad):
+                                "concepto": resultado_retefuente_dict.get("concepto", "N/A"),
+                                "tarifa_retencion": resultado_retefuente_dict.get("tarifa_aplicada", 0.0)
                             },
                             "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
                             "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
                             "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
                         },
-                        #  CAMPOS LEGACY (compatibilidad temporal)
-                        "aplica_retencion": resultado_liquidacion.puede_liquidar,
-                        "valor_retencion": resultado_liquidacion.valor_retencion,
-                        "concepto": resultado_liquidacion.concepto_aplicado,
-                        "tarifa_retencion": resultado_liquidacion.tarifa_aplicada
+                        #  CAMPOS LEGACY (compatibilidad temporal) - 🆕 TAMBIÉN CON NUEVA ESTRUCTURA
+                        "aplica_retencion": resultado_retefuente_dict.get("aplica", False),
+                        "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
+                        "concepto": resultado_retefuente_dict.get("concepto", "N/A"),
+                        "tarifa_retencion": resultado_retefuente_dict.get("tarifa_aplicada", 0.0),
+                        # 🆕 NUEVOS CAMPOS LEGACY TAMBIÉN DISPONIBLES:
+                        "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
+                        "resumen_conceptos": resultado_retefuente_dict.get("resumen_conceptos", "N/A")
                     }
                     
                     #  AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
@@ -1367,7 +1375,7 @@ async def procesar_facturas_integrado(
                     "nit_administrativo": nit_administrativo,
                     "nombre_entidad": nombre_entidad,
                     "timestamp": datetime.now().isoformat(),
-                    "version": "2.4.0",
+                    "version": "2.9.3",
                     "impuestos": {
                         "iva_reteiva": convertir_resultado_a_dict(resultado_iva_completo),
                         "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
@@ -1407,7 +1415,7 @@ async def procesar_facturas_integrado(
                     "nit_administrativo": nit_administrativo,
                     "nombre_entidad": nombre_entidad,
                     "timestamp": datetime.now().isoformat(),
-                    "version": "2.4.0",
+                    "version": "2.9.3",
                     "impuestos": {
                         **{k: v for k, v in resultado_estampilla.items() if k in ["estampilla_universidad", "contribucion_obra_publica"]},
                         "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},

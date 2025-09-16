@@ -165,17 +165,163 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
         str: Prompt formateado para enviar a Gemini
     """
     
-    # Importar constantes del Artículo 383
-    from config import obtener_constantes_articulo_383
-    constantes_art383 = obtener_constantes_articulo_383()
+    
     
     return f"""
-    Eres un experto contador colombiano especializado en retención en la fuente que trabaja para la FIDUCIARIA FIDUCOLDEX (las FIDUCIARIA Tiene varios NITS administrados), tu trabajo es aplicar las retenciones a las empresas (terceros) que emiten las FACTURAS. 
-    
-    CONCEPTOS DE RETEFUENTE QUE DEBES IDENTIFICAR (con base mínima y tarifa exacta):
-    {json.dumps(conceptos_dict, indent=2, ensure_ascii=False)}
-    
-    **ARTÍCULO 383 - PERSONAS NATURALES (TARIFAS PROGRESIVAS):**
+Eres un sistema de análisis tributario colombiano para FIDUCIARIA FIDUCOLDEX.
+Tu función es IDENTIFICAR con PRECISIÓN conceptos de retención en la fuente y naturaleza del tercero.
+
+ REGLA FUNDAMENTAL: SOLO usa información EXPLÍCITAMENTE presente en los documentos.
+ NUNCA inventes, asumas o deduzcas información no visible.
+ Si no encuentras un dato, usa NULL o el valor por defecto especificado.
+
+═══════════════════════════════════════════════════════════════════
+ CONCEPTOS VÁLIDOS DE RETENCIÓN (USA SOLO ESTOS):
+═══════════════════════════════════════════════════════════════════
+{json.dumps(conceptos_dict, indent=2, ensure_ascii=False)}
+
+═══════════════════════════════════════════════════════════════════
+ DOCUMENTOS PROPORCIONADOS:
+═══════════════════════════════════════════════════════════════════
+
+{_generar_seccion_archivos_directos(nombres_archivos_directos)}
+
+FACTURA PRINCIPAL:
+{factura_texto}
+
+RUT DEL TERCERO:
+{rut_texto if rut_texto else "[NO PROPORCIONADO]"}
+
+ANEXOS Y DETALLES:
+{anexos_texto if anexos_texto else "[NO PROPORCIONADOS]"}
+
+COTIZACIONES:
+{cotizaciones_texto if cotizaciones_texto else "[NO PROPORCIONADAS]"}
+
+OBJETO DEL CONTRATO:
+{anexo_contrato if anexo_contrato else "[NO PROPORCIONADO]"}
+
+═══════════════════════════════════════════════════════════════════
+ PROTOCOLO DE ANÁLISIS ESTRICTO:
+═══════════════════════════════════════════════════════════════════
+
+ PASO 1: VERIFICACIÓN DEL RUT
+├─ Si RUT existe → Continuar al PASO 2
+└─ Si RUT NO existe → DETENER análisis con:
+   {{
+     "aplica_retencion": false,
+     "estado": "Preliquidacion sin finalizar",
+     "observaciones": ["RUT no disponible en documentos adjuntos"]
+   }}
+
+ PASO 2: EXTRACCIÓN DE DATOS DEL RUT (SOLO del documento RUT)
+Buscar TEXTUALMENTE en el RUT:
+
+ TIPO DE CONTRIBUYENTE (Sección 24 o equivalente):
+├─ Si encuentras "Persona natural" → es_persona_natural: true
+├─ Si encuentras "Persona jurídica" → es_persona_natural: false
+└─ Si NO encuentras → es_persona_natural: null
+
+ RÉGIMEN TRIBUTARIO (Buscar texto exacto):
+├─ Si encuentras "RÉGIMEN SIMPLE" o "SIMPLE" → regimen_tributario: "SIMPLE"
+├─ Si encuentras "RÉGIMEN ORDINARIO" u "ORDINARIO" → regimen_tributario: "ORDINARIO"
+├─ Si encuentras "RÉGIMEN ESPECIAL", "ESPECIAL" o "SIN ÁNIMO DE LUCRO" → regimen_tributario: "ESPECIAL"
+└─ Si NO encuentras → regimen_tributario: null
+
+ AUTORRETENEDOR:
+├─ Si encuentras texto "ES AUTORRETENEDOR" → es_autorretenedor: true
+└─ Si NO encuentras esa frase → es_autorretenedor: false
+
+
+ RESPONSABLE DE IVA (Sección Responsabilidades):
+├─ Si encuentras "NO RESPONSABLE DE IVA" o "49 - No responsable de IVA" → es_responsable_iva: false
+├─ Si encuentras "RESPONSABLE DE IVA" (sin el NO) → es_responsable_iva: true
+└─ Si NO encuentras ninguna mención → es_responsable_iva: null
+
+ PASO 3: VALIDACIÓN DE CONDICIONES DE NO APLICACIÓN
+Verificar si aplica alguna condición de exclusión:
+
+ NO APLICA RETENCIÓN SI:
+├─ regimen_tributario == "SIMPLE" → estado: "no aplica impuesto"
+├─ es_autorretenedor == true → estado: "no aplica impuesto"
+├─ es_responsable_iva == false → estado: "no aplica impuesto"
+└─ Cualquier campo crítico == null → estado: "Preliquidacion sin finalizar"
+
+ PASO 4: IDENTIFICACIÓN DE CONCEPTOS 
+
+ REGLAS DE IDENTIFICACIÓN:
+1. Buscar PRIMERO en la factura principal
+2. Si la factura no tiene detalle, buscar en ANEXOS
+3. Comparar texto encontrado con nombres en CONCEPTOS VÁLIDOS
+
+ MATCHING DE CONCEPTOS - ESTRICTO:
+├─ Si encuentras coincidencia EXACTA → usar ese concepto
+├─ Si encuentras coincidencia PARCIAL clara → usar el concepto más específico
+├─ Si NO hay coincidencia clara → "CONCEPTO_NO_IDENTIFICADO"
+└─ NUNCA inventes un concepto que no esté en la lista
+
+ EXTRACCIÓN DE VALORES:
+├─ Usar SOLO valores numéricos presentes en documentos
+├─ Si hay múltiples conceptos → extraer cada valor por separado
+├─ Si solo hay total → usar ese valor para el concepto principal
+├─ NUNCA calcules o inventes valores
+└─ "valor_total" es el valor total de la factura
+
+ PASO 5: VALIDACIÓN DE COHERENCIA
+├─ Verificar que IVA en factura coincida con es_responsable_iva del RUT
+├─ Si hay incongruencia → estado: "Preliquidacion sin finalizar" + observación
+└─ Documentar TODA anomalía en observaciones
+
+═══════════════════════════════════════════════════════════════════
+ PROHIBICIONES ABSOLUTAS:
+═══════════════════════════════════════════════════════════════════
+ NO inventes información no presente en documentos
+ NO asumas valores por defecto excepto los especificados
+ NO modifiques nombres de conceptos del diccionario
+ NO calcules valores no mostrados
+ NO deduzcas el régimen tributario por el tipo de empresa
+ NO asumas que alguien es autorretenedor sin confirmación explícita
+ NO uses información de la factura para determinar responsabilidad IVA
+
+═══════════════════════════════════════════════════════════════════
+ FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO):
+═══════════════════════════════════════════════════════════════════
+{{
+    "aplica_retencion": boolean,
+    "estado": "Preliquidado" | "no aplica impuesto" | "Preliquidacion sin finalizar",
+    "conceptos_identificados": [
+        {{
+            "concepto": "Nombre exacto del diccionario o CONCEPTO_NO_IDENTIFICADO",
+            "tarifa_retencion": número o 0.0,
+            "base_gravable": número encontrado o 0.0
+        }}
+    ],
+    "naturaleza_tercero": {{
+        "es_persona_natural": true | false | null,
+        "regimen_tributario": "SIMPLE" | "ORDINARIO" | "ESPECIAL" | null,
+        "es_autorretenedor": true | false,
+        "es_responsable_iva": true | false | null
+    }},
+    "es_facturacion_exterior": boolean,
+    "valor_total": número encontrado o 0.0,
+    "iva": número encontrado o 0.0,
+    "observaciones": ["Lista de observaciones relevantes"]
+}}
+
+ RESPONDE ÚNICAMENTE CON EL JSON. SIN EXPLICACIONES ADICIONALES.
+
+    """
+def PROMPT_ANALISIS_ART_383(factura_texto: str, rut_texto: str, anexos_texto: str, 
+                            cotizaciones_texto: str, anexo_contrato: str,
+                            nombres_archivos_directos: List[str] = None, conceptos_identificados: List = None) -> str:
+
+      # Importar constantes del Artículo 383
+    from config import obtener_constantes_articulo_383
+    constantes_art383 = obtener_constantes_articulo_383()
+
+    return f"""
+
+   **ARTÍCULO 383 - PERSONAS NATURALES (TARIFAS PROGRESIVAS):**
     UVT 2025: ${constantes_art383['uvt_2025']:,}
     SMMLV 2025: ${constantes_art383['smmlv_2025']:,}
     
@@ -188,6 +334,8 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
     Límites de deducciones Art. 383:
     {json.dumps(constantes_art383['limites_deducciones'], indent=2, ensure_ascii=False)}
     
+Eres un experto contador colombiano especializado en retención en la fuente que trabaja para la FIDUCIARIA FIDUCOLDEX , Tu tarea es revisar los documentos para determinar si aplica el artículo 383 del Estatuto Tributario para personas naturales, con el fin de reducir la carga tributaria del impuesto retencion en la fuente.
+
     DOCUMENTOS DISPONIBLES:
     {_generar_seccion_archivos_directos(nombres_archivos_directos)}
     
@@ -206,68 +354,24 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
     ANEXO CONCEPTO CONTRATO (OBJETO DEL CONTRATO):
     {anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
     
-    INSTRUCCIONES CRÍTICAS:
-    1.  **ESTRATEGIA DE ANÁLISIS**:
-       - Primero revisa la FACTURA para identificar conceptos
-       - Si la FACTURA solo muestra valores generales SIN DETALLE, revisa los ANEXOS y COTIZACIONES
-       - Los ANEXOS frecuentemente contienen el desglose detallado de cada concepto
-       - Las COTIZACIONES pueden mostrar la descripción específica de servicios/productos
-       - El objeto del contrato te puede ayudar a identificar cuales son los servicios que   se están prestando o cobrando en la factura.
-       -Para identificar la naturaleza del tercero, siempre revisa en el siguiente orden primero el RUT, despues la factura, despues los ANEXOS
-    
-    2.  **IDENTIFICACIÓN DE CONCEPTOS**:
-       - Usa el NOMBRE EXACTO del concepto como aparece en el diccionario
-       - Si encuentras servicios específicos en anexos, mapea al concepto más cercano del diccionario
-       - Si hay valores distribuidos por concepto en anexos, especifica la base_gravable para cada uno
-       - Si solo hay un valor total, usa ese valor para el concepto identificado
-       -Si hay mas de un concepto en la factura, identifica cada uno de los conceptos y sus valores
-    
-    3.  **VALIDACIONES**:
-       - Verifica que el valor supere la base mínima del concepto
-       - NO inventes o modifiques nombres de conceptos
-       - Si hay dudas entre conceptos similares, elige el más específico
-    
-    4.  **NATURALEZA DEL TERCERO - CRÍTICO PARA RETENCIÓN**:
-       - Busca esta información principalmente en el RUT (si esta disponible VERIFICALO EN LA SECCION RESPONSABILIDADES, CALIDADES Y ATRIBUTOS DEL RUT), si NO se adjunto el RUT verifica la naturaleza en la FACTURA o en los ANEXOS. 
-       - ¿Es persona natural o jurídica?
-       - ¿Es declarante de renta?
-       - ¿Qué régimen tributario? (Simple/Ordinario/Especial) 
-       - ¿Es autorretenedor?
-       - **¿Es responsable de IVA?** (CRÍTICO: Si NO es responsable de IVA, NO se le aplica retención en la fuente)
-       
-       **IMPORTANTE SOBRE AUTORRETENDOR**
-       -Si en el RUT NO MENCIONA que el contribuyente ES AUTORRETENDOR, ese contribuyente NO es AUTORRETENDEDOR.
-       
-       **IMPORTANTE SOBRE RÉGIMEN TRIBUTARIO:**
-       - **Régimen Simple**: Personas naturales con ingresos bajos, NO aplica retención en la fuente
-       - **Régimen Ordinario**:  SÍ aplica retención en la fuente
-       - **Régimen Especial**: Entidades sin ánimo de lucro, fundaciones, universidades, etc. SÍ aplica retención (igual que ordinario)
-       
-       **IDENTIFICADORES EN EL RUT - USA EL VALOR EXACTO:**
-       - Busca "RÉGIMEN SIMPLE" o "SIMPLE" → regimen_tributario: "SIMPLE"
-       - Busca "RÉGIMEN ORDINARIO" o "ORDINARIO" → regimen_tributario: "ORDINARIO"
-       - Busca "RÉGIMEN ESPECIAL" o "ESPECIAL" o "SIN ÁNIMO DE LUCRO" →   regimen_tributario: "ESPECIAL"
-       - BUSCA "Persona natural o sucesión ilíquida" → "es_persona_natural": true
-       - BUSCA "Persona natural" → "es_persona_natural": true
-       - BUSCA "49 - No responsable de IVA" → "es_responsable_iva": false
-       
-       **IMPORTANTE:** NO generalices. Si encuentras "RÉGIMEN ESPECIAL" usa "ESPECIAL", NO "ORDINARIO".
-       Aunque el tratamiento tributario sea igual, debes mantener la diferenciación específica.
-       
-       **IMPORTANTE SOBRE RESPONSABLE DE IVA:**
-       - Si en el RUT aparece "NO RESPONSABLE DE IVA" o "NO RESPONSABLE DEL RÉGIMEN COMÚN DEL IVA", marca es_responsable_iva: false
-       - Si aparece "RESPONSABLE DE IVA" o "RESPONSABLE DEL RÉGIMEN COMÚN DEL IVA", marca es_responsable_iva: true
-       - Si no encuentras información clara sobre IVA, marca como null
-       - En personas naturales, busca si están en régimen simple (no responsables de retencion en la fuente) o común (responsables de retencion en la fuente)
-    
-    5.  **ARTÍCULO 383 - VALIDACIÓN PARA PERSONAS NATURALES**:
+
+      **ARTÍCULO 383 - VALIDACIÓN PARA PERSONAS NATURALES**:
         SOLO aplica si se cumplen TODAS estas condiciones:
         
         **CONDICIONES OBLIGATORIAS:**
         - El tercero es PERSONA NATURAL
         - El concepto corresponde a: honorarios, prestación de servicios, diseños, comisiones, viáticos
         - Conceptos aplicables exactos: {constantes_art383['conceptos_aplicables']}
+
+        **VALIDA si los conceptos facturados Aplican a Art. 383 con base a la lista de los Conceptos que aplican para Art. 383**:
+        Conceptos Facturados: {conceptos_identificados}
+        -Si los Conceptos Facturados  NO tienen relacion con los Conceptos que aplican para Art. 383, entonces NO aplica Art. 383, responde "aplica": false,
         
+        
+         **IMPORTANTE SOBRE PERSONA NATURAL O JURÍDICA:**
+       En el RUT, busca la seccion 24. Tipo de contribuyente, Si dice "Persona natural", "natural" o "Persona natural o sucesión ilíquida "  →  es_persona_natural: true
+       
+
         **DETECCIÓN DE PRIMER PAGO** (BUSCAR EN FACTURA Y ANEXOS):
         Identifica si es el primer pago del contrato buscando indicadores como:
         - "primer pago", "pago inicial", "anticipo", "pago adelantado"
@@ -279,8 +383,8 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
         **SOPORTES OBLIGATORIOS A BUSCAR EN LOS ANEXOS:**
         a) Planilla de aportes a salud y pensión (máximo 2 meses antigüedad):
            - **PRIMER PAGO**: NO es obligatoria, pero verificar si está presente
-           - **PAGOS POSTERIORES**: SÍ es obligatoria
-           - Debe ser sobre el 40% del valor del ingreso
+           - **PAGOS POSTERIORES AL PRIMER PAGO**: SÍ es obligatoria
+           - Debe ser sobre el 40% del valor del ingreso que aparece en la CUENTA DE COBRO
            - Si el ingreso NO supera $1,423,500 (SMMLV), esta condición no cuenta
            
         b) Cuenta de cobro (honorarios, comisiones, prestación de servicios) - SIEMPRE OBLIGATORIA
@@ -318,45 +422,11 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
         - 360 a 640 UVT: 33%
         - 640 a 945 UVT: 35%
         - 945 a 2300 UVT: 37%
-        - 2300 UVT en adelante: 39%
         
-    6.  **VALORES MONETARIOS**:
-       - Extrae valores totales de la factura
-       - Si hay desglose en anexos, suma los valores por concepto
-       - Identifica IVA si está presente
-    
-    EJEMPLOS DE USO DE ANEXOS:
-    - Factura: "Servicios profesionales $5,000,000"
-    - Anexo: "Detalle: Asesoría legal $3,000,000 + Consultoria técnica $2,000,000"
-    - Resultado: Identificar "Honorarios y comisiones por servicios" con base en el detalle del anexo
-    
-    IMPORTANTE:
-    - Si NO puedes identificar un concepto específico, indica "CONCEPTO_NO_IDENTIFICADO"
-    - Si la facturación es fuera de Colombia, marca es_facturacion_exterior: true
-    - Si no puedes determinar la naturaleza del tercero, marca como null
-    - Para regimen_tributario usa EXACTAMENTE: "SIMPLE", "ORDINARIO" o "ESPECIAL" según lo que encuentres en el RUT
-    - NO generalices régimen especial como ordinario - mantén la diferenciación específica
-    - Para Art. 383: Si faltan soportes obligatorios, aplicar tarifa convencional
-    - EL DOCUMENTO " SOPORTE EN ADQUISICIONES EFECTUADAS A NO OBLIGADOS A FACTURAR " ES EQUIVALENTE A UNA " FACTURA ".
-    
-    
-    RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
-    {{
-        "conceptos_identificados": [
-            {{
-                "concepto": "nombre exacto del concepto o CONCEPTO_NO_IDENTIFICADO",
-                "tarifa_retencion": 0.0,
-                "base_gravable": 0.0
-            }}
-        ],
-        "naturaleza_tercero": {{
-            "es_persona_natural": false,
-            "es_declarante": true,
-            "regimen_tributario": "ESPECIAL",  // USA EXACTAMENTE lo que encuentres: "SIMPLE", "ORDINARIO" o "ESPECIAL"
-            "es_autorretenedor": false,
-            "es_responsable_iva": true
-        }},
-        "articulo_383": {{
+        - 2300 UVT en adelante: 39%
+        IMPORTANTE : - Para Art. 383: Si faltan soportes obligatorios -> "aplica": false,
+
+        "articulo_383":{{
             "aplica": false,
             "condiciones_cumplidas": {{
                 "es_persona_natural": false,
@@ -386,25 +456,10 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
                     "tiene_soporte": false,
                     "limite_aplicable": 0.0
                 }}
-            }},
-            "calculo": {{
-                "ingreso_bruto": 0.0,
-                "aportes_seguridad_social": 0.0,
-                "total_deducciones": 0.0,
-                "deducciones_limitadas": 0.0,
-                "base_gravable_final": 0.0,
-                "base_gravable_uvt": 0.0,
-                "tarifa_aplicada": 0.0,
-                "valor_retencion_art383": 0.0
             }}
-        }},
-        "es_facturacion_exterior": false,
-        "valor_total": 0.0,
-        "iva": 0.0,
-        "observaciones": ["observación 1", "observación 2"]
-    }}
+            }}
     """
-
+    
 def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: str, 
                               cotizaciones_texto: str, anexo_contrato: str, conceptos_dict: dict,
                               nombres_archivos_directos: List[str] = None) -> str:
@@ -1153,10 +1208,10 @@ def PROMPT_ANALISIS_IVA(factura_texto: str, rut_texto: str, anexos_texto: str,
 Eres un experto contador colombiano especializado en IVA y ReteIVA que trabaja para FIDUCIARIA FIDUCOLDEX.
 Tu tarea es analizar documentos para determinar:
 
-1. 💰 IDENTIFICACIÓN Y EXTRACCIÓN DEL IVA
-2. 📝 VALIDACIÓN DE RESPONSABILIDAD DE IVA EN EL RUT
-3. 🌍 DETERMINACIÓN DE FUENTE DE INGRESO (NACIONAL/EXTRANJERA)
-4. 📊 CÁLCULO DE RETEIVA
+1.  IDENTIFICACIÓN Y EXTRACCIÓN DEL IVA
+2.  VALIDACIÓN DE RESPONSABILIDAD DE IVA EN EL RUT
+3.  DETERMINACIÓN DE FUENTE DE INGRESO (NACIONAL/EXTRANJERA)
+4.  CÁLCULO DE RETEIVA
 
 CONFIGURACIÓN DE BIENES Y SERVICIOS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1196,7 +1251,7 @@ ANEXO CONCEPTO CONTRATO (OBJETO DEL CONTRATO):
 INSTRUCCIONES CRÍTICAS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. 💰 **IDENTIFICACIÓN DEL IVA EN LA FACTURA**:
+1.  **IDENTIFICACIÓN DEL IVA EN LA FACTURA**:
    • Analiza el texto de la factura para identificar si menciona IVA
    
    • **ESCENARIO 1**: La factura menciona la totalidad del IVA → Extraer porcentaje y valor

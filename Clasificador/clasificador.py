@@ -59,7 +59,6 @@ class ConceptoIdentificado(BaseModel):
 
 class NaturalezaTercero(BaseModel):
     es_persona_natural: Optional[bool] = None
-    es_declarante: Optional[bool] = None
     regimen_tributario: Optional[str] = None  # SIMPLE, ORDINARIO, ESPECIAL
     es_autorretenedor: Optional[bool] = None
     es_responsable_iva: Optional[bool] = None  # NUEVA VALIDACIÓN
@@ -97,12 +96,12 @@ class InformacionArticulo383(BaseModel):
     aplica: bool = False
     condiciones_cumplidas: CondicionesArticulo383 = CondicionesArticulo383()
     deducciones_identificadas: DeduccionesArticulo383 = DeduccionesArticulo383()
-    calculo: CalculoArticulo383 = CalculoArticulo383()
 
 class AnalisisFactura(BaseModel):
+    aplica_retencion: bool
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
-    articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
+    articulo_383: Optional[InformacionArticulo383] = None  # 🆕 NUEVO CAMPO SINCRONIZADO
     es_facturacion_exterior: bool
     valor_total: Optional[float]
     iva: Optional[float]
@@ -130,7 +129,7 @@ class ProcesadorGemini:
         
         # Configurar modelo con configuración estándar
         self.modelo = genai.GenerativeModel(
-            'gemini-2.5-flash-lite',
+            'gemini-2.5-flash',
             generation_config=genai.types.GenerationConfig(
                 temperature=0.4,
                 max_output_tokens=65536,
@@ -693,6 +692,51 @@ class ProcesadorGemini:
             # Guardar respuesta de análisis en Results
             await self._guardar_respuesta("analisis_factura.json", resultado)
             
+            #  NUEVO: ANÁLISIS SEPARADO DEL ARTÍCULO 383 PARA PERSONAS NATURALES
+            if (resultado.get("naturaleza_tercero") and 
+                resultado["naturaleza_tercero"].get("es_persona_natural") == True and resultado["aplica_retencion"] == True):
+                
+                logger.info(" PERSONA NATURAL detectada - Iniciando análisis separado del Artículo 383")
+                
+                try:
+                    # Segunda llamada a Gemini con prompt específico de Art 383
+                    conceptos_identificados = [ConceptoIdentificado(**c) for c in resultado.get("conceptos_identificados", [])]
+                    
+                    analisis_art383 = await self._analizar_articulo_383(
+                        factura_texto, rut_texto, anexos_texto, 
+                        cotizaciones_texto, anexo_contrato, archivos_directos, cache_archivos, conceptos_identificados
+                    )
+                    
+                    # Integrar resultado del Art 383 en el resultado principal
+                    resultado["articulo_383"] = analisis_art383
+                    
+                    # Guardar análisis combinado
+                    resultado_combinado = {
+                        "timestamp": datetime.now().isoformat(),
+                        "analisis_retefuente": resultado,
+                        "analisis_art383_separado": analisis_art383,
+                        "persona_natural_detectada": True
+                    }
+                    await self._guardar_respuesta("analisis_factura_con_art383.json", resultado_combinado)
+                    
+                    logger.info(f"✅ Análisis Art 383 completado: aplica={analisis_art383.get('aplica', False)}")
+                    
+                except Exception as e:
+                    logger.error(f" Error en análisis Art 383: {e}")
+                    # Si falla el análisis del Art 383, continuar sin él
+                    resultado["articulo_383"] = {
+                        "aplica": False,
+                        "error": str(e),
+                        "observaciones": ["Error procesando Artículo 383 - usar tarifa convencional"]
+                    }
+            else:
+                # No es persona natural, no se analiza Art 383
+                resultado["articulo_383"] = {
+                    "aplica": False,
+                    "razon": "No es persona natural o no se pudo determinar"
+                }
+                logger.info(" NO es persona natural - Artículo 383 no aplica - no aplica retefuente")
+            
             # Crear objeto AnalisisFactura
             analisis = AnalisisFactura(**resultado)
             logger.info(f"Análisis exitoso: {len(analisis.conceptos_identificados)} conceptos identificados")
@@ -707,6 +751,219 @@ class ProcesadorGemini:
         except Exception as e:
             logger.error(f"Error en análisis de factura: {e}")
             raise ValueError(f"Error analizando factura: {str(e)}")
+    
+    async def _analizar_articulo_383(self, factura_texto: str, rut_texto: str, anexos_texto: str, 
+                                   cotizaciones_texto: str, anexo_contrato: str,
+                                   archivos_directos: List[UploadFile] = None, 
+                                   cache_archivos: Dict[str, bytes] = None, conceptos_identificados: List[ConceptoIdentificado] = None) -> Dict[str, Any]:
+        """
+        🆕 NUEVA FUNCIÓN: Análisis separado del Artículo 383 para personas naturales.
+        
+        Esta función realiza una segunda llamada a Gemini específicamente para analizar
+        si aplica el Artículo 383 del Estatuto Tributario con tarifas progresivas.
+        
+        Args:
+            factura_texto: Texto extraído de la factura principal
+            rut_texto: Texto del RUT (si está disponible)
+            anexos_texto: Texto de anexos adicionales
+            cotizaciones_texto: Texto de cotizaciones
+            anexo_contrato: Texto del anexo de concepto de contrato
+            archivos_directos: Lista de archivos para envío directo a Gemini
+            cache_archivos: Cache de archivos para workers paralelos
+            
+        Returns:
+            Dict[str, Any]: Análisis completo del Artículo 383
+            
+        Raises:
+            ValueError: Si hay error en el procesamiento con Gemini
+        """
+        logger.info(" Iniciando análisis separado del Artículo 383")
+        
+        try:
+            # 💾 USAR CACHE SI ESTÁ DISPONIBLE (para workers paralelos)
+            archivos_directos = archivos_directos or []
+            if cache_archivos:
+                logger.info(f"📄 Art 383 usando cache de archivos: {len(cache_archivos)} archivos")
+                archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
+            elif archivos_directos:
+                logger.info(f"📄 Art 383 usando archivos directos originales: {len(archivos_directos)} archivos")
+            
+            # ✅ CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
+            nombres_archivos_directos = []
+            for archivo in archivos_directos:
+                try:
+                    if hasattr(archivo, 'filename') and archivo.filename:
+                        nombres_archivos_directos.append(archivo.filename)
+                    else:
+                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                except Exception as e:
+                    logger.warning(f" Error obteniendo nombre de archivo: {e}")
+                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+            
+            # Importar el prompt específico del Art 383
+            from .prompt_clasificador import PROMPT_ANALISIS_ART_383
+            
+            # Generar prompt específico para Art 383
+            prompt_art383 = PROMPT_ANALISIS_ART_383(
+                factura_texto, rut_texto, anexos_texto, 
+                cotizaciones_texto, anexo_contrato, nombres_archivos_directos, conceptos_identificados
+            )
+            
+            logger.info(" Llamando a Gemini para análisis específico del Artículo 383")
+            
+            # Decidir estrategia: HÍBRIDO vs TRADICIONAL
+            usar_hibrido = len(archivos_directos) > 0 or bool(cache_archivos)
+            
+            if usar_hibrido:
+                logger.info(" Usando análisis HÍBRIDO para Art 383")
+                respuesta = await self._llamar_gemini_hibrido_factura(prompt_art383, archivos_directos)
+            else:
+                logger.info(" Usando análisis TRADICIONAL para Art 383")
+                respuesta = await self._llamar_gemini(prompt_art383)
+            
+            logger.info(f"📋 Respuesta Art 383 recibida: {len(respuesta):,} caracteres")
+            
+            # Limpiar respuesta si viene con texto extra
+            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
+            
+            # Parsear JSON
+            resultado_art383 = json.loads(respuesta_limpia)
+            
+            # Guardar respuesta de análisis Art 383 por separado
+            await self._guardar_respuesta("analisis_art383_separado.json", resultado_art383)
+            # Extraer el diccionario  del Art 383
+            resultado_art383 = resultado_art383["articulo_383"]
+            # Validar estructura mínima del resultado
+            campos_requeridos = ["aplica", "condiciones_cumplidas", "deducciones_identificadas"]
+            for campo in campos_requeridos:
+                if campo not in resultado_art383:
+                    logger.warning(f"⚠️ Campo '{campo}' no encontrado en respuesta Art 383")
+                    resultado_art383[campo] = self._obtener_campo_art383_default(campo)
+            
+            # Extraer información clave para logging
+            aplica_art383 = resultado_art383.get("aplica", False)
+            condiciones = resultado_art383.get("condiciones_cumplidas", {})
+            
+            if aplica_art383:
+                logger.info("✅ Artículo 383 APLICA - Se usarán tarifas progresivas")
+            else:
+                razones_no_aplica = []
+                if not condiciones.get("es_persona_natural", False):
+                    razones_no_aplica.append("no es persona natural")
+                if not condiciones.get("concepto_aplicable", False):
+                    razones_no_aplica.append("concepto no aplicable")
+                if not condiciones.get("cuenta_cobro", False):
+                    razones_no_aplica.append("falta cuenta de cobro")
+                if not condiciones.get("planilla_seguridad_social", False):
+                    razones_no_aplica.append("falta planilla seguridad social")
+                
+                logger.info(f"❌ Artículo 383 NO APLICA: {', '.join(razones_no_aplica) if razones_no_aplica else 'razón no especificada'}")
+            
+            return resultado_art383
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"💥 Error parseando JSON de Art 383: {e}")
+            logger.error(f"Respuesta problemática: {respuesta}")
+            return self._art383_fallback("Error parseando respuesta JSON de Gemini")
+        except Exception as e:
+            logger.error(f"💥 Error en análisis Art 383: {e}")
+            return self._art383_fallback(str(e))
+    
+    def _obtener_campo_art383_default(self, campo: str) -> Dict[str, Any]:
+        """
+        Obtiene valores por defecto para campos faltantes en análisis del Art 383.
+        
+        Args:
+            campo: Nombre del campo faltante
+            
+        Returns:
+            Dict con estructura por defecto
+        """
+        defaults = {
+            "aplica": False,
+            "condiciones_cumplidas": {
+                "es_persona_natural": False,
+                "concepto_aplicable": False,
+                "es_primer_pago": False,
+                "planilla_seguridad_social": False,
+                "cuenta_cobro": False
+            },
+            "deducciones_identificadas": {
+                "intereses_vivienda": {
+                    "valor": 0.0,
+                    "tiene_soporte": False,
+                    "limite_aplicable": 0.0
+                },
+                "dependientes_economicos": {
+                    "valor": 0.0,
+                    "tiene_soporte": False,
+                    "limite_aplicable": 0.0
+                },
+                "medicina_prepagada": {
+                    "valor": 0.0,
+                    "tiene_soporte": False,
+                    "limite_aplicable": 0.0
+                },
+                "rentas_exentas": {
+                    "valor": 0.0,
+                    "tiene_soporte": False,
+                    "limite_aplicable": 0.0
+                }
+            }
+        }
+        
+        return defaults.get(campo, {})
+    
+    def _art383_fallback(self, error_msg: str = "Error procesando Art 383") -> Dict[str, Any]:
+        """
+        Respuesta de emergencia cuando falla el procesamiento del Art 383.
+        
+        Args:
+            error_msg: Mensaje de error
+            
+        Returns:
+            Dict[str, Any]: Respuesta básica del Art 383
+        """
+        logger.warning(f"🚨 Usando fallback de Art 383: {error_msg}")
+        
+        return {
+            "aplica": False,
+            "condiciones_cumplidas": {
+                "es_persona_natural": False,
+                "concepto_aplicable": False,
+                "es_primer_pago": False,
+                "planilla_seguridad_social": False,
+                "cuenta_cobro": False
+            },
+            "deducciones_identificadas": {
+                "intereses_vivienda": {
+                    "valor": 0.0,
+                    "tiene_soporte": False,
+                    "limite_aplicable": 0.0
+                },
+                "dependientes_economicos": {
+                    "valor": 0.0,
+                    "tiene_soporte": False,
+                    "limite_aplicable": 0.0
+                },
+                "medicina_prepagada": {
+                    "valor": 0.0,
+                    "tiene_soporte": False,
+                    "limite_aplicable": 0.0
+                },
+                "rentas_exentas": {
+                    "valor": 0.0,
+                    "tiene_soporte": False,
+                    "limite_aplicable": 0.0
+                }
+            },
+            "error": error_msg,
+            "observaciones": [
+                f"Error procesando Artículo 383: {error_msg}",
+                "Se aplicará tarifa convencional",
+                "Revise manualmente si aplica Art 383"
+            ]
+        }
     
     async def analizar_consorcio(self, documentos_clasificados: Dict[str, Dict], es_facturacion_extranjera: bool = False, archivos_directos : List[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
         """
@@ -1353,8 +1610,8 @@ class ProcesadorGemini:
         """
         nombre_archivo = getattr(archivo, 'filename', 'sin_nombre')
         
-        # ✅ SINGLE RETRY como solicitado (no 3 intentos)
-        for intento in range(1, 3):  # Solo 2 intentos: 1 y 2
+        #  SINGLE RETRY como solicitado 
+        for intento in range(1, 3):  # Solo 2 intentos
             try:
                 # 🔧 RESETEAR POSICIÓN DE FORMA MÁS ROBUSTA
                 if hasattr(archivo, 'seek'):
@@ -1379,7 +1636,7 @@ class ProcesadorGemini:
                 
                 logger.info(f" Lectura completada: {nombre_archivo} - {len(archivo_bytes) if archivo_bytes else 0} bytes leídos")
                 
-                # 🚨 VALIDACIÓN CRÍTICA MEJORADA
+                #  VALIDACIÓN CRÍTICA MEJORADA
                 if not archivo_bytes:
                     logger.error(f"Archivo vacío en intento {intento}: {nombre_archivo} - 0 bytes")
                     if intento < 2:  # Solo un retry más

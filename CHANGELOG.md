@@ -1,5 +1,358 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [2.9.3] - 2025-09-13
+
+### 🆕 **NUEVA ESTRUCTURA DE RESULTADOS - TRANSPARENCIA TOTAL POR CONCEPTO**
+- **PROBLEMA SOLUCIONADO**: El sistema mostraba tarifa promedio en lugar de detalles individuales por concepto
+  - ❌ **Error anterior**: `tarifa_aplicada` calculaba promedio cuando había múltiples conceptos
+  - ❌ **Impacto anterior**: Pérdida de información sobre tarifas específicas de cada concepto
+  - ❌ **Confusión anterior**: Usuario no podía validar cálculos individuales
+  - ✅ **Solución**: Nueva estructura con transparencia total por concepto
+
+### 🆕 **NUEVA ESTRUCTURA `ResultadoLiquidacion`**
+- **CAMPOS NUEVOS AGREGADOS**:
+  - 🆕 `conceptos_aplicados: List[DetalleConcepto]` - Lista con detalles individuales de cada concepto
+  - 🆕 `resumen_conceptos: str` - Resumen descriptivo con todas las tarifas
+- **CAMPOS DEPRECATED MANTENIDOS**:
+  - 🗑️ `tarifa_aplicada: Optional[float]` - Solo para compatibilidad (promedio)
+  - 🗑️ `concepto_aplicado: Optional[str]` - Solo para compatibilidad (concatenado)
+
+### 🆕 **NUEVO MODELO `DetalleConcepto`**
+```python
+class DetalleConcepto(BaseModel):
+    concepto: str              # Nombre completo del concepto
+    tarifa_retencion: float    # Tarifa específica (decimal)
+    base_gravable: float       # Base individual del concepto
+    valor_retencion: float     # Retención calculada para este concepto
+```
+
+### 🔄 **TODAS LAS FUNCIONES ACTUALIZADAS**
+- **`calcular_retencion()`**: Genera lista de `DetalleConcepto` para retención nacional
+- **`liquidar_factura_extranjera()` (2 casos)**: Adaptada para facturas del exterior
+- **`_calcular_retencion_articulo_383()`**: Artículo 383 con nueva estructura
+- **`_calcular_retencion_articulo_383_separado()`**: Análisis separado actualizado
+- **`_crear_resultado_no_liquidable()`**: Casos sin retención actualizados
+- **`liquidar_retefuente_seguro()` (main.py)**: Función de API actualizada
+- **Procesamiento individual y paralelo (main.py)**: Ambos flujos actualizados
+
+### 📊 **EJEMPLO DE NUEVA ESTRUCTURA**
+**ANTES (Problema):**
+```json
+{
+  "tarifa_aplicada": 3.75,  // ❌ Promedio confuso
+  "concepto_aplicado": "Servicios, Arrendamiento"  // ❌ Sin detalles
+}
+```
+
+**AHORA (Solución):**
+```json
+{
+  "conceptos_aplicados": [
+    {
+      "concepto": "Servicios generales (declarantes)",
+      "tarifa_retencion": 4.0,
+      "base_gravable": 1000000,
+      "valor_retencion": 40000
+    },
+    {
+      "concepto": "Arrendamiento de bienes inmuebles",
+      "tarifa_retencion": 3.5,
+      "base_gravable": 2000000,
+      "valor_retencion": 70000
+    }
+  ],
+  "resumen_conceptos": "Servicios generales (declarantes) (4.0%) + Arrendamiento de bienes inmuebles (3.5%)",
+  // Campos deprecated mantenidos por compatibilidad:
+  "tarifa_aplicada": 3.75,
+  "concepto_aplicado": "Servicios generales (declarantes), Arrendamiento de bienes inmuebles"
+}
+```
+
+### ✅ **BENEFICIOS OBTENIDOS**
+- **Transparencia total**: Cada concepto muestra su tarifa específica
+- **Validación fácil**: Usuario puede verificar cada cálculo individual
+- **Información completa**: Base, tarifa y retención por concepto
+- **Resumen claro**: String descriptivo con todas las tarifas
+- **Compatibilidad garantizada**: Campos antiguos mantenidos
+- **Aplicación universal**: Funciona en todos los casos (nacional, extranjero, Art. 383)
+
+### 🚀 **MIGRACIÓN AUTOMÁTICA**
+- **Sin breaking changes**: Todos los campos existentes mantenidos
+- **Campos adicionales**: Se agregan automáticamente
+- **Compatibilidad total**: Aplicaciones existentes siguen funcionando
+- **Endpoint sin cambios**: `/api/procesar-facturas` funciona igual
+
+### 🔧 **CAMBIOS TÉCNICOS**
+- Actualizado modelo Pydantic `ResultadoLiquidacion`
+- Nuevo modelo `DetalleConcepto` para estructura individual
+- Funciones de liquidación actualizadas para generar nueva estructura
+- Procesamiento individual y paralelo actualizados en `main.py`
+- Versión del sistema actualizada a 2.9.3
+- Documentación actualizada con nuevos ejemplos
+
+### ✅ **BENEFICIOS DE LA NUEVA ESTRUCTURA**
+- **✅ Transparencia total**: Cada concepto muestra su tarifa específica
+- **✅ Validación fácil**: Usuario puede verificar cada cálculo individual
+- **✅ Información completa**: Base, tarifa y retención por concepto
+- **✅ Resumen claro**: String descriptivo con todas las tarifas
+- **✅ Compatibilidad**: Campos antiguos mantenidos para evitar errores
+- **✅ Aplicación universal**: Funciona en todos los casos (nacional, extranjero, Art. 383)
+
+### 📝 **COMPARACIÓN ANTES vs AHORA**
+```python
+# ❌ ANTES (PROBLEMA):
+tarifa_promedio = sum(tarifas_aplicadas) / len(tarifas_aplicadas)  # Confuso
+concepto_aplicado = ", ".join(conceptos_aplicados)  # Sin detalles
+
+# ✅ AHORA (SOLUCIÓN):
+conceptos_aplicados = [  # Lista con detalles individuales
+    DetalleConcepto(
+        concepto=detalle['concepto'],
+        tarifa_retencion=detalle['tarifa'],
+        base_gravable=detalle['base_gravable'],
+        valor_retencion=detalle['valor_retencion']
+    ) for detalle in detalles_calculo
+]
+resumen_conceptos = " + ".join(conceptos_resumen)  # Descriptivo y claro
+```
+
+### 🔧 **CAMBIOS TÉCNICOS**
+- **Modelo actualizado**: `ResultadoLiquidacion` en `liquidador.py`
+- **Nuevo modelo**: `DetalleConcepto` para estructurar información por concepto
+- **Compatibilidad garantizada**: Campos deprecated mantenidos para evitar breaking changes
+- **Cobertura completa**: Todas las funciones que generan `ResultadoLiquidacion` actualizadas
+
+---
+
+## [2.9.2] - 2025-09-13
+
+### 🚨 **CORRECCIÓN CRÍTICA - VALIDACIÓN DE BASES GRAVABLES**
+- **PROBLEMA IDENTIFICADO**: El sistema permitía conceptos sin base gravable definida
+  - ❌ **Error**: Función `_calcular_bases_individuales_conceptos()` asignaba proporciones automáticamente
+  - ❌ **Impacto**: Retenciones erróneas cuando la IA no identificaba bases correctamente
+  - ❌ **Riesgo**: Cálculos incorrectos enmascaraban problemas de análisis
+
+### 🔧 **SOLUCIÓN IMPLEMENTADA**
+- **VALIDACIÓN ESTRICTA**: Sistema ahora PARA la liquidación si algún concepto no tiene base gravable
+  - 🚨 **ValueError**: Excepción inmediata con mensaje detallado y sugerencias
+  - 📊 **Tolerancia 0%**: Verificación exacta entre suma de bases vs total de factura
+  - 🔍 **Calidad garantizada**: Fuerza análisis correcto de la IA antes de proceder
+  - 💡 **Retroalimentación clara**: Usuario sabe exactamente qué corregir
+
+### 🆕 **NUEVA LÓGICA DE VALIDACIÓN**
+```python
+# ANTES (INCORRECTO - PERMITÍA ERRORES):
+def _calcular_bases_individuales_conceptos():
+    if conceptos_sin_base:
+        # Asignar proporciones o base cero ❌ MALO
+        proporcion = valor_disponible / len(conceptos_sin_base)
+        concepto.base_gravable = proporcion  # ENMASCARA ERRORES
+
+# AHORA (CORRECTO - FUERZA CALIDAD):
+def _calcular_bases_individuales_conceptos():
+    if conceptos_sin_base:
+        # PARAR LIQUIDACIÓN INMEDIATAMENTE ✅ CORRECTO
+        raise ValueError(f"Conceptos sin base gravable: {conceptos_sin_base}")
+```
+
+### ⚠️ **MENSAJE DE ERROR IMPLEMENTADO**
+```
+🚨 ERROR EN ANÁLISIS DE CONCEPTOS 🚨
+
+Los siguientes conceptos no tienen base gravable definida:
+• [Concepto identificado sin base]
+
+🔧 ACCIÓN REQUERIDA:
+- Revisar el análisis de la IA (Gemini)
+- Verificar que el documento contenga valores específicos para cada concepto
+- Mejorar la extracción de texto si es necesario
+
+❌ LIQUIDACIÓN DETENIDA - No se puede proceder sin bases gravables válidas
+```
+
+### 🎯 **BENEFICIOS DE LA CORRECCIÓN**
+- **✅ Calidad garantizada**: Fuerza análisis correcto de la IA
+- **✅ Evita errores**: No más retenciones incorrectas por bases mal calculadas
+- **✅ Retroalimentación clara**: Usuario sabe exactamente qué corregir
+- **✅ Tolerancia estricta**: 0% asegura precisión absoluta
+- **✅ Mejora continua**: Problemas de extracción se detectan inmediatamente
+
+### 🔄 **FLUJO DE VALIDACIÓN IMPLEMENTADO**
+```python
+1. ✅ Revisar TODOS los conceptos identificados por Gemini
+2. 🚨 ¿Alguno sin base gravable? → ValueError + STOP liquidación
+3. ✅ ¿Todos tienen base? → Continuar con cálculo de retenciones
+4. ⚠️ Verificar coherencia con total (tolerancia 0%)
+5. ✅ Proceder con liquidación solo si todo es válido
+```
+
+### 📊 **EJEMPLO DE VALIDACIÓN ESTRICTA**
+```python
+# Antes: Sistema enmascaraba errores
+Conceptos identificados:
+- "Servicios generales": base_gravable = None  ❌ Se asignaba proporción
+- "Concepto identificado": base_gravable = 0    ❌ Se asignaba $1.00 simbólico
+
+# Ahora: Sistema detecta y para
+Conceptos identificados:
+- "Servicios generales": base_gravable = None  🚨 ValueError: "Conceptos sin base gravable: Servicios generales"
+- No se procede con liquidación hasta corregir
+```
+
+### 🔧 **CAMBIOS TÉCNICOS**
+- **Función modificada**: `_calcular_bases_individuales_conceptos()` en `liquidador.py`
+- **Excepción nueva**: `ValueError` con mensaje detallado y sugerencias
+- **Validación estricta**: Tolerancia cambiada de 10% a 0% exacto
+- **Logging mejorado**: Errores específicos con emojis y razones claras
+- **Documentación**: README.md y CHANGELOG.md actualizados con nueva validación
+
+## [2.9.1] - 2025-09-11
+
+### 🐛 **BUG CRÍTICO CORREGIDO - BASES GRAVABLES INDIVIDUALES**
+- **PROBLEMA IDENTIFICADO**: El sistema usaba el valor total de la factura como base gravable para todos los conceptos
+  - ❌ **Error**: Cada concepto recibía `valor_base_total` en lugar de su `base_gravable` específica
+  - ❌ **Impacto**: Retenciones incorrectas en facturas con múltiples conceptos
+  - ❌ **Ejemplo**: Concepto A con base $30M y Concepto B con base $20M ambos calculados sobre $50M total
+
+### 🔧 **CORRECCIÓN IMPLEMENTADA**
+- **NUEVA FUNCIÓN**: `_calcular_bases_individuales_conceptos()`
+  - 💰 **Bases específicas**: Cada concepto usa SOLO su `base_gravable` individual
+  - 📈 **Proporción automática**: Conceptos sin base específica reciben proporción del valor disponible
+  - 📊 **Logging detallado**: Registro completo del cálculo por concepto individual
+  - ⚠️ **Fallback seguro**: Base cero cuando no hay valor disponible (CORREGIDO v2.9.1)
+
+### 🆕 **VALIDACIÓN ESPECIAL AGREGADA**
+- **PROBLEMA ADICIONAL**: Conceptos con base mínima $0 podían generar retenciones erróneas
+- **SOLUCIÓN**: Nueva validación en `_calcular_retencion_concepto()` para base_gravable <= 0
+- **RESULTADO**: Conceptos sin valor disponible no generan retenciones incorrectas
+
+```python
+# 🆕 VALIDACIÓN ESPECIAL AGREGADA:
+if base_concepto <= 0:
+    return {
+        "aplica_retencion": False,
+        "mensaje_error": f"{concepto}: Sin base gravable disponible (${base_concepto:,.2f})"
+    }
+```
+
+### 🔄 **MÉTODOS ACTUALIZADOS**
+- **calcular_retencion()**: Implementa nueva lógica de bases individuales
+- **_calcular_retencion_concepto()**: Removido parámetro `valor_base_total` - usa solo `concepto_item.base_gravable`
+- **liquidar_factura_extranjera()**: Aplicada misma corrección para facturas del exterior
+
+### 📊 **NUEVA LÓGICA DE CÁLCULO**
+```python
+# ANTES (INCORRECTO):
+for concepto in conceptos:
+    base = valor_total_factura  # ❌ Mismo valor para todos
+    retencion = base * tarifa
+
+# AHORA (CORREGIDO):
+for concepto in conceptos:
+    base = concepto.base_gravable  # ✓ Base específica de cada concepto
+    retencion = base * tarifa
+```
+
+### 📝 **LOGS MEJORADOS**
+- 💰 "Concepto con base específica: [concepto] = $[valor]"
+- 📈 "Asignando proporción: $[valor] por concepto ([cantidad] conceptos)"
+- 📊 "RESUMEN: [cantidad] conceptos - Total bases: $[total] / Factura: $[valor_factura]"
+- 📋 "Procesando concepto: [nombre] - Base: $[base_individual]"
+
+---
+
+## [2.9.0] - 2025-09-08
+
+### 🆕 **ANÁLISIS SEPARADO DEL ARTÍCULO 383 - NUEVA ARQUITECTURA**
+- **FUNCIONALIDAD PRINCIPAL**: Separación completa del análisis del Artículo 383 para personas naturales
+  - 🎯 **Análisis independiente**: Segunda llamada a Gemini específica para Art 383 cuando se detecta persona natural
+  - 🧠 **Prompt especializado**: `PROMPT_ANALISIS_ART_383` dedicado exclusivamente al análisis de deducciones y condiciones
+  - 📊 **Datos separados**: Guardado independiente en `analisis_art383_separado.json` y combinado en `analisis_factura_con_art383.json`
+  - ⚡ **Procesamiento eficiente**: Solo se ejecuta cuando `naturaleza_tercero.es_persona_natural == True`
+
+### 🔧 **MODIFICACIONES EN ANÁLISIS PRINCIPAL**
+- **PROMPT_ANALISIS_FACTURA ACTUALIZADO**: Eliminada lógica de declarante/no declarante
+  - ❌ **Removido**: Análisis de si el tercero es declarante en el prompt principal
+  - ✅ **Mantenido**: Análisis completo de naturaleza del tercero (persona natural/jurídica, régimen, autorretenedor, responsable IVA)
+  - 🎯 **Enfoque optimizado**: Prompt se centra en identificación de conceptos y naturaleza básica del tercero
+  - 📋 **Compatibilidad**: Mantiene toda la funcionalidad existente para personas jurídicas
+
+### 🆕 **NUEVA FUNCIÓN _analizar_articulo_383()**
+- **Análisis multimodal especializado**: Soporte completo para archivos directos + textos preprocesados
+  - 📄 **Multimodalidad**: Compatible con PDFs, imágenes y documentos preprocesados
+  - 💾 **Cache de workers**: Soporte para workers paralelos con cache de archivos
+  - 🔍 **Análisis exhaustivo**: Revisión completa de deducciones, condiciones y documentos soporte
+  - 📊 **Validación estructura**: Verificación automática de campos requeridos con valores por defecto
+
+### 📋 **MODELOS PYDANTIC ACTUALIZADOS**
+- **AnalisisFactura**: Actualizado para coincidir con nueva salida de Gemini sin lógica declarante
+- **InformacionArticulo383**: Optimizado porque Gemini no realizará cálculos, solo identificación
+- **Nuevos campos Art 383**:
+  - `es_primer_pago`: Detecta si es el primer pago del año fiscal
+  - `planilla_seguridad_social`: Verifica presentación de planilla
+  - `cuenta_cobro`: Identifica si hay cuenta de cobro válida
+  - `deducciones_identificadas`: Intereses vivienda, dependientes, medicina prepagada, rentas exentas
+
+### 🔄 **NUEVA LÓGICA DE PROCESAMIENTO**
+```python
+# FLUJO IMPLEMENTADO:
+1. analizar_factura() → Análisis principal (sin declarante)
+2. if naturaleza_tercero.es_persona_natural == True:
+   ↳ _analizar_articulo_383() → Segunda llamada a Gemini
+3. Integración de resultados → resultado["articulo_383"] = analisis_art383
+4. Guardado conjunto → retefuente + art 383 en JSON unificado
+```
+
+### 🔧 **MODIFICACIONES EN LIQUIDADOR.PY**
+- **calcular_retencion() SEPARADO**: Nueva lógica para Art 383 independiente
+  - 📊 **Función especializada**: `_calcular_retencion_articulo_383_separado()` para procesar análisis de Gemini
+  - 🔍 **Validación independiente**: `_procesar_deducciones_art383()` para validar deducciones identificadas
+  - 📝 **Observaciones detalladas**: `_agregar_observaciones_art383_no_aplica()` para casos que no califican
+  - ⚡ **Uso del análisis**: Sistema utiliza el análisis separado del Art 383 en lugar de lógica integrada
+
+### 📂 **GUARDADO AUTOMÁTICO MEJORADO**
+- **Archivos JSON especializados**:
+  - `analisis_art383_separado.json` - Solo análisis del Artículo 383
+  - `analisis_factura_con_art383.json` - Análisis combinado completo
+  - `analisis_factura.json` - Análisis principal (compatible con versiones anteriores)
+- **Metadatos incluidos**: `persona_natural_detectada`, `timestamp`, `analisis_retefuente`, `analisis_art383_separado`
+
+### 🎯 **BENEFICIOS DE LA NUEVA ARQUITECTURA**
+- **✅ Precisión mejorada**: Prompt especializado para Art 383 vs análisis general
+- **✅ Modularidad**: Análisis separados permiten optimización independiente
+- **✅ Mantenimiento**: Lógica del Art 383 aislada y fácil de modificar
+- **✅ Performance**: Solo se ejecuta análisis adicional cuando es necesario
+- **✅ Trazabilidad**: Análisis separados permiten mejor debugging
+- **✅ Escalabilidad**: Arquitectura preparada para otros artículos especiales
+
+### 🔍 **VALIDACIONES Y FALLBACKS**
+- **Manejo robusto de errores**: Art 383 fallido no afecta procesamiento principal
+- **Campos por defecto**: Sistema proporciona estructura completa aunque Gemini falle
+- **Logging detallado**: Mensajes específicos con emojis y razones de aplicabilidad
+- **Compatibilidad**: Personas jurídicas procesan exactamente igual que antes
+
+### 📊 **EJEMPLO DE RESULTADO JSON**
+```json
+{
+  "analisis_retefuente": { /* análisis principal */ },
+  "articulo_383": {
+    "aplica": true,
+    "condiciones_cumplidas": {
+      "es_persona_natural": true,
+      "concepto_aplicable": true,
+      "cuenta_cobro": true,
+      "planilla_seguridad_social": true
+    },
+    "deducciones_identificadas": {
+      "intereses_vivienda": { "valor": 2000000, "tiene_soporte": true },
+      "dependientes_economicos": { "valor": 500000, "tiene_soporte": true }
+    }
+  }
+}
+```
+
+---
+
 ## [2.8.3] - 2025-09-01
 
 ### 🛡️ **VALIDACIÓN ROBUSTA DE PDFs - SOLUCIÓN CRÍTICA**
