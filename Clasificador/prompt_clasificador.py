@@ -313,153 +313,239 @@ Verificar si aplica alguna condición de exclusión:
     """
 def PROMPT_ANALISIS_ART_383(factura_texto: str, rut_texto: str, anexos_texto: str, 
                             cotizaciones_texto: str, anexo_contrato: str,
-                            nombres_archivos_directos: List[str] = None, conceptos_identificados: List = None) -> str:
+                            nombres_archivos_directos: List[str] = None, 
+                            conceptos_identificados: List = None) -> str:
 
-      # Importar constantes del Artículo 383
+    # Importar constantes del Artículo 383
     from config import obtener_constantes_articulo_383
+    
     constantes_art383 = obtener_constantes_articulo_383()
-
+    
     return f"""
+Eres un sistema de validación del Artículo 383 del Estatuto Tributario Colombiano para FIDUCIARIA FIDUCOLDEX.
+Tu función es VERIFICAR si aplican deducciones especiales para personas naturales.
 
-   **ARTÍCULO 383 - PERSONAS NATURALES (TARIFAS PROGRESIVAS):**
-    UVT 2025: ${constantes_art383['uvt_2025']:,}
-    SMMLV 2025: ${constantes_art383['smmlv_2025']:,}
-    
-    Conceptos que aplican para Art. 383:
-    {json.dumps(constantes_art383['conceptos_aplicables'], indent=2, ensure_ascii=False)}
-    
-    Tarifas progresivas Art. 383:
-    {json.dumps(constantes_art383['tarifas'], indent=2, ensure_ascii=False)}
-    
-    Límites de deducciones Art. 383:
-    {json.dumps(constantes_art383['limites_deducciones'], indent=2, ensure_ascii=False)}
-    
-Eres un experto contador colombiano especializado en retención en la fuente que trabaja para la FIDUCIARIA FIDUCOLDEX , Tu tarea es revisar los documentos para determinar si aplica el artículo 383 del Estatuto Tributario para personas naturales, con el fin de reducir la carga tributaria del impuesto retencion en la fuente.
+ REGLA FUNDAMENTAL: SOLO reporta información TEXTUALMENTE presente en documentos.
+ NUNCA asumas, deduzcas o inventes información no visible.
+ Si no encuentras un dato específico, usa el valor por defecto indicado.
 
-    DOCUMENTOS DISPONIBLES:
-    {_generar_seccion_archivos_directos(nombres_archivos_directos)}
-    
-    FACTURA (DOCUMENTO PRINCIPAL):
-    {factura_texto}
-    
-    RUT (si está disponible):
-    {rut_texto if rut_texto else "NO DISPONIBLE"}
-    
-    ANEXOS (DETALLES ADICIONALES):
-    {anexos_texto if anexos_texto else "NO DISPONIBLES"}
-    
-    COTIZACIONES (PROPUESTAS COMERCIALES):
-    {cotizaciones_texto if cotizaciones_texto else "NO DISPONIBLES"}
-    
-    ANEXO CONCEPTO CONTRATO (OBJETO DEL CONTRATO):
-    {anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
-    
+═══════════════════════════════════════════════════════════════════
+ DATOS DE REFERENCIA ART. 383:
+═══════════════════════════════════════════════════════════════════
+CONCEPTOS QUE APLICAN PARA ART. 383:
+{json.dumps(constantes_art383['conceptos_aplicables'], indent=2, ensure_ascii=False)}
 
-      **ARTÍCULO 383 - VALIDACIÓN PARA PERSONAS NATURALES**:
-        SOLO aplica si se cumplen TODAS estas condiciones:
-        
-        **CONDICIONES OBLIGATORIAS:**
-        - El tercero es PERSONA NATURAL
-        - El concepto corresponde a: honorarios, prestación de servicios, diseños, comisiones, viáticos
-        - Conceptos aplicables exactos: {constantes_art383['conceptos_aplicables']}
+CONCEPTOS YA IDENTIFICADOS EN ANÁLISIS PREVIO:
+{json.dumps(conceptos_identificados, indent=2, ensure_ascii=False)}
 
-        **VALIDA si los conceptos facturados Aplican a Art. 383 con base a la lista de los Conceptos que aplican para Art. 383**:
-        Conceptos Facturados: {conceptos_identificados}
-        -Si los Conceptos Facturados  NO tienen relacion con los Conceptos que aplican para Art. 383, entonces NO aplica Art. 383, responde "aplica": false,
-        
-        
-         **IMPORTANTE SOBRE PERSONA NATURAL O JURÍDICA:**
-       En el RUT, busca la seccion 24. Tipo de contribuyente, Si dice "Persona natural", "natural" o "Persona natural o sucesión ilíquida "  →  es_persona_natural: true
-       
+═══════════════════════════════════════════════════════════════════
+ DOCUMENTOS DISPONIBLES PARA ANÁLISIS:
+═══════════════════════════════════════════════════════════════════
+FACTURA PRINCIPAL:
+{factura_texto if factura_texto else "[NO PROPORCIONADA]"}
 
-        **DETECCIÓN DE PRIMER PAGO** (BUSCAR EN FACTURA Y ANEXOS):
-        Identifica si es el primer pago del contrato buscando indicadores como:
-        - "primer pago", "pago inicial", "anticipo", "pago adelantado"
-        - "primera cuota", "entrega inicial", "adelanto"
-        - Numeración de facturas: 001, 01, #1
-        - "inicio de contrato", "pago de arranque"
-        - Sinónimos o variaciones de estos términos
-        
-        **SOPORTES OBLIGATORIOS A BUSCAR EN LOS ANEXOS:**
-        a) Planilla de aportes a salud y pensión (máximo 2 meses antigüedad):
-           - **PRIMER PAGO**: NO es obligatoria, pero verificar si está presente
-           - **PAGOS POSTERIORES AL PRIMER PAGO**: SÍ es obligatoria
-           - Debe ser sobre el 40% del valor del ingreso que aparece en la CUENTA DE COBRO
-           - Si el ingreso NO supera $1,423,500 (SMMLV), esta condición no cuenta
-           
-        b) Cuenta de cobro (honorarios, comisiones, prestación de servicios) - SIEMPRE OBLIGATORIA
-        
-        **LÓGICA DE VALIDACIÓN DE PLANILLA:**
-        - Si es PRIMER PAGO y tiene planilla: perfecto, continuar
-        - Si es PRIMER PAGO y NO tiene planilla: agregar observación pero continuar con Art. 383
-        - Si NO es primer pago y NO tiene planilla: NO aplicar Art. 383, usar tarifa convencional
-        
-        **DEDUCCIONES PERMITIDAS A IDENTIFICAR EN ANEXOS:**
-        Si hay soportes válidos, busca estas deducciones:
-        
-        - **Intereses por vivienda**: Hasta 100 UVT/mes (${constantes_art383['uvt_2025'] * 100:,}/mes)
-           Soporte: Certificación entidad financiera con nombre del tercero
-           
-        - **Dependientes económicos**: Hasta 10% del ingreso o 32 UVT/mes (${constantes_art383['uvt_2025'] * 32:,}/mes)
-           Soporte: Declaración juramentada del beneficiario
-           
-        - **Medicina prepagada**: Hasta 16 UVT/mes (${constantes_art383['uvt_2025'] * 16:,}/mes)
-           Soporte: Certificación EPS o entidad medicina prepagada
-           
-        - **Rentas exentas (AFC, pensiones voluntarias)**: Hasta 25% del ingreso mensual sin exceder 3,800 UVT/año
-           Soporte: Planilla de aportes (máximo 2 meses antigüedad)
-           Si ingreso NO supera $1,423,500, esta deducción no cuenta
-        
-        **CÁLCULO BASE GRAVABLE ART. 383:**
-        Base gravable = Ingreso bruto - Aportes seguridad social (40%) - Deducciones soportadas
-        
-        IMPORTANTE: Deducciones NO PUEDEN superar 40% del ingreso bruto
-        
-        **TARIFA A APLICAR SEGÚN BASE GRAVABLE EN UVT:**
-        - 0 a 95 UVT: 0%
-        - 95 a 150 UVT: 19%
-        - 150 a 360 UVT: 28%
-        - 360 a 640 UVT: 33%
-        - 640 a 945 UVT: 35%
-        - 945 a 2300 UVT: 37%
-        
-        - 2300 UVT en adelante: 39%
-        IMPORTANTE : - Para Art. 383: Si faltan soportes obligatorios -> "aplica": false,
+RUT DEL TERCERO:
+{rut_texto if rut_texto else "[NO PROPORCIONADO]"}
 
-        "articulo_383":{{
-            "aplica": false,
-            "condiciones_cumplidas": {{
-                "es_persona_natural": false,
-                "concepto_aplicable": false,
-                "es_primer_pago": false,
-                "planilla_seguridad_social": false,
-                "cuenta_cobro": false
-            }},
-            "deducciones_identificadas": {{
-                "intereses_vivienda": {{
-                    "valor": 0.0,
-                    "tiene_soporte": false,
-                    "limite_aplicable": 0.0
-                }},
-                "dependientes_economicos": {{
-                    "valor": 0.0,
-                    "tiene_soporte": false,
-                    "limite_aplicable": 0.0
-                }},
-                "medicina_prepagada": {{
-                    "valor": 0.0,
-                    "tiene_soporte": false,
-                    "limite_aplicable": 0.0
-                }},
-                "rentas_exentas": {{
-                    "valor": 0.0,
-                    "tiene_soporte": false,
-                    "limite_aplicable": 0.0
+ANEXOS:
+{anexos_texto if anexos_texto else "[NO PROPORCIONADOS]"}
+
+COTIZACIONES:
+{cotizaciones_texto if cotizaciones_texto else "[NO PROPORCIONADAS]"}
+
+OBJETO DEL CONTRATO:
+{anexo_contrato if anexo_contrato else "[NO PROPORCIONADO]"}
+
+═══════════════════════════════════════════════════════════════════
+ PROTOCOLO DE VERIFICACIÓN ESTRICTO - ARTÍCULO 383:
+═══════════════════════════════════════════════════════════════════
+
+ PASO 1: VERIFICAR TIPO DE CONTRIBUYENTE
+├─ Buscar EN EL RUT → Sección 24 o "Tipo de contribuyente"
+├─ Si encuentra "Persona natural" o "natural" → es_persona_natural: true
+├─ Si encuentra "Persona jurídica" → es_persona_natural: false
+└─ Si NO encuentra información → es_persona_natural: false (DEFAULT)
+
+ PASO 2: VALIDAR CONCEPTOS APLICABLES AL ART. 383
+
+ REGLA DE MATCHING ESTRICTA:
+Para CADA concepto en conceptos_identificados:
+  1. Comparar TEXTUALMENTE con lista de conceptos_aplicables Art. 383
+  2. CRITERIOS DE COINCIDENCIA:
+     ├─ Coincidencia EXACTA del texto → INCLUIR
+     ├─ Palabras clave coinciden (honorarios, servicios, comisiones) → INCLUIR
+     └─ NO hay coincidencia clara → EXCLUIR
+
+ RESULTADO:
+├─ Si HAY conceptos que coinciden → Agregar a conceptos_identificados con sus valores
+├─ Si hay conceptos que coinciden → conceptos_aplicables: true
+├─ Si NO hay coincidencias → conceptos_identificados: [] (lista vacía)
+└─ Si NO hay coincidencias → conceptos_aplicables: false
+
+ PASO 3: DETECTAR PRIMER PAGO
+
+ BUSCAR TEXTUALMENTE en FACTURA y ANEXOS estas frases EXACTAS:
+├─ "primer pago"
+├─ "pago inicial"
+├─ "anticipo"
+├─ "pago adelantado"
+├─ "primera cuota"
+├─ "entrega inicial"
+├─ "adelanto"
+├─ "pago #1" o "pago 1" o "pago 001"
+├─ "inicio de contrato"
+└─ "pago de arranque"
+
+ RESULTADO:
+├─ Si encuentras ALGUNA frase → es_primer_pago: true
+└─ Si NO encuentras ALGUNA → es_primer_pago: false (DEFAULT)
+
+ PASO 4: BUSCAR PLANILLA DE SEGURIDAD SOCIAL Y EXTRAER IBC
+
+ BUSCAR en ANEXOS palabras clave:
+├─ "planilla" Y ("salud" O "pensión" O "seguridad social" O "PILA")
+├─ "aportes" Y ("EPS" O "AFP" O "parafiscales")
+└─ "pago seguridad social"
+
+ SI ENCUENTRA PLANILLA:
+├─ planilla_seguridad_social: true
+├─ Buscar fecha en formato: DD/MM/AAAA o AAAA-MM-DD o "mes de XXXX"
+│  ├─ Si encuentra fecha → fecha_de_planilla_seguridad_social: "AAAA-MM-DD"
+│  └─ Si NO encuentra fecha → fecha_de_planilla_seguridad_social: "0000-00-00"
+├─ BUSCAR Y EXTRAER IBC (Ingreso Base de Cotización):
+│  ├─ Buscar "IBC" o "Ingreso Base de Cotización" o "Base de cotización"
+│  ├─ Si encuentra valor → IBC_seguridad_social: [valor extraído]
+│  └─ Si NO encuentra → IBC_seguridad_social: 0.0
+│
+└─ IMPORTANTE: El IBC SOLO se extrae de la PLANILLA DE SEGURIDAD SOCIAL
+
+ SI NO ENCUENTRA PLANILLA:
+├─ planilla_seguridad_social: false (DEFAULT)
+├─ fecha_de_planilla_seguridad_social: "0000-00-00" (DEFAULT)
+└─ IBC_seguridad_social: 0.0 (DEFAULT)
+
+ PASO 5: VERIFICAR DOCUMENTO SOPORTE Y EXTRAER VALOR DE INGRESO
+
+ BUSCAR en documentos estas palabras EXACTAS:
+├─ "cuenta de cobro"
+├─ "factura de venta"
+├─ "documento soporte"
+└─ "no obligado a facturar"
+
+ SI ENCUENTRA "DOCUMENTO SOPORTE":
+├─ Documento_soporte: true
+├─ BUSCAR Y EXTRAER VALOR DE INGRESO DEL DOCUMENTO SOPORTE:
+│  ├─ Buscar palabras clave EN EL DOCUMENTO SOPORTE: "valor", "total", "honorarios", "servicios prestados"
+│  ├─ Identificar el monto principal facturado (sin IVA ni retenciones)
+│  ├─ Si encuentra valor → ingreso: [valor extraído]
+│  └─ Si NO encuentra valor → ingreso: 0.0
+│
+└─ IMPORTANTE:  
+   └─ Si hay múltiples documentos soporte, priorizar el valor del ingreso de la cuenta de cobro
+
+ SI NO ENCUENTRA "DOCUMENTO SOPORTE":
+├─ Documento_soporte: false (DEFAULT)
+└─ ingreso: 0.0 (DEFAULT) - No extraer de otros documentos
+
+ RESULTADO:
+├─ Si encuentra documento soporte → documento_soporte: true + extraer ingreso
+└─ Si NO encuentra → documento_soporte: false + ingreso: 0.0
+
+ PASO 6: IDENTIFICAR DEDUCCIONES (BÚSQUEDA TEXTUAL ESTRICTA)
+
+ INTERESES POR VIVIENDA:
+BUSCAR: "intereses" Y ("vivienda" O "hipoteca" O "crédito hipotecario")
+├─ Si encuentra certificación bancaria:
+│  ├─ Extraer valor numérico de "intereses corrientes" → intereses_corrientes: [valor]
+│  └─ certificado_bancario: true
+└─ Si NO encuentra:
+   ├─ intereses_corrientes: 0.0 (DEFAULT)
+   └─ certificado_bancario: false (DEFAULT)
+
+ DEPENDIENTES ECONÓMICOS:
+BUSCAR: "dependiente" O "declaración juramentada" Y "económico"
+├─ Si encuentra declaración:
+│  ├─ Extraer nombre del titular encargado si está presente → nombre_encargado: "[nombre]"
+│  └─ declaracion_juramentada: true
+└─ Si NO encuentra:
+   ├─ nombre_encargado: "" (DEFAULT)
+   └─ declaracion_juramentada: false (DEFAULT)
+
+ MEDICINA PREPAGADA:
+BUSCAR: "medicina prepagada" O "plan complementario" O "póliza de salud"
+├─ Si encuentra certificación:
+│  ├─ Extraer valor "sin IVA" o "valor neto" → valor_sin_iva_med_prepagada: [valor]
+│  └─ certificado_med_prepagada: true
+└─ Si NO encuentra:
+   ├─ valor_sin_iva_med_prepagada: 0.0 (DEFAULT)
+   └─ certificado_med_prepagada: false (DEFAULT)
+
+ AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN):
+BUSCAR: "AFC" O "ahorro para fomento" O "cuenta AFC"
+├─ Si encuentra soporte:
+│  ├─ Extraer "valor a depositar" → valor_a_depositar: [valor]
+│  └─ planilla_de_cuenta_AFC: true
+└─ Si NO encuentra:
+   ├─ valor_a_depositar: 0.0 (DEFAULT)
+   └─ planilla_de_cuenta_AFC: false (DEFAULT)
+
+═══════════════════════════════════════════════════════════════════
+ REGLAS ABSOLUTAS - NO NEGOCIABLES:
+═══════════════════════════════════════════════════════════════════
+ NO inventes valores numéricos - usa 0.0 si no los encuentras
+ NO asumas fechas - usa "0000-00-00" si no las encuentras
+ NO deduzcas información por contexto
+ NO completes campos vacíos con suposiciones
+ NO interpretes - solo busca texto LITERAL
+ NO calcules valores derivados
+ IBC solo se extrae de PLANILLA DE SEGURIDAD SOCIAL
+
+═══════════════════════════════════════════════════════════════════
+ FORMATO JSON DE RESPUESTA OBLIGATORIO:
+═══════════════════════════════════════════════════════════════════
+{{
+    "articulo_383": {{
+        "condiciones_cumplidas": {{
+            "es_persona_natural": boolean (default: false),
+            "conceptos_identificados": [
+                {{
+                    "concepto": "texto exacto del concepto",
+                    "base_gravable": número encontrado o 0.0
                 }}
+            ] o [],
+            "conceptos_aplicables": boolean (true si hay conceptos que aplican, false si no aplican),
+            "ingreso": número o 0.0 ,
+            "es_primer_pago": boolean (default: false),
+            "documento_soporte": boolean (default: false)
+        }},
+        "deducciones_identificadas": {{
+            "intereses_vivienda": {{
+                "intereses_corrientes": número o 0.0,
+                "certificado_bancario": boolean (default: false)
+            }},
+            "dependientes_economicos": {{
+                "nombre_encargado": "texto encontrado" o "",
+                "declaracion_juramentada": boolean (default: false)
+            }},
+            "medicina_prepagada": {{
+                "valor_sin_iva_med_prepagada": número o 0.0,
+                "certificado_med_prepagada": boolean (default: false)
+            }},
+            "AFC": {{
+                "valor_a_depositar": número o 0.0,
+                "planilla_de_cuenta_AFC": boolean (default: false)
+            }},
+            "planilla_seguridad_social": {{
+                "IBC_seguridad_social": número o 0.0 (SOLO de planilla)
+                "planilla_seguridad_social": boolean (default: false),
+                "fecha_de_planilla_seguridad_social": "AAAA-MM-DD" (default: "0000-00-00")
             }}
-            }}
-    """
-    
+        }}
+    }}
+}}
+
+ RESPONDE ÚNICAMENTE CON EL JSON. SIN EXPLICACIONES ADICIONALES.
+"""
 def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: str, 
                               cotizaciones_texto: str, anexo_contrato: str, conceptos_dict: dict,
                               nombres_archivos_directos: List[str] = None) -> str:
@@ -698,6 +784,7 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
             "base_gravable": 0.0,
             "base_minima": 0.0
         }}],
+        
         "resumen_retencion": {{
             "valor_total_factura": 0.0,
             "iva_total": 0.0,

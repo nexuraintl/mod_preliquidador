@@ -1,4 +1,101 @@
-### ✅ **NUEVA VERSIÓN v2.9.3 (2025-09-13)**
+### ✅ **NUEVA VERSIÓN v2.10.0 (2025-09-16)**
+
+**🔧 ARTÍCULO 383 - VALIDACIONES MANUALES IMPLEMENTADAS:**
+- 🎯 **Problema identificado**: Gemini tenía responsabilidad de cálculo causando alucinaciones en Art. 383
+  - ❌ **Error anterior**: IA hacía cálculos complejos con deducciones y tarifas progresivas
+  - ❌ **Impacto anterior**: Cálculos incorrectos y poco confiables en personas naturales
+  - ❌ **Riesgo anterior**: Alucinaciones en validaciones críticas de planillas y fechas
+
+**🆕 NUEVA ARQUITECTURA - SEPARACIÓN DE RESPONSABILIDADES:**
+- **🔍 RESPONSABILIDAD DE GEMINI**: Solo identifica datos presentes en documentos
+  - ✅ Identifica si es persona natural
+  - ✅ Identifica conceptos aplicables para Art. 383
+  - ✅ Identifica si es primer pago
+  - ✅ Identifica planilla de seguridad social y fecha
+  - ✅ Extrae valores de deducciones y certificados
+  - ✅ Extrae IBC de planilla de seguridad social
+  - ❌ **YA NO CALCULA**: Eliminadas todas las responsabilidades de cálculo
+
+- **🧮 RESPONSABILIDAD DE PYTHON**: Todas las validaciones y cálculos
+  - ✅ Validación: `es_persona_natural == True AND conceptos_aplicables == True`
+  - ✅ Validación: Si `primer_pago == false` → planilla OBLIGATORIA
+  - ✅ Validación: Fecha de planilla no debe tener > 2 meses de antigüedad
+  - ✅ Validación: IBC debe ser 40% del ingreso (alerta si no coincide)
+  - ✅ Validaciones de deducciones según normativa exacta
+  - ✅ Cálculos de límites por UVT y porcentajes
+  - ✅ Aplicación de tarifas progresivas
+
+**🔧 FUNCIÓN COMPLETAMENTE REESCRITA:**
+```python
+def _calcular_retencion_articulo_383_separado(self, analisis):
+    """
+    🆕 FUNCIÓN MODIFICADA: Cálculo del Artículo 383 con VALIDACIONES MANUALES.
+    Gemini solo identifica datos, Python valida y calcula según normativa.
+    """
+    # PASO 1: VALIDACIONES BÁSICAS OBLIGATORIAS
+    # PASO 2: VALIDACIÓN DE PRIMER PAGO Y PLANILLA
+    # PASO 3: VALIDACIÓN DE FECHA DE PLANILLA
+    # PASO 4: EXTRACCIÓN Y VALIDACIÓN DEL INGRESO
+    # PASO 5: VALIDACIÓN DEL IBC (40% DEL INGRESO)
+    # PASO 6: VALIDACIONES DE DEDUCCIONES MANUALES
+    # PASO 7: CÁLCULO FINAL CON VALIDACIONES
+    # PASO 8: PREPARAR RESULTADO FINAL
+```
+
+**🔍 VALIDACIONES ESPECÍFICAS DE DEDUCCIONES:**
+- **🏠 Intereses por vivienda**: 
+  ```python
+  if intereses_corrientes > 0.0 and certificado_bancario:
+      valor_mensual = intereses_corrientes / 12
+      limite_uvt = 100 * UVT_2025
+      deduccion = min(valor_mensual, limite_uvt)
+  ```
+- **👥 Dependientes económicos**:
+  ```python
+  if declaracion_juramentada:
+      deduccion = ingreso_bruto * 0.10  # 10% del ingreso
+  ```
+- **🏥 Medicina prepagada**:
+  ```python
+  if valor_sin_iva > 0.0 and certificado_medicina:
+      valor_mensual = valor_sin_iva / 12
+      limite_uvt = 16 * UVT_2025
+      deduccion = min(valor_mensual, limite_uvt)
+  ```
+- **💰 AFC (Ahorro Fomento Construcción)**:
+  ```python
+  if valor_depositar > 0.0 and planilla_afc:
+      limite_porcentaje = ingreso_bruto * 0.25
+      limite_uvt = 316 * UVT_2025
+      deduccion = min(valor_depositar, limite_porcentaje, limite_uvt)
+  ```
+- **🏦 Pensiones voluntarias**:
+  ```python
+  if planilla_presente and IBC >= (4 * SMMLV_2025):
+      deduccion = IBC_seguridad_social * 0.01  # 1% del IBC
+  ```
+
+**✅ RESULTADOS DE LA NUEVA IMPLEMENTACIÓN:**
+```
+✅ Eliminación total de alucinaciones en Art. 383
+✅ Validaciones estrictas según normativa colombiana
+✅ Mensajes de error específicos y claros
+✅ Trazabilidad completa con logging detallado
+✅ Control total del flujo de cálculo
+✅ Compatibilidad mantenida con ResultadoLiquidacion
+✅ Mayor confiabilidad en cálculos de personas naturales
+```
+
+**🚀 MIGRACIÓN AUTOMÁTICA - SIN CONFIGURACIÓN REQUERIDA:**
+- ✅ **Prompt actualizado automáticamente**: Gemini ahora solo identifica
+- ✅ **Función actualizada**: Validaciones manuales implementadas
+- ✅ **Endpoint sin cambios**: `/api/procesar-facturas` funciona exactamente igual
+- ✅ **Formato mantenido**: Mismo `ResultadoLiquidacion` con nueva precisión
+- ✅ **Sin breaking changes**: Aplicaciones existentes funcionan sin modificación
+
+---
+
+### ✅ **VERSIÓN ANTERIOR v2.9.3 (2025-09-13)**
 
 **🆕 NUEVA ESTRUCTURA DE RESULTADOS - TRANSPARENCIA TOTAL POR CONCEPTO:**
 - 🔍 **Problema identificado**: El sistema mostraba tarifa promedio en lugar de detalles individuales por concepto

@@ -378,20 +378,61 @@ class DeduccionArticulo383(BaseModel):
     valor: float = 0.0
     tiene_soporte: bool = False
     limite_aplicable: float = 0.0
-
+    
+class ConceptoIdentificadoArt383(BaseModel):
+    """Concepto identificado específico para Artículo 383"""
+    concepto: str
+    base_gravable: float = 0.0
+    
+    
 class CondicionesArticulo383(BaseModel):
+    """Condiciones cumplidas para aplicar Artículo 383 - NUEVA ESTRUCTURA"""
     es_persona_natural: bool = False
-    concepto_aplicable: bool = False
-    es_primer_pago: bool = False  # NUEVO CAMPO
+    conceptos_identificados: List[ConceptoIdentificadoArt383] = []
+    conceptos_aplicables: bool = False
+    ingreso: float = 0.0
+    es_primer_pago: bool = False
+    documento_soporte: bool = False
+    
+    
+class InteresesVivienda(BaseModel):
+    """Información de intereses por vivienda"""
+    intereses_corrientes: float = 0.0
+    certificado_bancario: bool = False
+
+class DependientesEconomicos(BaseModel):
+    """Información de dependientes económicos"""
+    nombre_encargado: str = ""
+    declaracion_juramentada: bool = False
+
+# 🆕 MODELO PARA MEDICINA PREPAGADA
+class MedicinaPrepagada(BaseModel):
+    """Información de medicina prepagada"""
+    valor_sin_iva_med_prepagada: float = 0.0
+    certificado_med_prepagada: bool = False
+
+# 🆕 MODELO PARA AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN)
+class AFCInfo(BaseModel):
+    """Información de AFC (Ahorro para Fomento a la Construcción)"""
+    valor_a_depositar: float = 0.0
+    planilla_de_cuenta_AFC: bool = False
+
+# 🆕 MODELO PARA PLANILLA DE SEGURIDAD SOCIAL
+class PlanillaSeguridadSocial(BaseModel):
+    """Información de planilla de seguridad social"""
+    IBC_seguridad_social: float = 0.0
     planilla_seguridad_social: bool = False
-    cuenta_cobro: bool = False
+    fecha_de_planilla_seguridad_social: str = "0000-00-00"
 
+    
 class DeduccionesArticulo383(BaseModel):
-    intereses_vivienda: DeduccionArticulo383 = DeduccionArticulo383()
-    dependientes_economicos: DeduccionArticulo383 = DeduccionArticulo383()
-    medicina_prepagada: DeduccionArticulo383 = DeduccionArticulo383()
-    rentas_exentas: DeduccionArticulo383 = DeduccionArticulo383()
-
+    
+    intereses_vivienda: InteresesVivienda = InteresesVivienda()
+    dependientes_economicos: DependientesEconomicos = DependientesEconomicos()
+    medicina_prepagada: MedicinaPrepagada = MedicinaPrepagada()
+    AFC: AFCInfo = AFCInfo()
+    planilla_seguridad_social: PlanillaSeguridadSocial = PlanillaSeguridadSocial()
+    
 class CalculoArticulo383(BaseModel):
     ingreso_bruto: float = 0.0
     aportes_seguridad_social: float = 0.0
@@ -403,13 +444,12 @@ class CalculoArticulo383(BaseModel):
     valor_retencion_art383: float = 0.0
 
 class InformacionArticulo383(BaseModel):
-    aplica: bool = False
+    
     condiciones_cumplidas: CondicionesArticulo383 = CondicionesArticulo383()
-    deducciones_identificadas: Optional[DeduccionesArticulo383] = DeduccionesArticulo383()
-    calculo: Optional[CalculoArticulo383] = CalculoArticulo383()
-
+    deducciones_identificadas: DeduccionesArticulo383 = DeduccionesArticulo383()
+    
 class AnalisisFactura(BaseModel):
-    aplica_retencion: bool  # 🆕 CAMPO SINCRONIZADO AGREGADO
+    aplica_retencion: bool  #  CAMPO SINCRONIZADO AGREGADO
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
     articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN

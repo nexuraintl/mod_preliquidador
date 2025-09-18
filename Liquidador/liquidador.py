@@ -40,39 +40,70 @@ class NaturalezaTercero(BaseModel):
     es_autorretenedor: Optional[bool] = None
     es_responsable_iva: Optional[bool] = None  # NUEVA VALIDACIÓN
 
-# NUEVOS MODELOS PARA ARTÍCULO 383
-class DeduccionArticulo383(BaseModel):
-    valor: float = 0.0
-    tiene_soporte: bool = False
-    limite_aplicable: float = 0.0
+# NUEVOS MODELOS PARA ARTÍCULO 383 - ESTRUCTURA ACTUALIZADA PARA GEMINI
 
+# 🆕 MODELO PARA CONCEPTOS IDENTIFICADOS EN ART 383
+class ConceptoIdentificadoArt383(BaseModel):
+    """Concepto identificado específico para Artículo 383"""
+    concepto: str
+    base_gravable: float = 0.0
+
+# 🆕 MODELO ACTUALIZADO PARA CONDICIONES ART 383
 class CondicionesArticulo383(BaseModel):
+    """Condiciones cumplidas para aplicar Artículo 383 - NUEVA ESTRUCTURA"""
     es_persona_natural: bool = False
-    concepto_aplicable: bool = False
+    conceptos_identificados: List[ConceptoIdentificadoArt383] = []
+    conceptos_aplicables: bool = False
+    ingreso: float = 0.0
+    es_primer_pago: bool = False
+    documento_soporte: bool = False
+
+# 🆕 MODELO PARA INTERESES POR VIVIENDA
+class InteresesVivienda(BaseModel):
+    """Información de intereses por vivienda"""
+    intereses_corrientes: float = 0.0
+    certificado_bancario: bool = False
+
+# 🆕 MODELO PARA DEPENDIENTES ECONÓMICOS
+class DependientesEconomicos(BaseModel):
+    """Información de dependientes económicos"""
+    nombre_encargado: str = ""
+    declaracion_juramentada: bool = False
+
+# 🆕 MODELO PARA MEDICINA PREPAGADA
+class MedicinaPrepagada(BaseModel):
+    """Información de medicina prepagada"""
+    valor_sin_iva_med_prepagada: float = 0.0
+    certificado_med_prepagada: bool = False
+
+# 🆕 MODELO PARA AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN)
+class AFCInfo(BaseModel):
+    """Información de AFC (Ahorro para Fomento a la Construcción)"""
+    valor_a_depositar: float = 0.0
+    planilla_de_cuenta_AFC: bool = False
+
+# 🆕 MODELO PARA PLANILLA DE SEGURIDAD SOCIAL
+class PlanillaSeguridadSocial(BaseModel):
+    """Información de planilla de seguridad social"""
+    IBC_seguridad_social: float = 0.0
     planilla_seguridad_social: bool = False
-    cuenta_cobro: bool = False
+    fecha_de_planilla_seguridad_social: str = "0000-00-00"
 
+# 🆕 MODELO ACTUALIZADO PARA DEDUCCIONES ART 383
 class DeduccionesArticulo383(BaseModel):
-    intereses_vivienda: DeduccionArticulo383 = DeduccionArticulo383()
-    dependientes_economicos: DeduccionArticulo383 = DeduccionArticulo383()
-    medicina_prepagada: DeduccionArticulo383 = DeduccionArticulo383()
-    rentas_exentas: DeduccionArticulo383 = DeduccionArticulo383()
+    """Deducciones identificadas para Artículo 383 - NUEVA ESTRUCTURA"""
+    intereses_vivienda: InteresesVivienda = InteresesVivienda()
+    dependientes_economicos: DependientesEconomicos = DependientesEconomicos()
+    medicina_prepagada: MedicinaPrepagada = MedicinaPrepagada()
+    AFC: AFCInfo = AFCInfo()
+    planilla_seguridad_social: PlanillaSeguridadSocial = PlanillaSeguridadSocial()
 
-class CalculoArticulo383(BaseModel):
-    ingreso_bruto: float = 0.0
-    aportes_seguridad_social: float = 0.0
-    total_deducciones: float = 0.0
-    deducciones_limitadas: float = 0.0
-    base_gravable_final: float = 0.0
-    base_gravable_uvt: float = 0.0
-    tarifa_aplicada: float = 0.0
-    valor_retencion_art383: float = 0.0
-
+# 🆕 MODELO ACTUALIZADO PARA INFORMACIÓN ART 383
 class InformacionArticulo383(BaseModel):
-    aplica: bool = False
+    
     condiciones_cumplidas: CondicionesArticulo383 = CondicionesArticulo383()
     deducciones_identificadas: DeduccionesArticulo383 = DeduccionesArticulo383()
-    calculo: CalculoArticulo383 = CalculoArticulo383()
+    
 
 class AnalisisFactura(BaseModel):
     aplica_retencion: bool  #  CAMPO SINCRONIZADO AGREGADO
@@ -177,9 +208,9 @@ class LiquidadorRetencion:
             else:
                 # Si falla el cálculo del Art. 383, continuar con cálculo tradicional
                 mensajes_error.extend(resultado_art383["mensajes_error"])
-                mensajes_error.append("Aplicando tarifa convencional por fallos en Art. 383")
-                logger.warning(" Fallback a tarifa convencional por errores en Art. 383")
-        
+                mensajes_error.append("Aplicando tarifa convencional porque no aplica Art. 383")
+                logger.warning(" Fallback a tarifa convencional porque no aplica Art. 383")
+
         elif analisis.articulo_383 and not analisis.articulo_383.aplica:
             # Explicar por qué no aplica Art. 383
             self._agregar_observaciones_art383_no_aplica(analisis.articulo_383, mensajes_error)
@@ -431,10 +462,9 @@ class LiquidadorRetencion:
     
     def _calcular_retencion_articulo_383_separado(self, analisis: AnalisisFactura) -> Dict[str, Any]:
         """
-         NUEVA FUNCIÓN SEPARADA: Cálculo del Artículo 383 con análisis independiente.
-        
-        Esta función procesa los resultados del análisis separado de Gemini para el Artículo 383
-        y realiza los cálculos de retención con tarifas progresivas.
+         FUNCIÓN MODIFICADA: Cálculo del Artículo 383 con VALIDACIONES MANUALES.
+    
+        Gemini solo identifica datos, Python valida y calcula según normativa.
         
         Args:
             analisis: Análisis de factura que incluye el resultado del Art 383 de Gemini
@@ -442,108 +472,375 @@ class LiquidadorRetencion:
         Returns:
             Dict[str, Any]: Resultado del cálculo separado del Art. 383
         """
-        logger.info(" Iniciando cálculo separado del Artículo 383")
+        logger.info(" Iniciando cálculo Artículo 383 con validaciones manuales")
         
         try:
             # Verificar que existe información del Art 383
-            if not analisis.articulo_383 or not analisis.articulo_383.aplica:
+            if not analisis.articulo_383:
                 return {
                     "puede_liquidar": False,
-                    "mensajes_error": ["No se puede calcular Art 383: análisis indica que no aplica"]
+                    "mensajes_error": ["No se puede calcular Art 383: no hay análisis disponible"]
                 }
             
             art383 = analisis.articulo_383
+            mensajes_error = []
             
             # Importar constantes del Artículo 383
+            from datetime import datetime, timedelta
             from config import (
                 UVT_2025, SMMLV_2025, obtener_tarifa_articulo_383, 
                 calcular_limite_deduccion, LIMITES_DEDUCCIONES_ART383
             )
             
-            # PASO 1: Extraer información del ingreso bruto desde los conceptos identificados
-            ingreso_bruto = analisis.valor_total or 0.0
+            # ===============================
+            #  PASO 1: VALIDACIONES BÁSICAS OBLIGATORIAS
+            # ===============================
+            
+            logger.info(" Paso 1: Validaciones básicas...")
+            
+            # Extraer datos identificados por Gemini
+            condiciones = art383.condiciones_cumplidas if hasattr(art383, 'condiciones_cumplidas') else None
+            deducciones = art383.deducciones_identificadas if hasattr(art383, 'deducciones_identificadas') else None
+            
+            if not condiciones:
+                return {
+                    "puede_liquidar": False,
+                    "mensajes_error": ["Art 383: No se pudieron extraer las condiciones del análisis de Gemini"]
+                }
+            
+            # VALIDACIÓN 1.1: Persona natural
+            es_persona_natural = getattr(condiciones, 'es_persona_natural', False)
+            if not es_persona_natural:
+                return {
+                    "puede_liquidar": False,
+                    "mensajes_error": ["Art 383: NO APLICA - El tercero no es persona natural"]
+                }
+            logger.info(" Validación 1.1: Es persona natural")
+            
+            # VALIDACIÓN 1.2: Conceptos aplicables
+            conceptos_aplicables = getattr(condiciones, 'conceptos_aplicables', False)
+            if not conceptos_aplicables:
+                return {
+                    "puede_liquidar": False,
+                    "mensajes_error": ["Art 383: NO APLICA - Los conceptos identificados no son aplicables para Art. 383"]
+                }
+            logger.info(" Validación 1.2: Conceptos aplicables para Art. 383")
+            
+            # ===============================
+            #  PASO 2: VALIDACIÓN DE PRIMER PAGO Y PLANILLA
+            # ===============================
+            
+            logger.info(" Paso 2: Validación primer pago y planilla...")
+            
+            es_primer_pago = getattr(condiciones, 'es_primer_pago', False)
+            planilla_seguridad_social = False
+            fecha_planilla = "0000-00-00"
+            IBC_seguridad_social = 0.0
+            
+            # Extraer información de planilla de seguridad social
+            if deducciones and hasattr(deducciones, 'planilla_seguridad_social'):
+                planilla_info = deducciones.planilla_seguridad_social
+                planilla_seguridad_social = getattr(planilla_info, 'planilla_seguridad_social', False)
+                fecha_planilla = getattr(planilla_info, 'fecha_de_planilla_seguridad_social', "0000-00-00")
+                IBC_seguridad_social = getattr(planilla_info, 'IBC_seguridad_social', 0.0)
+            
+            # VALIDACIÓN 2.1: Si NO es primer pago, planilla es OBLIGATORIA
+            if not es_primer_pago and not planilla_seguridad_social:
+                return {
+                    "puede_liquidar": False,
+                    "mensajes_error": [
+                        "Art 383: NO APLICA - No es primer pago y no se encontró planilla de seguridad social",
+                        "La planilla de seguridad social es OBLIGATORIA cuando no es primer pago"
+                    ]
+                }
+            
+            if es_primer_pago:
+                logger.info(" Validación 2.1: Es primer pago - planilla no obligatoria")
+            else:
+                logger.info(" Validación 2.1: No es primer pago pero planilla presente")
+            
+            # ===============================
+            #  PASO 3: VALIDACIÓN DE FECHA DE PLANILLA
+            # ===============================
+            
+            if planilla_seguridad_social and fecha_planilla != "0000-00-00":
+                logger.info(" Paso 3: Validación fecha de planilla...")
+
+                try:
+                    from dateutil.relativedelta import relativedelta
+                    
+                    # Parsear fecha de planilla
+                    fecha_planilla_obj = datetime.strptime(fecha_planilla, "%Y-%m-%d")
+                    fecha_actual = datetime.now()
+                    
+                    # Calcular diferencia exacta
+                    diferencia = relativedelta(fecha_actual, fecha_planilla_obj)
+                    diferencia_total_dias = (fecha_actual - fecha_planilla_obj).days
+                    
+                    # VALIDACIÓN 3.1: Planilla no debe tener más de 60 días de antigüedad
+                    if diferencia_total_dias > 60:
+                        mensajes_error.append(f" ALERTA: Planilla con {diferencia_total_dias} días de antigüedad")
+                        mensajes_error.append(f"Detalle: {diferencia.years} años, {diferencia.months} meses, {diferencia.days} días extras")
+                        mensajes_error.append("Art 383: NO APLICA - La planilla tiene más de 60 días de antigüedad")
+                        mensajes_error.append("Normativa: La planilla debe ser reciente (máximo 60 días)")
+                        return {
+                            "puede_liquidar": False,
+                            "mensajes_error": mensajes_error
+                        }
+                    
+                    logger.info(f" Validación 3.1: Planilla válida ({diferencia_total_dias} días de antigüedad)")
+                    logger.info(f"Detalle preciso: {diferencia.years} años, {diferencia.months} meses, {diferencia.days} días")
+                    
+                except ImportError:
+                    # Fallback si dateutil no está disponible
+                    logger.warning("dateutil no disponible, usando cálculo simple")
+                    diferencia_dias_simple = (fecha_actual - fecha_planilla_obj).days
+                    
+                    if diferencia_dias_simple > 60:
+                        mensajes_error.append(f" ALERTA: Planilla con {diferencia_dias_simple} días de antigüedad")
+                        mensajes_error.append("Art 383: NO APLICA - La planilla tiene más de 60 días de antigüedad")
+                        return {
+                            "puede_liquidar": False,
+                            "mensajes_error": mensajes_error
+                        }
+
+                    logger.info(f" Validación: Planilla válida ({diferencia_dias_simple} días de antigüedad)")
+
+                except ValueError:
+                    mensajes_error.append(f" ADVERTENCIA: No se pudo validar la fecha de planilla: {fecha_planilla}")
+                    logger.warning(f"Fecha de planilla inválida: {fecha_planilla}")
+            
+            # ===============================
+            #  PASO 4: EXTRACCIÓN Y VALIDACIÓN DEL INGRESO
+            # ===============================
+            
+            logger.info(" Paso 4: Extracción del ingreso...")
+            
+            # Extraer ingreso identificado por Gemini
+            ingreso_bruto = getattr(condiciones, 'ingreso', 0.0)
+            
+            # Si Gemini no identificó ingreso, intentar desde otros campos
             if ingreso_bruto <= 0:
-                # Intentar calcular desde conceptos identificados
-                for concepto in analisis.conceptos_identificados:
-                    if concepto.base_gravable and concepto.base_gravable > 0:
-                        ingreso_bruto = concepto.base_gravable
-                        break
-                
+                ingreso_bruto = analisis.valor_total or 0.0
                 if ingreso_bruto <= 0:
-                    return {
-                        "puede_liquidar": False,
-                        "mensajes_error": ["No se pudo determinar el ingreso bruto para Art. 383"]
-                    }
+                    # Intentar sumar desde TODOS los conceptos identificados
+                    suma_bases_conceptos = 0.0
+                    conceptos_con_base = []
+                    
+                    for concepto in analisis.conceptos_identificados:
+                        if concepto.base_gravable and concepto.base_gravable > 0:
+                            suma_bases_conceptos += concepto.base_gravable
+                            conceptos_con_base.append(f"{concepto.concepto}: ${concepto.base_gravable:,.2f}")
+                    
+                    if suma_bases_conceptos > 0:
+                        ingreso_bruto = suma_bases_conceptos
+                        logger.info(f" Ingreso calculado sumando {len(conceptos_con_base)} conceptos: ${ingreso_bruto:,.2f}")
+                        logger.info(f"   Detalle conceptos: {', '.join(conceptos_con_base)}")
+                    else:
+                        logger.warning("No se encontraron conceptos con base gravable válida")
+            
+            if ingreso_bruto <= 0:
+                return {
+                    "puede_liquidar": False,
+                    "mensajes_error": ["Art 383: NO se pudo determinar el ingreso bruto"]
+                }
             
             logger.info(f" Ingreso bruto identificado: ${ingreso_bruto:,.2f}")
             
-            # PASO 2: Calcular aportes a seguridad social (40% del ingreso)
-            aportes_seguridad_social = ingreso_bruto * LIMITES_DEDUCCIONES_ART383["seguridad_social_porcentaje"]
-            logger.info(f" Aportes seguridad social (40%): ${aportes_seguridad_social:,.2f}")
+            # ===============================
+            #  PASO 5: VALIDACIÓN DEL IBC (40% DEL INGRESO)
+            # ===============================
             
-            # PASO 3: Procesar deducciones identificadas por Gemini
-            deducciones_aplicables = self._procesar_deducciones_art383(art383.deducciones_identificadas, ingreso_bruto)
+            if planilla_seguridad_social and IBC_seguridad_social > 0:
+                logger.info(" Paso 5: Validación IBC vs 40% del ingreso...")
+                
+                ibc_esperado = ingreso_bruto * 0.40  # 40% del ingreso
+                diferencia_ibc = abs(IBC_seguridad_social - ibc_esperado)
+                tolerancia = ibc_esperado * 0.01  # 1% de tolerancia
+
+                # VALIDACIÓN 5.1: IBC debe ser aproximadamente 40% del ingreso
+                if diferencia_ibc > tolerancia:
+                    mensajes_error.append(f" ALERTA IBC: IBC identificado ${IBC_seguridad_social:,.2f} no coincide con 40% del ingreso ${ibc_esperado:,.2f}")
+                    mensajes_error.append(f"Diferencia: ${diferencia_ibc:,.2f} (tolerancia: ${tolerancia:,.2f})")
+                    mensajes_error.append("Se continúa con el cálculo usando el ingreso identificado")
+                    logger.warning(f"IBC no coincide con 40% del ingreso. IBC: ${IBC_seguridad_social:,.2f}, Esperado: ${ibc_esperado:,.2f}")
+                else:
+                    logger.info(f" Validación 5.1: IBC válido (${IBC_seguridad_social:,.2f} ≈ 40% del ingreso)")
+            
+            # ===============================
+            #  PASO 6: VALIDACIONES DE DEDUCCIONES MANUALES
+            # ===============================
+
+            logger.info(" Paso 6: Validaciones de deducciones...")
+
+            deducciones_aplicables = {
+                "intereses_vivienda": 0.0,
+                "dependientes_economicos": 0.0,
+                "medicina_prepagada": 0.0,
+                "AFC": 0.0,
+                "pensiones_voluntarias": 0.0
+            }
+            
+            if deducciones:
+                # VALIDACIÓN 6.1: Intereses corrientes por vivienda
+                if hasattr(deducciones, 'intereses_vivienda'):
+                    intereses_info = deducciones.intereses_vivienda
+                    intereses_corrientes = getattr(intereses_info, 'intereses_corrientes', 0.0)
+                    certificado_bancario = getattr(intereses_info, 'certificado_bancario', False)
+                    
+                    if intereses_corrientes > 0.0 and certificado_bancario:
+                        # Dividir entre 12 (mensual) y limitar a 100 UVT
+                        valor_mensual = intereses_corrientes / 12
+                        limite_uvt = 100 * UVT_2025
+                        deducciones_aplicables["intereses_vivienda"] = min(valor_mensual, limite_uvt)
+                        logger.info(f" Intereses vivienda aplicados: ${deducciones_aplicables['intereses_vivienda']:,.2f}")
+                    elif intereses_corrientes > 0.0 and not certificado_bancario:
+                        mensajes_error.append("⚠️ Intereses vivienda identificados pero falta certificado bancario")
+                
+                # VALIDACIÓN 6.2: Dependientes económicos
+                if hasattr(deducciones, 'dependientes_economicos'):
+                    dependientes_info = deducciones.dependientes_economicos
+                    declaracion_juramentada = getattr(dependientes_info, 'declaracion_juramentada', False)
+                    
+                    if declaracion_juramentada:
+                        # Aplicar 10% del ingreso
+                        deducciones_aplicables["dependientes_economicos"] = ingreso_bruto * 0.10
+                        logger.info(f" Dependientes económicos aplicados: ${deducciones_aplicables['dependientes_economicos']:,.2f}")
+
+                # VALIDACIÓN 6.3: Medicina prepagada
+                if hasattr(deducciones, 'medicina_prepagada'):
+                    medicina_info = deducciones.medicina_prepagada
+                    valor_sin_iva = getattr(medicina_info, 'valor_sin_iva_med_prepagada', 0.0)
+                    certificado_medicina = getattr(medicina_info, 'certificado_med_prepagada', False)
+                    
+                    if valor_sin_iva > 0.0 and certificado_medicina:
+                        # Dividir entre 12 y limitar a 16 UVT
+                        valor_mensual = valor_sin_iva / 12
+                        limite_uvt = 16 * UVT_2025
+                        deducciones_aplicables["medicina_prepagada"] = min(valor_mensual, limite_uvt)
+                        logger.info(f" Medicina prepagada aplicada: ${deducciones_aplicables['medicina_prepagada']:,.2f}")
+                    elif valor_sin_iva > 0.0 and not certificado_medicina:
+                        mensajes_error.append(" Medicina prepagada identificada pero falta certificado")
+                
+                # VALIDACIÓN 6.4: AFC (Ahorro para Fomento a la Construcción)
+                if hasattr(deducciones, 'AFC'):
+                    afc_info = deducciones.AFC
+                    valor_depositar = getattr(afc_info, 'valor_a_depositar', 0.0)
+                    planilla_afc = getattr(afc_info, 'planilla_de_cuenta_AFC', False)
+                    
+                    if valor_depositar > 0.0 and planilla_afc:
+                        # Limitar al 25% del ingreso y 316 UVT
+                        limite_porcentaje = ingreso_bruto * 0.25
+                        limite_uvt = 316 * UVT_2025
+                        deducciones_aplicables["AFC"] = min(valor_depositar, limite_porcentaje, limite_uvt)
+                        logger.info(f" AFC aplicado: ${deducciones_aplicables['AFC']:,.2f}")
+                    elif valor_depositar > 0.0 and not planilla_afc:
+                        mensajes_error.append(" AFC identificado pero falta planilla de cuenta")
+                
+                # VALIDACIÓN 6.5: Pensiones voluntarias
+                if planilla_seguridad_social and IBC_seguridad_social >= (4 * SMMLV_2025):
+                    # Solo si IBC >= 4 SMMLV
+                    deducciones_aplicables["pensiones_voluntarias"] = IBC_seguridad_social * 0.01  # 1% del IBC
+                    logger.info(f" Pensiones voluntarias aplicadas: ${deducciones_aplicables['pensiones_voluntarias']:,.2f}")
+            
+            # ===============================
+            #  PASO 7: CÁLCULO FINAL CON VALIDACIONES
+            # ===============================
+            
+            logger.info(" Paso 7: Cálculo final...")
+            
+            # Calcular aportes a seguridad social (40% del ingreso)
+            aportes_seguridad_social = ingreso_bruto * LIMITES_DEDUCCIONES_ART383["seguridad_social_porcentaje"]
+            
+            # Sumar todas las deducciones aplicables
             total_deducciones = sum(deducciones_aplicables.values())
             
-            # PASO 4: Aplicar límite máximo del 40% del ingreso bruto
+            # Aplicar límite máximo del 40% del ingreso bruto
             limite_maximo_deducciones = ingreso_bruto * LIMITES_DEDUCCIONES_ART383["deducciones_maximas_porcentaje"]
             deducciones_limitadas = min(total_deducciones, limite_maximo_deducciones)
             
             if total_deducciones > limite_maximo_deducciones:
-                logger.warning(f" Deducciones limitadas al 40%: ${deducciones_limitadas:,.2f} (original: ${total_deducciones:,.2f})")
+                mensajes_error.append(f" Deducciones limitadas al 40% del ingreso: ${deducciones_limitadas:,.2f} (original: ${total_deducciones:,.2f})")
+                logger.warning(f"Deducciones limitadas al 40%: ${deducciones_limitadas:,.2f}")
             
-            # PASO 5: Calcular base gravable final
+            # Calcular base gravable final
             base_gravable_final = ingreso_bruto - aportes_seguridad_social - deducciones_limitadas
             
             # Verificar que la base gravable no sea negativa
             if base_gravable_final < 0:
-                logger.warning(" Base gravable negativa, estableciendo en 0")
+                logger.warning("Base gravable negativa, estableciendo en 0")
                 base_gravable_final = 0
             
-            logger.info(f" Base gravable final: ${base_gravable_final:,.2f}")
-            
-            # PASO 6: Convertir base gravable a UVT
+            # Convertir base gravable a UVT
             base_gravable_uvt = base_gravable_final / UVT_2025
-            logger.info(f" Base gravable en UVT: {base_gravable_uvt:.2f} UVT")
             
-            # PASO 7: Aplicar tarifa progresiva del Artículo 383
+            # Aplicar tarifa progresiva del Artículo 383
             tarifa_art383 = obtener_tarifa_articulo_383(base_gravable_final)
             valor_retencion_art383 = base_gravable_final * tarifa_art383
             
-            logger.info(f" Tarifa Art. 383: {tarifa_art383*100:.1f}%")
-            logger.info(f" Retención Art. 383: ${valor_retencion_art383:,.2f}")
+            logger.info(f" Cálculo completado:")
+            logger.info(f"   - Ingreso bruto: ${ingreso_bruto:,.2f}")
+            logger.info(f"   - Aportes seg. social: ${aportes_seguridad_social:,.2f}")
+            logger.info(f"   - Deducciones: ${deducciones_limitadas:,.2f}")
+            logger.info(f"   - Base gravable: ${base_gravable_final:,.2f}")
+            logger.info(f"   - Tarifa: {tarifa_art383*100:.1f}%")
+            logger.info(f"   - Retención: ${valor_retencion_art383:,.2f}")
             
-            # PASO 8: Preparar mensajes explicativos
-            mensajes_detalle = self._generar_mensajes_detalle_art383(
-                ingreso_bruto, aportes_seguridad_social, deducciones_limitadas, 
-                deducciones_aplicables, base_gravable_final, base_gravable_uvt, 
-                tarifa_art383, valor_retencion_art383
-            )
+            # ===============================
+            #  PASO 8: PREPARAR RESULTADO FINAL
+            # ===============================
             
-            # PASO 9: Crear resultado con nueva estructura
+            # Preparar mensajes explicativos
+            mensajes_detalle = [
+                " Cálculo Artículo 383 - VALIDACIONES MANUALES APLICADAS:",
+                f" Validaciones básicas: Persona natural + Conceptos aplicables",
+                f" Primer pago: {'SÍ' if es_primer_pago else 'NO'} - Planilla: {'Presente' if planilla_seguridad_social else 'No requerida'}",
+                f" Ingreso bruto: ${ingreso_bruto:,.2f}",
+                f" Aportes seguridad social (40%): ${aportes_seguridad_social:,.2f}",
+                f" Deducciones aplicables: ${deducciones_limitadas:,.2f}"
+            ]
+            
+            # Detallar deducciones aplicadas
+            for tipo, valor in deducciones_aplicables.items():
+                if valor > 0:
+                    nombre_deduccion = tipo.replace("_", " ").title()
+                    mensajes_detalle.append(f"   - {nombre_deduccion}: ${valor:,.2f}")
+            
+            mensajes_detalle.extend([
+                f" Base gravable final: ${base_gravable_final:,.2f}",
+                f" Base gravable en UVT: {base_gravable_uvt:.2f} UVT",
+                f" Tarifa aplicada: {tarifa_art383*100:.1f}%",
+                f" Retención calculada: ${valor_retencion_art383:,.2f}",
+                " Cálculo completado con validaciones manuales"
+            ])
+            
+            # Agregar mensajes de error/alertas al detalle
+            if mensajes_error:
+                mensajes_detalle.extend(["", " ALERTAS Y OBSERVACIONES:"] + mensajes_error)
+            
+            # Crear resultado con nueva estructura
             concepto_original = analisis.conceptos_identificados[0].concepto if analisis.conceptos_identificados else "Honorarios y servicios"
-            concepto_art383_separado = f"Artículo 383 - {concepto_original}"
+            concepto_art383_validado = f"Artículo 383 (Validado) - {concepto_original}"
             
-            # 🆕 NUEVA ESTRUCTURA: Crear detalle del concepto Art. 383 separado
-            detalle_concepto_art383_separado = DetalleConcepto(
-                concepto=concepto_art383_separado,
+            # Crear detalle del concepto Art. 383 validado manualmente
+            detalle_concepto_art383_validado = DetalleConcepto(
+                concepto=concepto_art383_validado,
                 tarifa_retencion=tarifa_art383,
                 base_gravable=base_gravable_final,
                 valor_retencion=valor_retencion_art383
             )
             
             # Generar resumen descriptivo
-            resumen_art383_separado = f"{concepto_art383_separado} ({tarifa_art383*100:.1f}%)"
+            resumen_art383_validado = f"{concepto_art383_validado} ({tarifa_art383*100:.1f}%)"
             
             resultado = ResultadoLiquidacion(
                 valor_base_retencion=base_gravable_final,
                 valor_retencion=valor_retencion_art383,
-                conceptos_aplicados=[detalle_concepto_art383_separado],  # 🆕 NUEVO: Lista con concepto individual
-                resumen_conceptos=resumen_art383_separado,  # 🆕 NUEVO: Resumen descriptivo
+                conceptos_aplicados=[detalle_concepto_art383_validado],
+                resumen_conceptos=resumen_art383_validado,
                 fecha_calculo=datetime.now().isoformat(),
                 puede_liquidar=True,
                 mensajes_error=mensajes_detalle,
-        
             )
             
             return {
@@ -553,10 +850,10 @@ class LiquidadorRetencion:
             }
             
         except Exception as e:
-            logger.error(f"💥 Error en cálculo separado Art. 383: {e}")
+            logger.error(f"💥 Error en cálculo Art. 383 con validaciones manuales: {e}")
             return {
                 "puede_liquidar": False,
-                "mensajes_error": [f"Error en cálculo separado Art. 383: {str(e)}"]
+                "mensajes_error": [f"Error en cálculo validado Art. 383: {str(e)}"]
             }
     
     def _procesar_deducciones_art383(self, deducciones_identificadas, ingreso_bruto: float) -> Dict[str, float]:

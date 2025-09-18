@@ -63,39 +63,71 @@ class NaturalezaTercero(BaseModel):
     es_autorretenedor: Optional[bool] = None
     es_responsable_iva: Optional[bool] = None  # NUEVA VALIDACIÓN
 
-# NUEVOS MODELOS PARA ARTÍCULO 383
-class DeduccionArticulo383(BaseModel):
-    valor: float = 0.0
-    tiene_soporte: bool = False
-    limite_aplicable: float = 0.0
+# NUEVOS MODELOS PARA ARTÍCULO 383 - ESTRUCTURA ACTUALIZADA PARA GEMINI
 
+# 🆕 MODELO PARA CONCEPTOS IDENTIFICADOS EN ART 383
+class ConceptoIdentificadoArt383(BaseModel):
+    """Concepto identificado específico para Artículo 383"""
+    concepto: str
+    base_gravable: float = 0.0
+
+# 🆕 MODELO ACTUALIZADO PARA CONDICIONES ART 383
 class CondicionesArticulo383(BaseModel):
+    """Condiciones cumplidas para aplicar Artículo 383 - NUEVA ESTRUCTURA"""
     es_persona_natural: bool = False
-    concepto_aplicable: bool = False
-    es_primer_pago: bool = False  # NUEVO CAMPO
+    conceptos_identificados: List[ConceptoIdentificadoArt383] = []
+    conceptos_aplicables: bool = False
+    ingreso: float = 0.0
+    es_primer_pago: bool = False
+    documento_soporte: bool = False
+
+# 🆕 MODELO PARA INTERESES POR VIVIENDA
+class InteresesVivienda(BaseModel):
+    """Información de intereses por vivienda"""
+    intereses_corrientes: float = 0.0
+    certificado_bancario: bool = False
+
+# 🆕 MODELO PARA DEPENDIENTES ECONÓMICOS
+class DependientesEconomicos(BaseModel):
+    """Información de dependientes económicos"""
+    nombre_encargado: str = ""
+    declaracion_juramentada: bool = False
+
+# 🆕 MODELO PARA MEDICINA PREPAGADA
+class MedicinaPrepagada(BaseModel):
+    """Información de medicina prepagada"""
+    valor_sin_iva_med_prepagada: float = 0.0
+    certificado_med_prepagada: bool = False
+
+# 🆕 MODELO PARA AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN)
+class AFCInfo(BaseModel):
+    """Información de AFC (Ahorro para Fomento a la Construcción)"""
+    valor_a_depositar: float = 0.0
+    planilla_de_cuenta_AFC: bool = False
+
+# 🆕 MODELO PARA PLANILLA DE SEGURIDAD SOCIAL
+class PlanillaSeguridadSocial(BaseModel):
+    """Información de planilla de seguridad social"""
+    IBC_seguridad_social: float = 0.0
     planilla_seguridad_social: bool = False
-    cuenta_cobro: bool = False
+    fecha_de_planilla_seguridad_social: str = "0000-00-00"
 
+# 🆕 MODELO ACTUALIZADO PARA DEDUCCIONES ART 383
 class DeduccionesArticulo383(BaseModel):
-    intereses_vivienda: DeduccionArticulo383 = DeduccionArticulo383()
-    dependientes_economicos: DeduccionArticulo383 = DeduccionArticulo383()
-    medicina_prepagada: DeduccionArticulo383 = DeduccionArticulo383()
-    rentas_exentas: DeduccionArticulo383 = DeduccionArticulo383()
+    """Deducciones identificadas para Artículo 383 - NUEVA ESTRUCTURA"""
+    intereses_vivienda: InteresesVivienda = InteresesVivienda()
+    dependientes_economicos: DependientesEconomicos = DependientesEconomicos()
+    medicina_prepagada: MedicinaPrepagada = MedicinaPrepagada()
+    AFC: AFCInfo = AFCInfo()
+    planilla_seguridad_social: PlanillaSeguridadSocial = PlanillaSeguridadSocial()
 
-class CalculoArticulo383(BaseModel):
-    ingreso_bruto: float = 0.0
-    aportes_seguridad_social: float = 0.0
-    total_deducciones: float = 0.0
-    deducciones_limitadas: float = 0.0
-    base_gravable_final: float = 0.0
-    base_gravable_uvt: float = 0.0
-    tarifa_aplicada: float = 0.0
-    valor_retencion_art383: float = 0.0
-
+# 🆕 MODELO ACTUALIZADO PARA INFORMACIÓN ART 383
 class InformacionArticulo383(BaseModel):
-    aplica: bool = False
+    """Información completa del Artículo 383 - NUEVA ESTRUCTURA SIN CÁLCULO"""
+    # NOTA: Ya no hay campo 'aplica' porque Python decide eso ahora
     condiciones_cumplidas: CondicionesArticulo383 = CondicionesArticulo383()
     deducciones_identificadas: DeduccionesArticulo383 = DeduccionesArticulo383()
+    # ELIMINADO: calculo - Gemini ya no calcula, solo identifica
 
 class AnalisisFactura(BaseModel):
     aplica_retencion: bool
@@ -694,17 +726,21 @@ class ProcesadorGemini:
             
             #  NUEVO: ANÁLISIS SEPARADO DEL ARTÍCULO 383 PARA PERSONAS NATURALES
             if (resultado.get("naturaleza_tercero") and 
-                resultado["naturaleza_tercero"].get("es_persona_natural") == True and resultado["aplica_retencion"] == True):
+                resultado["naturaleza_tercero"].get("es_persona_natural") == True and resultado["aplica_retencion"] == True ):
                 
                 logger.info(" PERSONA NATURAL detectada - Iniciando análisis separado del Artículo 383")
                 
                 try:
                     # Segunda llamada a Gemini con prompt específico de Art 383
-                    conceptos_identificados = [ConceptoIdentificado(**c) for c in resultado.get("conceptos_identificados", [])]
+                    # ✅ CORRECCIÓN: Convertir objetos ConceptoIdentificado a diccionarios para evitar error de serialización JSON
+                    conceptos_identificados_objetos = [ConceptoIdentificado(**c) for c in resultado.get("conceptos_identificados", [])]
+                    conceptos_identificados_dict = [concepto.dict() for concepto in conceptos_identificados_objetos] if conceptos_identificados_objetos else []
+                    
+                    logger.info(f" Pasando {len(conceptos_identificados_dict)} conceptos como diccionarios al Art 383")
                     
                     analisis_art383 = await self._analizar_articulo_383(
                         factura_texto, rut_texto, anexos_texto, 
-                        cotizaciones_texto, anexo_contrato, archivos_directos, cache_archivos, conceptos_identificados
+                        cotizaciones_texto, anexo_contrato, archivos_directos, cache_archivos, conceptos_identificados_dict
                     )
                     
                     # Integrar resultado del Art 383 en el resultado principal
@@ -755,12 +791,14 @@ class ProcesadorGemini:
     async def _analizar_articulo_383(self, factura_texto: str, rut_texto: str, anexos_texto: str, 
                                    cotizaciones_texto: str, anexo_contrato: str,
                                    archivos_directos: List[UploadFile] = None, 
-                                   cache_archivos: Dict[str, bytes] = None, conceptos_identificados: List[ConceptoIdentificado] = None) -> Dict[str, Any]:
+                                   cache_archivos: Dict[str, bytes] = None, conceptos_identificados: List[Dict] = None) -> Dict[str, Any]:
         """
         🆕 NUEVA FUNCIÓN: Análisis separado del Artículo 383 para personas naturales.
         
         Esta función realiza una segunda llamada a Gemini específicamente para analizar
         si aplica el Artículo 383 del Estatuto Tributario con tarifas progresivas.
+        
+        ✅ CORREGIDO: Ahora acepta conceptos como diccionarios para evitar errores de serialización JSON.
         
         Args:
             factura_texto: Texto extraído de la factura principal
@@ -770,6 +808,7 @@ class ProcesadorGemini:
             anexo_contrato: Texto del anexo de concepto de contrato
             archivos_directos: Lista de archivos para envío directo a Gemini
             cache_archivos: Cache de archivos para workers paralelos
+            conceptos_identificados: Lista de conceptos como diccionarios (no objetos Pydantic)
             
         Returns:
             Dict[str, Any]: Análisis completo del Artículo 383
@@ -821,7 +860,7 @@ class ProcesadorGemini:
                 logger.info(" Usando análisis TRADICIONAL para Art 383")
                 respuesta = await self._llamar_gemini(prompt_art383)
             
-            logger.info(f"📋 Respuesta Art 383 recibida: {len(respuesta):,} caracteres")
+            logger.info(f" Respuesta Art 383 recibida: {len(respuesta):,} caracteres")
             
             # Limpiar respuesta si viene con texto extra
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
@@ -834,30 +873,18 @@ class ProcesadorGemini:
             # Extraer el diccionario  del Art 383
             resultado_art383 = resultado_art383["articulo_383"]
             # Validar estructura mínima del resultado
-            campos_requeridos = ["aplica", "condiciones_cumplidas", "deducciones_identificadas"]
+            campos_requeridos = ["condiciones_cumplidas", "deducciones_identificadas"]
             for campo in campos_requeridos:
                 if campo not in resultado_art383:
-                    logger.warning(f"⚠️ Campo '{campo}' no encontrado en respuesta Art 383")
+                    logger.warning(f" Campo '{campo}' no encontrado en respuesta Art 383")
                     resultado_art383[campo] = self._obtener_campo_art383_default(campo)
             
             # Extraer información clave para logging
-            aplica_art383 = resultado_art383.get("aplica", False)
-            condiciones = resultado_art383.get("condiciones_cumplidas", {})
             
-            if aplica_art383:
-                logger.info("✅ Artículo 383 APLICA - Se usarán tarifas progresivas")
-            else:
-                razones_no_aplica = []
-                if not condiciones.get("es_persona_natural", False):
-                    razones_no_aplica.append("no es persona natural")
-                if not condiciones.get("concepto_aplicable", False):
-                    razones_no_aplica.append("concepto no aplicable")
-                if not condiciones.get("cuenta_cobro", False):
-                    razones_no_aplica.append("falta cuenta de cobro")
-                if not condiciones.get("planilla_seguridad_social", False):
-                    razones_no_aplica.append("falta planilla seguridad social")
-                
-                logger.info(f"❌ Artículo 383 NO APLICA: {', '.join(razones_no_aplica) if razones_no_aplica else 'razón no especificada'}")
+            condiciones = resultado_art383.get("condiciones_cumplidas", {})
+            deducciones = resultado_art383.get("deducciones_identificadas", {})
+            logger.info(f" condiciones cumplidas: {condiciones}")
+            logger.info(f" deducciones identificadas: {deducciones}")
             
             return resultado_art383
             

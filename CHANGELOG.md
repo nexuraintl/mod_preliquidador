@@ -1,5 +1,44 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [2.10.0] - 2025-09-16
+
+### 🔧 **ARTÍCULO 383 - VALIDACIONES MANUALES IMPLEMENTADAS**
+- **CAMBIO ARQUITECTÓNICO CRÍTICO**: Gemini ya no calcula, solo identifica datos
+  - ❌ **Problema anterior**: Gemini hacía cálculos complejos causando alucinaciones
+  - ❌ **Impacto anterior**: Cálculos incorrectos en Art. 383 por errores de IA
+  - ✅ **Solución**: Separación clara - Gemini identifica, Python valida y calcula
+
+### 🆕 **NUEVAS VALIDACIONES MANUALES IMPLEMENTADAS**
+- **VALIDACIÓN 1**: `es_persona_natural == True and conceptos_aplicables == True`
+- **VALIDACIÓN 2**: Si `primer_pago == false` → planilla de seguridad social OBLIGATORIA
+- **VALIDACIÓN 3**: Fecha de planilla no debe tener más de 2 meses de antigüedad
+- **VALIDACIÓN 4**: IBC debe ser 40% del ingreso (con alerta si no coincide pero continúa)
+- **VALIDACIÓN 5**: Validaciones específicas de deducciones según normativa:
+  - 🏠 **Intereses vivienda**: `intereses_corrientes > 0 AND certificado_bancario == true` → `/12` limitado a 100 UVT
+  - 👥 **Dependientes económicos**: `declaración_juramentada == true` → 10% del ingreso
+  - 🏥 **Medicina prepagada**: `valor_sin_iva > 0 AND certificado == true` → `/12` limitado a 16 UVT
+  - 💰 **AFC**: `valor_a_depositar > 0 AND planilla_AFC == true` → limitado al 25% del ingreso y 316 UVT
+  - 🏦 **Pensiones voluntarias**: `planilla_presente AND IBC >= 4 SMMLV` → 1% del IBC
+
+### 🔧 **FUNCIÓN MODIFICADA**
+- **`_calcular_retencion_articulo_383_separado()`**: Completamente reescrita con validaciones manuales
+  - ✅ **Nueva estructura**: 8 pasos de validación secuencial
+  - ✅ **Logging detallado**: Emojis y mensajes claros para cada validación
+  - ✅ **Mensajes de error específicos**: Alertas claras cuando validaciones fallan
+  - ✅ **Compatibilidad mantenida**: Mismo formato `ResultadoLiquidacion`
+
+### 📝 **PROMPT ACTUALIZADO**
+- **Prompt Art. 383**: Gemini ahora solo identifica datos, no calcula
+  - 🔍 **Responsabilidad IA**: Solo lectura e identificación de información
+  - 🧮 **Responsabilidad Python**: Todas las validaciones y cálculos
+  - 🎯 **Resultado**: Mayor precisión y eliminación de alucinaciones
+
+### 🚀 **MEJORAS EN PRECISIÓN**
+- **Control total del flujo**: Validaciones estrictas según normativa
+- **Eliminación de alucinaciones**: IA ya no inventa cálculos
+- **Trazabilidad completa**: Logs detallados de cada validación
+- **Mensajes claros**: Usuario entiende exactamente por qué falla cada validación
+
 ## [2.9.3] - 2025-09-13
 
 ### 🆕 **NUEVA ESTRUCTURA DE RESULTADOS - TRANSPARENCIA TOTAL POR CONCEPTO**
