@@ -1,3 +1,123 @@
+# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v3.0.0
+
+> 🏗️ **NUEVA ARQUITECTURA SOLID v3.0.0**: Sistema rediseñado siguiendo principios SOLID obligatorios
+
+> **Sistema automatizado de liquidación tributaria con Inteligencia Artificial y Arquitectura Profesional**  
+> API REST con diseño SOLID para procesar facturas y calcular múltiples impuestos colombianos usando Google Gemini AI
+> Desarrollado siguiendo principios SOLID para máxima mantenibilidad y escalabilidad
+
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104%2B-green.svg)](https://fastapi.tiangolo.com)
+[![Google Gemini](https://img.shields.io/badge/Google-Gemini%20AI-red.svg)](https://ai.google.dev)
+[![Arquitectura](https://img.shields.io/badge/Arquitectura-SOLID-orange.svg)](#arquitectura-solid)
+
+---
+
+## 🏗️ **ARQUITECTURA SOLID v3.0.0 - CAMBIO MAYOR**
+
+### **🔹 PRINCIPIOS SOLID IMPLEMENTADOS**
+
+| Principio | Aplicación | Beneficio |
+|-----------|-------------|----------|
+| **SRP** | Cada clase tiene una responsabilidad única | Código más mantenible |
+| **OCP** | Extensible sin modificar código existente | Fácil agregar nuevos impuestos |
+| **LSP** | Implementaciones intercambiables | Polimorfismo robusto |
+| **ISP** | Interfaces específicas y cohesivas | Menor acoplamiento |
+| **DIP** | Dependencias hacia abstracciones | Testabilidad mejorada |
+
+### **🎯 PATRONES DE DISEÑO APLICADOS**
+
+#### **🏠 Factory Pattern**
+```python
+class LiquidadorFactory:
+    """Crea liquidadores según configuración - Principio OCP"""
+    
+    @staticmethod
+    def crear_liquidadores(nit: str) -> List[ILiquidador]:
+        liquidadores = []
+        if aplica_retencion(nit):
+            liquidadores.append(LiquidadorRetencion())
+        if aplica_estampilla(nit):
+            liquidadores.append(LiquidadorEstampilla())
+        return liquidadores  # ✅ Extensible sin modificar
+```
+
+#### **⚙️ Strategy Pattern**
+```python
+class EstrategiaLiquidacion:
+    """Strategy para diferentes tipos de cálculo - Principio OCP"""
+    
+    def __init__(self, estrategia: IEstrategiaLiquidacion):
+        self.estrategia = estrategia  # DIP: Depende de abstracción
+    
+    def liquidar(self, datos):
+        return self.estrategia.calcular(datos)  # Polimorfismo
+```
+
+#### **📋 Template Method Pattern**
+```python
+class BaseLiquidador(ABC):
+    """Template method con flujo común - Principio SRP"""
+    
+    def liquidar_impuesto(self, analisis) -> ResultadoLiquidacion:
+        if not self.validar_precondiciones(analisis):
+            return self.crear_resultado_no_aplica()
+        
+        datos = self.calcular_impuesto(analisis)  # Hook method
+        return self.crear_resultado_final(datos)
+    
+    @abstractmethod
+    def calcular_impuesto(self, analisis):  # Implementado por subclases
+        pass
+```
+
+### **🔧 SEPARACIÓN DE RESPONSABILIDADES**
+
+| Componente | Responsabilidad Única (SRP) | Ubicación |
+|------------|---------------------------|----------|
+| **ProcesadorGemini** | Solo comunicación con IA | `Clasificador/clasificador.py` |
+| **LiquidadorRetencion** | Solo cálculos retefuente | `Liquidador/liquidador.py` |
+| **ValidadorArticulo383** | Solo validaciones Art 383 | `Liquidador/validadores/` |
+| **ProcesadorArchivos** | Solo extracción de texto | `Extraccion/procesador_archivos.py` |
+| **LiquidadorFactory** | Solo creación de liquidadores | `Liquidador/__init__.py` |
+
+### **🧪 DISEÑO TESTEABLE**
+```python
+# ✅ Testing fácil gracias a DIP
+class TestLiquidadorRetencion(unittest.TestCase):
+    def setUp(self):
+        # Inyección de mocks para testing aislado
+        self.mock_validador = Mock(spec=IValidador)
+        self.liquidador = LiquidadorRetencion(validador=self.mock_validador)
+    
+    def test_liquidar_con_validacion_exitosa(self):
+        self.mock_validador.validar.return_value = True
+        resultado = self.liquidador.liquidar(datos_prueba)
+        self.assertTrue(resultado.aplica_retencion)
+```
+
+### **📈 EXTENSIBILIDAD GARANTIZADA (OCP)**
+```python
+# ✅ Agregar ReteICA sin modificar código existente
+class LiquidadorReteICA(BaseLiquidador):  # ✅ Extensión
+    def calcular_impuesto(self, analisis):
+        return self._calcular_rete_ica(analisis)
+
+# Solo agregar en factory:
+if self.config.aplica_rete_ica(nit):
+    liquidadores.append(LiquidadorReteICA())  # ✅ Una línea
+```
+
+### **✅ BENEFICIOS SOLID OBTENIDOS**
+- **🏗️ Arquitectura profesional**: Principios SOLID aplicados correctamente
+- **🔧 Mantenibilidad**: Fácil modificar y extender sin romper código existente
+- **🧪 Testabilidad**: Diseño que facilita testing unitario completo
+- **📈 Escalabilidad**: Preparado para crecimiento exponencial
+- **👥 Legibilidad**: Código más claro y comprensible para desarrolladores
+- **🔄 Reutilización**: Componentes reutilizables en diferentes contextos
+
+---
+
 ### ✅ **NUEVA VERSIÓN v2.10.0 (2025-09-16)**
 
 **🔧 ARTÍCULO 383 - VALIDACIONES MANUALES IMPLEMENTADAS:**
@@ -687,16 +807,70 @@ if conceptos_sin_base:
 1. [🎯 Características Principales](#-características-principales)
 2. [⚡ Funcionalidades Integradas](#-funcionalidades-integradas)
 3. [🏗️ Arquitectura del Sistema](#-arquitectura-del-sistema)
-4. [🔧 Instalación y Configuración](#-instalación-y-configuración)
-5. [🚀 Guía de Uso](#-guía-de-uso)
-6. [📊 Ejemplos de Respuesta JSON v2.4.0](#-ejemplos-de-respuesta-json-v240)
-7. [🧪 Testing y Validación](#-testing-y-validación)
-8. [📁 Estructura de Archivos](#-estructura-de-archivos)
-9. [🛠️ API Reference](#-api-reference)
-10. [🔧 Herramientas de Desarrollo](#-herramientas-de-desarrollo-tools)
-11. [📚 Documentación Interna](#-documentación-interna-docs)
-12. [❓ FAQ](#-faq)
-13. [🤝 Contribución](#-contribución)
+4. [🗄️ Módulo Database - Arquitectura SOLID v3.1.0](#-módulo-database---arquitectura-solid-v310)
+5. [🔧 Instalación y Configuración](#-instalación-y-configuración)
+6. [🚀 Guía de Uso](#-guía-de-uso)
+7. [📊 Ejemplos de Respuesta JSON v2.4.0](#-ejemplos-de-respuesta-json-v240)
+8. [🧪 Testing y Validación](#-testing-y-validación)
+9. [📁 Estructura de Archivos](#-estructura-de-archivos)
+10. [🛠️ API Reference](#-api-reference)
+11. [🔧 Herramientas de Desarrollo](#-herramientas-de-desarrollo-tools)
+12. [📚 Documentación Interna](#-documentación-interna-docs)
+13. [❓ FAQ](#-faq)
+14. [🤝 Contribución](#-contribución)
+
+## 🗄️ **MÓDULO DATABASE - ARQUITECTURA SOLID v3.1.0**
+
+> **🆕 NUEVO**: Módulo de base de datos implementando Clean Architecture y principios SOLID
+
+### **📚 Documentación Detallada**
+
+Para información completa sobre la arquitectura del módulo de base de datos, consulte:
+**[📖 Database Module Documentation](./database/README.md)**
+
+### **🏗️ Características Arquitectónicas**
+
+- **🔹 Data Access Layer**: `database.py` con Strategy Pattern para múltiples bases de datos
+- **🔹 Business Logic Layer**: `database_service.py` con Service Pattern para lógica de negocio
+- **🔹 Clean Imports**: Exports organizados siguiendo principios SOLID
+- **🔹 Factory Pattern**: Creación simplificada de servicios con dependency injection
+- **🔹 Testing Support**: Mock implementations para testing unitario
+- **🔹 Migration Ready**: Cambio de base de datos sin modificar código de negocio
+
+### **⚡ Uso Rápido**
+
+```python
+# Importación limpia desde módulo
+from database import (
+    DatabaseManager,
+    SupabaseDatabase,
+    BusinessDataService,
+    crear_business_service
+)
+
+# Inicialización con factory pattern
+db_manager, business_service = crear_database_stack_completo()
+
+# Uso en endpoint (SOLID: SRP + DIP)
+resultado = business_service.obtener_datos_negocio(codigo_negocio)
+datos_negocio = resultado.get('data') if resultado.get('success') else None
+```
+
+### **🎯 Principios SOLID Aplicados**
+
+| Principio | Implementación | Archivo |
+|-----------|----------------|---------|
+| **SRP** | `BusinessDataService` solo maneja lógica de negocio | `database_service.py` |
+| **OCP** | Extensible para nuevas bases de datos sin modificar código | `database.py` |
+| **LSP** | `MockBusinessDataService` sustituye al real en tests | `database_service.py` |
+| **ISP** | `IBusinessDataService` interface específica | `database_service.py` |
+| **DIP** | Servicio depende de `DatabaseManager` (abstracción) | Todo el módulo |
+
+### **🔧 Migration Benefits**
+
+- **Database Agnostic**: Supabase → PostgreSQL → MySQL sin cambios de código
+- **Zero Downtime**: Implementación de múltiples databases simultáneas
+- **Graceful Degradation**: Sistema funciona aunque DB no esté disponible
 
 ---
 
@@ -818,6 +992,12 @@ PRELIQUIDADOR/
 ├── ⚙️ config.py                  # Configuración global
 ├── 🔐 .env                       # Variables de entorno
 ├── 📊 RETEFUENTE_CONCEPTOS.xlsx  # Fuente de verdad DIAN
+│
+├── 🗄️ database/                  # 🆕 Módulo Base de Datos (SOLID)
+│   ├── database.py               # Data Access Layer (Strategy Pattern)
+│   ├── database_service.py       # Business Logic Layer (Service Pattern)
+│   ├── __init__.py              # Clean exports y factory functions
+│   └── README.md                # 📚 Documentación arquitectura SOLID
 │
 ├── 🧠 Clasificador/              # Módulo IA
 │   ├── procesador_gemini.py      # Análisis documentos
@@ -1695,12 +1875,19 @@ python -m json.tool Results/2025-08-21/resultado_final_*.json
 - **Múltiples Tarifas de IVA** - Soporte para 5% y otros porcentajes
 - **Soporte Completo Consorcios** - IVA en estructuras de consorcio
 
-### ⚡ **Mejoras Planificadas v3.0.0**
+### ⚡ **Mejoras Planificadas v3.1.0+**
+- **Tests Automatizados** completos aprovechando arquitectura SOLID testeable
+- **Implementación de Interfaces** reales para todos los componentes (IValidador, ICalculador)
+- **Validation Layer** especializada con inyección de dependencias
 - **Cache Inteligente** de respuestas Gemini para optimización
-- **Base de Datos** PostgreSQL para histórico de liquidaciones
-- **API Webhooks** para integraciones externas en tiempo real
-- **Dashboard Web** avanzado para monitoreo en tiempo real
-- **Tests Automatizados** completos para todos los módulos
+- **Repository Pattern** para abstracción de persistencia de datos
+
+### 🏗️ **Arquitectura Futura v4.0.0**
+- **Observer Pattern** para notificaciones de eventos de liquidación
+- **Command Pattern** para historial de operaciones deshacer/rehacer
+- **Microservicios** siguiendo Domain-Driven Design
+- **CQRS + Event Sourcing** para trazabilidad completa
+- **Hexagonal Architecture** con puertos y adaptadores
 
 ---
 
@@ -1708,8 +1895,8 @@ python -m json.tool Results/2025-08-21/resultado_final_*.json
 
 ### **👥 Equipo de Desarrollo**
 - **Autor Principal**: Sistema Preliquidador
-- **Versión Actual**: v2.4.0 con estructura JSON reorganizada
-- **Última Actualización**: 2025-08-21
+- **Versión Actual**: v3.0.0 con arquitectura SOLID y validaciones manuales
+- **Última Actualización**: 2025-09-27
 
 ### **🐛 Reportar Issues**
 - **GitHub Issues**: Usar templates predefinidos
@@ -1726,11 +1913,11 @@ python -m json.tool Results/2025-08-21/resultado_final_*.json
 
 <div align="center">
 
-**🚀 Preliquidador Integrado v2.4.0 - API REST Pura**
+**🚀 Preliquidador Integrado v3.0.0 - Arquitectura SOLID**
 
 *Sistema automatizado de liquidación tributaria colombiana*
 
-*🆕 Con estructura JSON reorganizada para mejor escalabilidad*
+*🏗️ Con arquitectura SOLID para máxima mantenibilidad y escalabilidad*
 
 *Desarrollado con ❤️ en Colombia*
 

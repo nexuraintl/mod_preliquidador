@@ -340,6 +340,8 @@ class ProcesadorGemini:
             resultado = json.loads(respuesta_limpia)
             
             # Extraer clasificación y detección de consorcio
+            factura_identificada = resultado.get("factura_identificada", False)
+            rut_identificado = resultado.get("rut_identificado", False)
             clasificacion = resultado.get("clasificacion", resultado)  # Fallback para formato anterior
             es_consorcio = self.procesador_consorcios.detectar_consorcio(resultado)
             
@@ -363,6 +365,7 @@ class ProcesadorGemini:
             await self._guardar_respuesta("clasificacion_documentos_hibrido.json", clasificacion_data_hibrida)
             
             # PASO 7: Logging de resultados
+            logger.info(f"factura_identificada: {factura_identificada}, rut_identificado: {rut_identificado}")
             logger.info(f" Clasificación híbrida exitosa: {len(clasificacion)} documentos clasificados")
             logger.info(f" Consorcio detectado: {es_consorcio}")
             logger.info(f" Facturación extranjera detectada: {es_facturacion_extranjera}")

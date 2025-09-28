@@ -12,78 +12,110 @@ from typing import Dict, List
 
 def PROMPT_CLASIFICACION(textos_preprocesados: Dict[str, str], nombres_archivos_directos: List[str]) -> str:
     """
-    🔄 Genera el prompt HÍBRIDO para clasificar documentos fiscales colombianos.
-    
-    ENFOQUE HÍBRIDO IMPLEMENTADO:
-    ✅ Archivos directos (PDFs/Imágenes): Enviados directamente, los verás adjuntos
-    ✅ Textos preprocesados (Excel/Email/Word): Incluidos como texto en el prompt
-    ✅ Modificación mínima del prompt original
-    
-    Args:
-        textos_preprocesados: Diccionario con {nombre_archivo: texto_extraido} de archivos preprocesados
-        nombres_archivos_directos: Lista de nombres de archivos enviados directamente a Gemini
-        
-    Returns:
-        str: Prompt formateado híbrido para enviar a Gemini
+    Genera el prompt HÍBRIDO optimizado para clasificar documentos fiscales colombianos.
+    Versión mejorada con ingeniería de prompts para prevenir halucinaciones.
     """
     
-    # Construir lista de todos los archivos para informar al modelo
     todos_los_archivos = nombres_archivos_directos + list(textos_preprocesados.keys())
     total_archivos = len(todos_los_archivos)
     
     return f"""
-Eres un experto en documentos fiscales colombianos. Tu tarea es clasificar cada uno de los siguientes {total_archivos} documentos en una de estas categorías exactas:
-- FACTURA
-- RUT  
-- COTIZACION
-- ANEXO
-- ANEXO CONCEPTO DE CONTRATO
+Eres un experto en documentos fiscales colombianos. Tu tarea es clasificar EXACTAMENTE {total_archivos} documento(s).
 
-INSTRUCCIONES:
-1. Analiza cada documento y clasifícalo en UNA sola categoría
-2. Una FACTURA contiene información de facturación, valores, impuestos, datos del proveedor
-3. Un RUT es el Registro Único Tributario que contiene información fiscal del tercero
-4. Una COTIZACION es una propuesta comercial o presupuesto
-5. ANEXO es cualquier otro documento de soporte
-6. El anexo concepto de contrato, contiene SOLO informacion del contrato, como el OBJETO
-7. EL DOCUMENTO "SOPORTE EN ADQUISICIONES EFECTUADAS A NO OBLIGADOS A FACTURAR" ES EQUIVALENTE A UNA "FACTURA"
+ **REGLAS CRÍTICAS PARA EVITAR ERRORES:**
+- SOLO usa información EXPLÍCITAMENTE PRESENTE en los documentos
+- NO inventes, supongas o deduzcas información que no esté escrita
+- Si no encuentras evidencia clara, marca como false
+- Sé LITERAL con la información que extraes
 
-**DETECCIÓN DE FACTURACIÓN EXTRANJERA:**
-8. Verifica si se trata de FACTURACIÓN EXTRANJERA analizando:
-   - Si el proveedor tiene domicilio o dirección fuera de Colombia
-   - Si aparecen monedas extranjeras (USD, EUR, etc.)
-   - Si el NIT/RUT es de otro país
-   - Si menciona "no residente" o "no domiciliado en Colombia"
-   - Si la factura viene de empresas extranjeras
+ **CATEGORÍAS DE CLASIFICACIÓN (usa EXACTAMENTE estas):**
+1. **FACTURA**: Documento con información de facturación, valores, impuestos, datos del proveedor
+2. **RUT**: Registro Único Tributario con información fiscal del tercero
+3. **COTIZACION**: Propuesta comercial o presupuesto
+4. **ANEXO**: Cualquier otro documento de soporte general
+5. **ANEXO CONCEPTO DE CONTRATO**: Documento que contiene SOLO información del contrato (objeto, términos)
 
-**DETECCIÓN DE CONSORCIOS:**
-9. Verifica si se trata de un CONSORCIO analizando:
-   - Si en la factura aparece la palabra "CONSORCIO" en el nombre del proveedor
-   - Si menciona "consorciados" o "miembros del consorcio"
-   - Si aparecen porcentajes de participación entre empresas
-   - Si hay múltiples NITs/empresas trabajando en conjunto
+ **CASOS ESPECIALES DE CLASIFICACIÓN:**
+- "SOPORTE EN ADQUISICIONES EFECTUADAS A NO OBLIGADOS A FACTURAR" = **FACTURA**
+- Si UN SOLO documento contiene múltiple información (factura + RUT + anexos integrados) = **FACTURA**
+- Si un documento combina factura con otros elementos, clasifícalo como **FACTURA**
 
-DOCUMENTOS A CLASIFICAR:
+ **DETECCIÓN DE FACTURACIÓN EXTRANJERA:**
+**FUENTE OBLIGATORIA: SOLO LA FACTURA**
+Solo marca como true si en LA FACTURA encuentras EXPLÍCITAMENTE:
+- Dirección del proveedor fuera de Colombia (país, ciudad extranjera)
+- Monedas extranjeras (USD, EUR, GBP, etc.)
+- Identificación fiscal extranjera (no NIT colombiano)
+- Texto explícito: "no residente", "no domiciliado en Colombia", "empresa extranjera"
+- Factura emitida desde el exterior
 
-📄 **ARCHIVOS DIRECTOS (verás estos archivos adjuntos):**
+ NO uses información de otros documentos para determinar facturación extranjera
+
+ **DETECCIÓN DE CONSORCIOS:**
+**FUENTE OBLIGATORIA: SOLO EL RUT O LA FACTURA**
+Solo marca como true si encuentras EXPLÍCITAMENTE en el RUT o FACTURA:
+- La palabra "CONSORCIO" en el nombre del proveedor
+- Texto que diga "consorciados", "miembros del consorcio", "integrantes"
+- Porcentajes de participación entre empresas (ej: "Empresa A 60%, Empresa B 40%")
+- Múltiples NITs/empresas en formato de asociación temporal o unión
+
+ NO uses cotizaciones, anexos u otros documentos para detectar consorcios
+ NO deduzcas consorcio por contexto o referencias indirectas
+
+ **IDENTIFICACIÓN DE CONTENIDO DOCUMENTAL:**
+
+Los siguientes campos identifican si la INFORMACIÓN está PRESENTE, no si hay archivos separados:
+
+**factura_identificada**: Marca `true` si:
+- Encuentras información de facturación en CUALQUIER documento
+- Existe un documento clasificado como FACTURA
+- Detectas valores, impuestos, datos de venta (incluso dentro de un documento combinado)
+
+**rut_identificado**: Marca `true` si:
+- Encuentras el Registro Único Tributario en CUALQUIER documento  
+- Existe un documento clasificado como RUT
+- Detectas información fiscal del tercero (incluso dentro de un documento combinado)
+
+ **Ejemplos de identificación:**
+- Documento único con factura + RUT integrados → ambos `true`
+- Factura.pdf separada + RUT.pdf separado → ambos `true`
+- Solo factura sin RUT → factura_identificada: `true`, rut_identificado: `false`
+- Cotización + Anexos (sin factura ni RUT) → ambos `false`
+
+ **DOCUMENTOS A CLASIFICAR:**
+
+ **ARCHIVOS DIRECTOS (adjuntos que puedes ver):**
 {_formatear_archivos_directos(nombres_archivos_directos)}
 
-📊 **TEXTOS PREPROCESADOS (Excel/Email/Word procesados localmente):**
+ **TEXTOS PREPROCESADOS (Excel/Email/Word ya extraídos):**
 {_formatear_textos_preprocesados(textos_preprocesados)}
 
-RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
+ **INSTRUCCIONES FINALES:**
+1. Clasifica CADA documento en UNA sola categoría
+2. Para facturación extranjera: SOLO información de la FACTURA
+3. Para consorcio: SOLO información del RUT o FACTURA
+4. Identifica PRESENCIA de información (factura/RUT) sin importar si está en archivos separados o combinados
+5. Si no hay evidencia clara y explícita: marca como false
+6. No inventes razones o indicadores que no veas explícitamente
+
+**RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO (sin texto adicional, sin explicaciones):**
 {{
     "clasificacion": {{
-        "nombre_archivo_1": "CATEGORIA",
-        "nombre_archivo_2": "CATEGORIA"
+        "nombre_archivo_1": "CATEGORIA_EXACTA",
+        "nombre_archivo_2": "CATEGORIA_EXACTA"
     }},
+    "factura_identificada": true/false,
+    "rut_identificado": true/false,
     "es_facturacion_extranjera": true/false,
-    "indicadores_extranjera": ["razón 1", "razón 2"],
+    "indicadores_extranjera": ["cita textual del documento", "otra cita textual"],
     "es_consorcio": true/false,
-    "indicadores_consorcio": ["razón 1", "razón 2"]
+    "indicadores_consorcio": ["cita textual del RUT o FACTURA", "otra cita textual"]
 }}
-"""
 
+ RECORDATORIO FINAL: 
+- Los indicadores deben ser CITAS TEXTUALES, no interpretaciones
+- factura_identificada y rut_identificado indican PRESENCIA de información, no cantidad de archivos
+"""
 def _formatear_archivos_directos(nombres_archivos_directos: List[str]) -> str:
     """
     Formatea la lista de archivos directos para el prompt.

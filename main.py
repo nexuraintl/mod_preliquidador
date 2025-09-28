@@ -76,6 +76,14 @@ from Clasificador import ProcesadorGemini
 from Liquidador import LiquidadorRetencion
 from Extraccion import ProcesadorArchivos
 
+# Importar módulos de base de datos (SOLID: Clean Architecture Module)
+from database import (
+    DatabaseManager,
+    SupabaseDatabase,
+    BusinessDataService,
+    crear_business_service
+)
+
 # Cargar configuración global - INCLUYE ESTAMPILLA Y OBRA PÚBLICA
 from config import (
     inicializar_configuracion, 
@@ -92,6 +100,58 @@ from config import (
 # Dependencias para preprocesamiento Excel
 import pandas as pd
 import io
+
+# ===============================
+# INICIALIZACIÓN DE BASE DE DATOS
+# ===============================
+
+# Variable global para el gestor de base de datos
+db_manager = None
+
+# Variable global para el servicio de datos de negocio 
+business_service = None
+
+def inicializar_database_manager():
+    """
+    Inicializa el gestor de base de datos y servicios asociados usando variables de entorno.
+
+    PRINCIPIOS SOLID APLICADOS:
+    - SRP: Función dedicada solo a inicialización de componentes de base de datos
+    - DIP: Servicios dependen de abstracciones inyectadas
+    """
+    global db_manager, business_service
+    try:
+        # Obtener credenciales desde variables de entorno
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+
+        if not supabase_url or not supabase_key:
+            logger.warning(" Variables de entorno SUPABASE_URL y SUPABASE_KEY no están configuradas")
+            logger.warning(" DatabaseManager y BusinessService no serán inicializados")
+
+            # Crear business service sin database manager (graceful degradation)
+            business_service = crear_business_service(None)
+            return None
+
+        # Crear la implementación concreta
+        supabase_db = SupabaseDatabase(supabase_url, supabase_key)
+
+        # Crear el manager usando el patrón Strategy
+        db_manager = DatabaseManager(supabase_db)
+
+        # Crear business service con dependency injection (DIP)
+        business_service = crear_business_service(db_manager)
+
+        logger.info(" DatabaseManager y BusinessService inicializados correctamente")
+        return db_manager
+
+    except Exception as e:
+        logger.error(f" Error inicializando DatabaseManager: {e}")
+        db_manager = None
+
+        # Crear business service sin database manager (graceful degradation)
+        business_service = crear_business_service(None)
+        return None
 
 # ===============================
 # FUNCIONES DE PREPROCESAMIENTO
@@ -650,6 +710,9 @@ async def lifespan(app: FastAPI):
     logger.info(" Worker de FastAPI iniciándose... Cargando configuración.")
     if not inicializar_configuracion():
         logger.critical(" FALLO EN LA CARGA DE CONFIGURACIÓN. La aplicación puede no funcionar correctamente.")
+
+    # Inicializar gestor de base de datos
+    inicializar_database_manager()
     
     yield # <--- La aplicación se ejecuta aquí
 
@@ -670,34 +733,41 @@ app = FastAPI(
 
 @app.post("/api/procesar-facturas")
 async def procesar_facturas_integrado(
-    archivos: List[UploadFile] = File(...), 
-    nit_administrativo: str = Form(...)
+    archivos: List[UploadFile] = File(...),
+    nit_administrativo: str = Form(...),
+    codigo_del_negocio: int = Form(...)
 ) -> JSONResponse:
     """
      ENDPOINT PRINCIPAL - SISTEMA INTEGRADO v2.0
-    
+
     Procesa facturas y calcula múltiples impuestos en paralelo:
      RETENCIÓN EN LA FUENTE (funcionalidad original)
      ESTAMPILLA PRO UNIVERSIDAD NACIONAL (integrada)
-     CONTRIBUCIÓN A OBRA PÚBLICA 5% (integrada) 
+     CONTRIBUCIÓN A OBRA PÚBLICA 5% (integrada)
      IVA Y RETEIVA (nueva funcionalidad)
      PROCESAMIENTO PARALELO cuando múltiples impuestos aplican
      GUARDADO AUTOMÁTICO de JSONs en Results/
+     CONSULTA DE BASE DE DATOS para información del negocio
 
     Args:
         archivos: Lista de archivos (facturas, RUTs, anexos, contratos)
         nit_administrativo: NIT de la entidad administrativa
-        
+        codigo_del_negocio: Código del negocio para consultar en base de datos
+
     Returns:
         JSONResponse: Resultado consolidado de todos los impuestos aplicables
     """
-    logger.info(f" ENDPOINT PRINCIPAL INTEGRADO - Procesando {len(archivos)} archivos para NIT: {nit_administrativo}")
+    logger.info(f" ENDPOINT PRINCIPAL INTEGRADO - Procesando {len(archivos)} archivos para NIT: {nit_administrativo}, Código negocio: {codigo_del_negocio}")
     
     try:
         # =================================
         # PASO 1: VALIDACIÓN Y CONFIGURACIÓN
         # =================================
-        
+
+        # Consultar información del negocio usando BusinessService (SOLID: SRP)
+        resultado_negocio = business_service.obtener_datos_negocio(codigo_del_negocio)
+        datos_negocio = resultado_negocio.get('data') if resultado_negocio.get('success') else None
+
         # Validar NIT administrativo
         es_valido, nombre_entidad, impuestos_aplicables = validar_nit_administrativo(nit_administrativo)
         if not es_valido:
@@ -809,7 +879,7 @@ async def procesar_facturas_integrado(
         
         # Clasificar documentos usando enfoque híbrido multimodal
         clasificador = ProcesadorGemini()
-        logger.info(f" Iniciando clasificación híbrida multimodal:")
+        logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
         logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
         
@@ -1644,6 +1714,94 @@ async def prueba_simple(nit_administrativo: Optional[str] = Form(None)):
         "sistema": "integrado_retefuente_estampilla",
         "timestamp": datetime.now().isoformat()
     }
+
+@app.get("/api/database/health")
+async def database_health_check():
+    """
+    Verificar el estado de la conexión a la base de datos usando BusinessService.
+
+    PRINCIPIO SRP: Endpoint específico para health check de base de datos
+    """
+    if not business_service:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "message": "BusinessService no está inicializado",
+                "details": "Error en inicialización del sistema de base de datos"
+            }
+        )
+
+    try:
+        # Usar el servicio para validar disponibilidad (SRP)
+        is_available = business_service.validar_disponibilidad_database()
+
+        if is_available:
+            return {
+                "status": "healthy",
+                "message": "Conexión a base de datos OK",
+                "service": "BusinessDataService",
+                "architecture": "SOLID + Strategy Pattern",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "unhealthy",
+                    "message": "Conexión a base de datos no disponible",
+                    "service": "BusinessDataService",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": f"Error verificando base de datos: {str(e)}",
+                "service": "BusinessDataService",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+
+@app.get("/api/database/test/{codigo_negocio}")
+async def test_database_query(codigo_negocio: int):
+    """
+    Probar consulta de negocio por código usando BusinessService.
+
+    PRINCIPIO SRP: Endpoint específico para testing de consultas de negocio
+    """
+    if not business_service:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "BusinessService no está disponible",
+                "details": "Error en inicialización del sistema de base de datos",
+                "service": "BusinessDataService"
+            }
+        )
+
+    try:
+        # Usar el servicio para la consulta (SRP + DIP)
+        resultado = business_service.obtener_datos_negocio(codigo_negocio)
+
+        return {
+            "resultado": resultado,
+            "service": "BusinessDataService",
+            "architecture": "SOLID + Clean Architecture",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Error consultando negocio: {str(e)}",
+                "codigo_consultado": codigo_negocio,
+                "service": "BusinessDataService",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
 @app.get("/api/diagnostico")
 async def diagnostico_completo():

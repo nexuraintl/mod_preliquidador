@@ -196,7 +196,7 @@ class LiquidadorRetencion:
         
         #  VALIDACIÓN SEPARADA: ARTÍCULO 383 PARA PERSONAS NATURALES
         # Verificar si se analizó Art 383 y si aplica
-        if analisis.articulo_383 and analisis.articulo_383.aplica:
+        if analisis.articulo_383 :
             logger.info(" Aplicando Artículo 383 - Tarifas progresivas para persona natural")
     
             # Usar función separada para Art 383
@@ -211,7 +211,7 @@ class LiquidadorRetencion:
                 mensajes_error.append("Aplicando tarifa convencional porque no aplica Art. 383")
                 logger.warning(" Fallback a tarifa convencional porque no aplica Art. 383")
 
-        elif analisis.articulo_383 and not analisis.articulo_383.aplica:
+        else:
             # Explicar por qué no aplica Art. 383
             self._agregar_observaciones_art383_no_aplica(analisis.articulo_383, mensajes_error)
         
