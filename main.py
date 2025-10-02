@@ -74,6 +74,7 @@ logger = logging.getLogger(__name__)
 # Importar clases desde módulos
 from Clasificador import ProcesadorGemini
 from Liquidador import LiquidadorRetencion
+from Liquidador.liquidador_consorcios import LiquidadorConsorcios, convertir_resultado_a_dict as convertir_consorcio_a_dict
 from Extraccion import ProcesadorArchivos
 
 # Importar módulos de base de datos (SOLID: Clean Architecture Module)
@@ -734,7 +735,6 @@ app = FastAPI(
 @app.post("/api/procesar-facturas")
 async def procesar_facturas_integrado(
     archivos: List[UploadFile] = File(...),
-    nit_administrativo: str = Form(...),
     codigo_del_negocio: int = Form(...)
 ) -> JSONResponse:
     """
@@ -751,14 +751,13 @@ async def procesar_facturas_integrado(
 
     Args:
         archivos: Lista de archivos (facturas, RUTs, anexos, contratos)
-        nit_administrativo: NIT de la entidad administrativa
-        codigo_del_negocio: Código del negocio para consultar en base de datos
+        codigo_del_negocio: Código del negocio para consultar en base de datos (el NIT administrativo se obtiene de la DB)
 
     Returns:
         JSONResponse: Resultado consolidado de todos los impuestos aplicables
     """
-    logger.info(f" ENDPOINT PRINCIPAL INTEGRADO - Procesando {len(archivos)} archivos para NIT: {nit_administrativo}, Código negocio: {codigo_del_negocio}")
-    
+    logger.info(f" ENDPOINT PRINCIPAL INTEGRADO - Procesando {len(archivos)} archivos para Código negocio: {codigo_del_negocio}")
+
     try:
         # =================================
         # PASO 1: VALIDACIÓN Y CONFIGURACIÓN
@@ -768,7 +767,22 @@ async def procesar_facturas_integrado(
         resultado_negocio = business_service.obtener_datos_negocio(codigo_del_negocio)
         datos_negocio = resultado_negocio.get('data') if resultado_negocio.get('success') else None
 
-        # Validar NIT administrativo
+        # Extraer NIT administrativo de la base de datos
+        if not datos_negocio or 'nit' not in datos_negocio:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "No se pudo obtener el NIT administrativo de la base de datos",
+                    "codigo_del_negocio": codigo_del_negocio,
+                    "datos_negocio": datos_negocio,
+                    "mensaje": "Código de negocio no encontrado o sin NIT asociado"
+                }
+            )
+
+        nit_administrativo = str(datos_negocio['nit'])
+        logger.info(f" NIT administrativo obtenido de DB: {nit_administrativo}")
+
+        # Validar NIT administrativo obtenido de DB
         es_valido, nombre_entidad, impuestos_aplicables = validar_nit_administrativo(nit_administrativo)
         if not es_valido:
             raise HTTPException(
@@ -1074,9 +1088,19 @@ async def procesar_facturas_integrado(
             # Liquidar Retefuente
             if "retefuente" in resultados_analisis and aplica_retencion:
                 try:
-                    liquidador_retencion = LiquidadorRetencion()
                     if es_consorcio:
-                        resultado_retefuente = resultados_analisis["retefuente"]  # Ya viene liquidado del consorcio
+                        # Usar nuevo liquidador de consorcios con validaciones manuales
+                        liquidador_consorcio = LiquidadorConsorcios()
+                        analisis_consorcio_gemini = resultados_analisis["retefuente"]  # Solo extracción de Gemini
+
+                        # Liquidar con validaciones manuales de Python (con caché de archivos)
+                        resultado_liquidacion_consorcio = await liquidador_consorcio.liquidar_consorcio(
+                            analisis_consorcio_gemini, CONCEPTOS_RETEFUENTE, archivos_directos, cache_archivos
+                        )
+
+                        # Convertir resultado a formato de respuesta y extraer la parte retefuente
+                        resultado_dict_completo = convertir_consorcio_a_dict(resultado_liquidacion_consorcio)
+                        resultado_retefuente = resultado_dict_completo["retefuente"]  # Extraer solo la parte de retefuente
                     else:
                         analisis_factura = resultados_analisis["retefuente"]
                         
@@ -1330,9 +1354,22 @@ async def procesar_facturas_integrado(
                         archivos_directos=archivos_directos
                     )
                 
-                liquidador_retencion = LiquidadorRetencion()
                 if es_consorcio:
-                    resultado_liquidacion = analisis_factura  # Ya viene liquidado como dict
+                    # Usar nuevo liquidador de consorcios con validaciones manuales
+                    liquidador_consorcio = LiquidadorConsorcios()
+
+                    # Crear caché de archivos para posible análisis Art 383
+                    clasificador = ProcesadorGemini()
+                    cache_archivos = await clasificador.preparar_archivos_para_workers_paralelos(archivos_directos)
+
+                    # Liquidar con validaciones manuales de Python (con caché de archivos)
+                    resultado_liquidacion_consorcio = await liquidador_consorcio.liquidar_consorcio(
+                        analisis_factura, CONCEPTOS_RETEFUENTE, archivos_directos, cache_archivos
+                    )
+
+                    # Convertir resultado a formato de respuesta y extraer solo la parte retefuente
+                    resultado_dict_completo = convertir_consorcio_a_dict(resultado_liquidacion_consorcio)
+                    resultado_liquidacion = resultado_dict_completo["retefuente"]  # Extraer solo la parte de retefuente
                     #  NUEVA ESTRUCTURA: Consorcio Individual
                     resultado_final = {
                         "procesamiento_paralelo": False,
@@ -1362,8 +1399,9 @@ async def procesar_facturas_integrado(
                         "procesamiento_exitoso": True
                     }
                 else:
-                    #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO INDIVIDUAL
+                    #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO INDIVIDUAL (No-consorcio)
                     logger.info(" Ejecutando liquidación segura individual...")
+                    liquidador_retencion = LiquidadorRetencion()
                     
                     # Crear estructura compatible
                     analisis_retefuente_data = {

@@ -45,8 +45,8 @@ from .prompt_clasificador import (
     PROMPT_ANALISIS_ESTAMPILLAS_GENERALES  # 🆕 NUEVO PROMPT ESTAMPILLAS GENERALES
 )
 
-# Importar procesador de consorcios
-from .consorcio_processor import ProcesadorConsorcios
+# v3.1.2: Procesador de consorcios removido - Se usa liquidador_consorcios.py directamente
+# from .consorcio_processor import ProcesadorConsorcios
 
 # ===============================
 # MODELOS DE DATOS LOCALES
@@ -179,9 +179,8 @@ class ProcesadorGemini:
         )
         
         logger.info("ProcesadorGemini inicializado correctamente")
-        
-        # Inicializar procesador de consorcios
-        self.procesador_consorcios = ProcesadorConsorcios()
+
+        # v3.1.2: Procesador de consorcios removido - Nueva arquitectura SOLID con liquidador_consorcios.py
     
     async def clasificar_documentos(
         self, 
@@ -343,7 +342,8 @@ class ProcesadorGemini:
             factura_identificada = resultado.get("factura_identificada", False)
             rut_identificado = resultado.get("rut_identificado", False)
             clasificacion = resultado.get("clasificacion", resultado)  # Fallback para formato anterior
-            es_consorcio = self.procesador_consorcios.detectar_consorcio(resultado)
+            # NUEVO v3.1.2: Detectar consorcio directamente del resultado de Gemini
+            es_consorcio = resultado.get("es_consorcio", False)
             
             # Detectar facturación extranjera
             es_facturacion_extranjera = resultado.get("es_facturacion_extranjera", False)
@@ -1013,13 +1013,13 @@ class ProcesadorGemini:
         """
         logger.info("Analizando CONSORCIO con Gemini")
         
-        # 💾 USAR CACHE SI ESTÁ DISPONIBLE
+        #  USAR CACHE SI ESTÁ DISPONIBLE
         archivos_directos = archivos_directos or []
         if cache_archivos:
             logger.info(f" Consorcio usando cache de archivos: {len(cache_archivos)} archivos")
             archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
         elif archivos_directos:
-            logger.info(f"📄 Consorcio usando archivos directos originales: {len(archivos_directos)} archivos")
+            logger.info(f" Consorcio usando archivos directos originales: {len(archivos_directos)} archivos")
         
         # Extraer documentos por categoría (mismo proceso que factura normal)
         factura_texto = ""
@@ -1086,35 +1086,35 @@ class ProcesadorGemini:
             # Llamar a Gemini con modelo especial para consorcios
             respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos=archivos_directos)
             logger.info(f"Respuesta análisis consorcio: {respuesta}...")
-        
-            
+
+
             # Limpiar respuesta
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
-            
-            # Parsear JSON
-            resultado = json.loads(respuesta_limpia)
+
+            # Parsear JSON con auto-reparación
+            try:
+                resultado = json.loads(respuesta_limpia)
+            except json.JSONDecodeError as first_error:
+                logger.warning(f"JSON malformado detectado, intentando reparar: {first_error}")
+                # Intentar reparar JSON automáticamente
+                respuesta_reparada = self._reparar_json_malformado(respuesta_limpia)
+                resultado = json.loads(respuesta_reparada)
             
             # Guardar respuesta de análisis en Results
             await self._guardar_respuesta("analisis_consorcio.json", resultado)
             
-            # Procesar con el procesador de consorcios
-            analisis_consorcio = self.procesador_consorcios.procesar_respuesta_consorcio(resultado)
-            
+            # NUEVO FLUJO v3.1.2: Solo extracción de datos por Gemini
+            # La validación y cálculo se realizará en liquidador_consorcios.py
+
             # Validar cantidad de consorciados
             if 'consorciados' in resultado and len(resultado['consorciados']) > 20:
                 logger.warning(f"Consorcio muy grande ({len(resultado['consorciados'])} consorciados), puede requerir procesamiento especial")
-            
-            # Calcular retenciones individuales
-            conceptos_retefuente = self._obtener_conceptos_completos()
-            analisis_final = self.procesador_consorcios.calcular_retenciones_consorcio(
-                analisis_consorcio, conceptos_retefuente
-            )
-            
-            # Convertir a formato compatible
-            respuesta_compatible = self.procesador_consorcios.convertir_a_formato_compatible(analisis_final)
-            
-            logger.info(f"Análisis de consorcio exitoso: {analisis_final.consorcio_info.total_consorciados} consorciados")
-            return respuesta_compatible
+
+            # Retornar resultado directo de Gemini para el nuevo liquidador
+            logger.info(f"Análisis de consorcio exitoso: {len(resultado.get('consorciados', []))} consorciados identificados")
+            logger.info("✅ Datos extraídos por Gemini - Validaciones y cálculos serán realizados por liquidador_consorcios.py")
+
+            return resultado
             
         except json.JSONDecodeError as e:
             logger.error(f"Error parseando JSON de consorcio: {e}")
@@ -1864,7 +1864,59 @@ class ProcesadorGemini:
         except Exception as e:
             logger.error(f"Error limpiando JSON: {e}")
             return respuesta
-    
+
+    def _reparar_json_malformado(self, json_str: str) -> str:
+        """
+        Repara errores comunes en JSON generado por Gemini.
+
+        Args:
+            json_str: JSON string potencialmente malformado
+
+        Returns:
+            str: JSON string reparado
+        """
+        try:
+            # Reparaciones comunes para errores de Gemini
+            json_reparado = json_str
+
+            # 1. Reparar llaves faltantes al final de objetos en arrays
+            # Buscar patrones como: "valor": 123.45, seguido directamente por {
+            import re
+
+            # Patrón: número o string seguido de coma y luego { (falta })
+            patron_llave_faltante = r'(\"[^\"]+\":\s*[0-9.]+)\s*,\s*\n\s*\{'
+            coincidencias = list(re.finditer(patron_llave_faltante, json_reparado))
+
+            # Reparar desde el final hacia el inicio para no afectar posiciones
+            for match in reversed(coincidencias):
+                inicio = match.start()
+                fin = match.end()
+                # Insertar } antes de la coma
+                posicion_coma = json_reparado.find(',', inicio)
+                if posicion_coma != -1:
+                    json_reparado = json_reparado[:posicion_coma] + '\n    }' + json_reparado[posicion_coma:]
+
+            # 2. Reparar números de punto flotante malformados
+            # Convertir 3.5000000000000004 a 3.5
+            patron_float_largo = r'(\d+\.\d{10,})'
+            def reparar_float(match):
+                numero = float(match.group(1))
+                return str(round(numero, 2))
+
+            json_reparado = re.sub(patron_float_largo, reparar_float, json_reparado)
+
+            # 3. Verificar si el JSON es válido ahora
+            json.loads(json_reparado)
+            logger.info("✅ JSON reparado exitosamente")
+            return json_reparado
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"No se pudo reparar JSON: {e}")
+            return json_str
+        except Exception as e:
+            logger.error(f"Error reparando JSON: {e}")
+            return json_str
+
     # ✅ ELIMINADA: Función _es_respuesta_truncada - Ya no necesaria con modelo mejorado
     
     def _clasificacion_fallback(self, textos_archivos: Dict[str, str]) -> Dict[str, str]:
@@ -2177,39 +2229,34 @@ class ProcesadorGemini:
     def _consorcio_fallback(self, error_msg: str = "Error procesando consorcio") -> Dict[str, Any]:
         """
         Respuesta de emergencia cuando falla el procesamiento de consorcio.
-        
+        NUEVA ESTRUCTURA v3.1.2: Compatible con liquidador_consorcios.py
+
         Args:
             error_msg: Mensaje de error
-            
+
         Returns:
-            Dict[str, Any]: Respuesta básica de consorcio
+            Dict[str, Any]: Respuesta básica de consorcio compatible con nuevo liquidador
         """
         logger.warning(f"Usando fallback de consorcio: {error_msg}")
-        
+
         return {
-            "aplica_retencion": False,
             "es_consorcio": True,
-            "valor_total_factura": 0,
-            "iva_total": 0,
-            "valor_retencion": 0,
-            "concepto": "CONCEPTO_NO_IDENTIFICADO",
-            "tarifa_retencion": 0,
-            "consorcio_info": {
-                "nombre_consorcio": "Consorcio no identificado",
-                "nit_consorcio": "000000000",
-                "total_consorciados": 0
-            },
+            "nombre_consorcio": "Consorcio no identificado",
+            "tipo_entidad": "CONSORCIO",
+            "conceptos_identificados": [
+                {
+                    "nombre_concepto": "CONCEPTO_NO_IDENTIFICADO",
+                    "concepto": "CONCEPTO_NO_IDENTIFICADO",
+                    "tarifa_retencion": 0.0,
+                    "base_gravable": 0.0
+                }
+            ],
             "consorciados": [],
-            "resumen_retencion": {
-                "valor_total_factura": 0,
-                "iva_total": 0,
-                "total_retenciones": 0,
-                "consorciados_con_retencion": 0,
-                "consorciados_sin_retencion": 0,
-                "suma_porcentajes_original": 0,
-                "porcentajes_normalizados": False
+            "validacion_porcentajes": {
+                "suma_total": 0.0,
+                "es_valido": False
             },
-            "es_facturacion_exterior": False,
+            "valor_total_factura": 0.0,
             "observaciones": [
                 f"Error procesando consorcio: {error_msg}",
                 "Por favor revise manualmente los documentos",

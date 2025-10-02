@@ -1,5 +1,216 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.2.1] - 2025-10-01
+
+### 🐛 **CORRECCIÓN CRÍTICA - PASO DE PARÁMETROS**
+- **CORREGIDO**: Error en paso de parámetro `archivos_directos` en flujo de Artículo 383 para consorcios
+  - ✅ **Problema identificado**: `_procesar_articulo_383_consorciados()` no recibía `archivos_directos` pero intentaba pasarlo
+  - ✅ **Solución implementada**:
+    - Actualizada firma de `liquidar_consorcio()` para recibir `archivos_directos: List = None`
+    - Actualizada firma de `_procesar_articulo_383_consorciados()` para recibir `archivos_directos`
+    - Corregidas llamadas en `main.py` para pasar `archivos_directos` y usar `await`
+  - 🔹 **Archivos afectados**:
+    - `liquidador_consorcios.py`: Firmas de funciones actualizadas
+    - `main.py`: Llamadas corregidas con `await` y parámetro adicional
+  - 🎯 **Sin regresión**: No afecta la funcionalidad existente, solo corrige el flujo para Art 383
+
+### ⚡ **OPTIMIZACIÓN CRÍTICA - CACHÉ DE ARCHIVOS PARA CONSORCIOS**
+- **IMPLEMENTADO**: Sistema de caché de archivos directos para análisis Art 383 en consorcios
+  - ✅ **Problema resuelto**: Concurrencia en lectura de archivos durante análisis Art 383
+  - ✅ **Solución implementada**:
+    - Integrado `cache_archivos` en flujo de liquidación de consorcios
+    - Reutilizada función `preparar_archivos_para_workers_paralelos()` existente
+    - Aplicada misma lógica de caché que análisis paralelo principal
+    - Optimización para flujos individual y paralelo de consorcios
+  - 🔹 **Mejoras de rendimiento**:
+    - Archivos se leen UNA VEZ y se cachean en memoria
+    - Evita errores de concurrencia en acceso a `UploadFile`
+    - Reutiliza archivos clonados desde caché en lugar de originales
+    - Consistente con arquitectura de procesamiento paralelo existente
+  - 🔹 **Archivos afectados**:
+    - `main.py`: Creación y paso de caché a liquidador de consorcios
+    - `liquidador_consorcios.py`: Integración completa del sistema de caché
+  - 🎯 **Compatibilidad**: Mantiene compatibilidad con flujo sin caché (archivos directos originales)
+
+---
+
+## [3.2.0] - 2025-09-30
+
+### 🆕 **NUEVA FUNCIONALIDAD MAYOR - ARTÍCULO 383 PARA CONSORCIADOS**
+- **IMPLEMENTADO**: Análisis y liquidación de Artículo 383 para personas naturales en consorcios
+  - ✅ **Detección automática**: Identifica consorciados que son personas naturales
+  - ✅ **Análisis separado**: Usa `PROMPT_ANALISIS_ART_383_CONSORCIADOS` específico para consorcios
+  - ✅ **Misma lógica**: Reutiliza `_calcular_retencion_articulo_383_separado()` del liquidador individual
+  - ✅ **Iteración por consorciado**: Procesa cada persona natural individualmente
+  - ✅ **Validaciones idénticas**: Primer pago, planilla, deducciones, tarifas progresivas
+  - 🔹 **Flujo completo**: Gemini extrae → Python valida → Cálculo Art 383 → Actualización resultado
+  - 🔹 **Arquitectura SOLID**: Respeta separación de responsabilidades y reutilización de código
+  - 📁 **Archivos principales**:
+    - `liquidador_consorcios.py:780-1170` (implementación completa)
+    - `prompt_clasificador.py:774-1070` (prompt específico para consorcios)
+
+### 🔧 **FUNCIONES NUEVAS IMPLEMENTADAS**
+- **`_detectar_consorciados_persona_natural()`**: Identifica personas naturales en el consorcio
+- **`_analizar_articulo_383_consorciados()`**: Análisis separado con Gemini para Art 383 consorcios
+- **`_calcular_retencion_articulo_383_consorciado()`**: Reutiliza lógica existente para cada consorciado
+- **`_actualizar_consorciado_con_art383()`**: Actualiza consorciado con resultado Art 383
+- **`_procesar_articulo_383_consorciados()`**: Orquesta todo el flujo de Art 383 para consorcios
+
+### 🏗️ **MEJORAS EN ESTRUCTURA DE DATOS**
+- **ACTUALIZADO**: `ConsorciadoLiquidado` incluye campos para Art 383
+  - ✅ `metodo_calculo`: Identifica si se usó "convencional" o "articulo_383"
+  - ✅ `observaciones_art383`: Observaciones específicas del Art 383
+- **ACTUALIZADO**: `convertir_resultado_a_dict()` incluye información Art 383 en JSON final
+- **ACTUALIZADO**: `liquidar_consorcio()` ahora es async para soporte de llamadas a Gemini
+
+### ⚡ **FLUJO INTEGRADO**
+- **PASO 3.5**: Integrado en flujo principal después de liquidación convencional
+- **AUTOMÁTICO**: Solo se ejecuta si hay personas naturales detectadas
+- **FALLBACK**: Mantiene cálculo convencional si Art 383 no aplica o falla
+- **OBSERVACIONES**: Agrega información clara sobre qué consorciados usan Art 383
+
+## [3.1.3] - 2025-09-30
+
+### 🔧 **CORRECCIÓN AUTOMÁTICA JSON MALFORMADO**
+- **IMPLEMENTADO**: Auto-reparación de JSON malformado generado por Gemini
+  - ✅ **Función nueva**: `_reparar_json_malformado()` para corregir errores comunes
+  - ✅ **Error específico**: Repara llaves de cierre faltantes en arrays de conceptos
+  - ✅ **Precisión decimal**: Corrige números como 3.5000000000000004 → 3.5
+  - ✅ **Flujo robusto**: Intenta parsing directo, si falla auto-repara, luego fallback
+  - 🔹 **Patrón detectado**: `"base_gravable": 9345000.00,` (falta }) seguido de `{`
+  - 🔹 **Regex reparación**: Detecta y corrige automáticamente llaves faltantes
+  - 📁 **Archivos**: `Clasificador/clasificador.py:1862-1912` (nueva función), `1094-1101` (integración)
+
+### 🔧 **CORRECCIÓN TARIFA DECIMAL - CÁLCULO CONSORCIOS**
+- **CORREGIDO**: Error en cálculo de retenciones por formato de tarifa
+  - ❌ **Problema**: 1,578,277.5 × 0.11 debería = 173,610.525 pero mostraba 1,736.11
+  - ✅ **Detección automática**: Distingue entre tarifa decimal (0.11) vs porcentaje (11)
+  - ✅ **Conversión correcta**: Si Gemini extrae "11%" como 11 → se convierte a 0.11 para cálculos
+  - ✅ **Almacenamiento consistente**: JSON siempre muestra tarifa en formato decimal (0.11)
+  - 🔹 **Lógica**: `tarifa <= 1.0` = decimal, `tarifa > 1.0` = porcentaje a convertir
+  - 📁 **Archivos**: `liquidador_consorcios.py:392-400` (detección), `418,433` (almacenamiento)
+
+## [3.1.2] - 2025-09-28
+
+### 🔧 **CORRECCIÓN CRÍTICA - COMPATIBILIDAD CONSORCIO_INFO**
+- **CORREGIDO**: Error "Campo requerido 'consorcio_info' no encontrado en la respuesta"
+  - ❌ **REMOVIDO**: Uso de `consorcio_processor.py` que esperaba estructura antigua
+  - ✅ **ACTUALIZADO**: `clasificador.py` retorna resultado directo de Gemini al nuevo liquidador
+  - 🔹 **Principio DRY**: Eliminada duplicación entre procesador viejo y nuevo liquidador
+  - 📁 **Archivos actualizados**: `Clasificador/clasificador.py:1100-1111`, `1183-1210`
+
+### 🔧 **ACLARACIÓN FORMATO PORCENTAJES - PROMPT GEMINI**
+- **ACLARADO**: Formato de extracción de porcentajes de participación en consorcios
+  - ✅ **FORMATO ESTÁNDAR**: Gemini extrae solo el número del porcentaje (30% → 30, 0.4% → 0.4)
+  - 🔹 **Ejemplos actualizados**: Incluye casos decimales como 0.4% y 25.5%
+  - 🔹 **Consistencia**: Elimina ambigüedad entre formato decimal y porcentual
+  - 📁 **Archivo**: `Clasificador/prompt_clasificador.py:661` - instrucciones de extracción
+  - 📁 **JSON docs**: `prompt_clasificador.py:750` - documentación en JSON
+
+### ✨ **NUEVA FUNCIONALIDAD - DETALLE POR CONCEPTO POR CONSORCIADO**
+- **IMPLEMENTADO**: Retorno detallado de cada concepto liquidado por consorciado individual
+  - ✅ **Estructura nueva**: `ConceptoLiquidado` con detalle completo por concepto
+  - ✅ **Información granular**: Base gravable individual, base mínima normativa, valor retención por concepto
+  - ✅ **Total + Detalle**: Retorna sumatorio total MÁS desglose individual por concepto
+  - 🔹 **Dataclass agregado**: `ConceptoLiquidado` líneas 121-134
+  - 🔹 **Actualización**: `ConsorciadoLiquidado.conceptos_liquidados` lista de conceptos detallados
+  - 🔹 **JSON enriquecido**: Campo `conceptos_liquidados` en respuesta por consorciado
+  - 📁 **Archivos**: `liquidador_consorcios.py:121-134` (nuevo dataclass), `785-801` (JSON)
+
+### 🔧 **CORRECCIÓN BASE MÍNIMA - FUENTE DE DATOS**
+- **CORREGIDO**: Fuente de datos para base mínima en validación de conceptos
+  - ❌ **ERROR**: Base mínima se intentaba obtener de respuesta de Gemini
+  - ✅ **CORRECCIÓN**: Base mínima se obtiene del diccionario `CONCEPTOS_RETEFUENTE` (config.py)
+  - 🔹 **Separación clara**: Gemini extrae `base_gravable` factura, config.py provee `base_minima` normativa
+  - 🔹 **Método agregado**: `_obtener_base_minima_del_diccionario()` para buscar en config.py
+  - 🔹 **Interface actualizada**: `calcular_retencion_individual()` recibe `diccionario_conceptos`
+  - 📁 **Archivos**: `liquidador_consorcios.py:418-452` (nuevo método), `338-342` (interface)
+
+### 🎯 **CORRECCIÓN CRÍTICA - VALIDACIÓN BASE GRAVABLE INDIVIDUAL**
+- **PROBLEMA FUNDAMENTAL CORREGIDO**: Validación de base gravable por consorciado individual
+  - ❌ **ERROR ANTERIOR**: Validaba base gravable sobre valor total del consorcio
+  - ✅ **CORRECCIÓN**: Valida base gravable sobre valor proporcional de cada consorciado
+  - 🔹 **Nueva lógica**: Valor individual = Valor total × % participación, luego comparar vs base mínima
+  - 🔹 **Validación por concepto**: Cada concepto se valida independientemente por consorciado
+  - 🔹 **Observaciones detalladas**: Registro de qué conceptos aplican/no aplican por consorciado
+  - 📁 **Interface actualizada**: `ICalculadorRetencion.calcular_retencion_individual()` - nueva signatura
+  - 📁 **Implementación**: `CalculadorRetencionConsorcio.calcular_retencion_individual()` líneas 339-405
+  - 📁 **Estructura**: `ConsorciadoLiquidado.observaciones_conceptos` - nuevo campo
+  - 📁 **Respuesta JSON**: Incluye `observaciones_conceptos` por consorciado
+
+### 🏭 **NUEVO LIQUIDADOR DE CONSORCIOS - ARQUITECTURA SOLID COMPLETA**
+- **MÓDULO NUEVO**: `Liquidador/liquidador_consorcios.py` implementando separación IA-Validación Manual
+  - ✅ **SEPARACIÓN RESPONSABILIDADES**: Gemini solo extrae datos, Python hace validaciones y cálculos
+  - 🔹 **Principio SRP**: Interfaces específicas para validación, conceptos y cálculos
+  - 🔹 **Principio DIP**: Inyección de dependencias con interfaces abstractas
+  - 🔹 **Principio OCP**: Extensible para nuevos tipos de validaciones sin modificar código
+  - 📁 **Ubicación**: `Liquidador/liquidador_consorcios.py`
+
+### 🔧 **REFACTORING MAIN.PY - CONSORCIOS**
+- **ACTUALIZADO**: Flujo de procesamiento de consorcios en `main.py` para usar nuevo liquidador
+  - ❌ **REMOVIDO**: Lógica de liquidación desde `clasificador.py` (violaba SRP)
+  - ✅ **AGREGADO**: Uso de `LiquidadorConsorcios` con validaciones manuales
+  - 🔹 **Principio SRP**: Clasificador solo extrae, Liquidador solo calcula
+  - 📁 **Ubicaciones**: `main.py:1091-1103` (paralelo), `main.py:1356-1367` (individual)
+
+### 🧠 **PROMPT ACTUALIZADO - SOLO EXTRACCIÓN**
+- **ACTUALIZADO**: `PROMPT_ANALISIS_CONSORCIO` para solo extraer información sin cálculos
+  - ✅ **EXTRACCIÓN**: Naturaleza tributaria, conceptos, porcentajes de participación
+  - ❌ **NO CALCULA**: Retenciones, validaciones complejas, aplicación de normativa
+  - 🔹 **Separación clara**: IA identifica, Python valida y calcula
+
+### 🏗️ **VALIDACIONES MANUALES IMPLEMENTADAS**
+- **Validador de Naturaleza**: `ValidadorNaturalezaTributaria`
+  - ✅ No responsable de IVA → No aplica retención
+  - ✅ Autorretenedor → No aplica retención
+  - ✅ Régimen simple → No aplica retención
+  - ✅ Datos null → "Preliquidación sin finalizar"
+- **Validador de Conceptos**: `ValidadorConceptos`
+  - ✅ Verificación contra diccionario de conceptos válidos
+  - ✅ Concepto no identificado → "Preliquidación sin finalizar"
+- **Calculador de Retención**: `CalculadorRetencionConsorcio`
+  - ✅ Retención general → Retenciones individuales por % participación
+  - ✅ Base mínima validada por consorciado
+  - ✅ Precisión decimal con redondeo correcto
+
+### 📊 **NUEVA ESTRUCTURA DE RESPUESTA CONSORCIOS**
+```json
+{
+  "retefuente": {
+    "consorciados": [
+      {
+        "nombre": "EMPRESA A SAS",
+        "nit": "900123456",
+        "aplica": true,
+        "valor_retencion": 11130.50,
+        "valor_base": 278262.50,
+        "porcentaje_participacion": 25.0
+      }
+    ]
+  }
+}
+```
+
+## [3.1.1] - 2025-09-28
+
+### 🔄 **REFACTORING API - SEPARACIÓN DE RESPONSABILIDADES**
+- **CAMBIO ARQUITECTÓNICO**: Endpoint `/api/procesar-facturas` refactorizado para obtener NIT administrativo de base de datos
+  - ❌ **REMOVIDO**: Parámetro `nit_administrativo: str = Form(...)` del endpoint
+  - ✅ **AGREGADO**: Extracción automática de NIT desde `datos_negocio['nit']` (campo "NIT ASOCIADO" de DB)
+  - 🔹 **Principio SRP**: Endpoint solo coordina flujo, database service maneja datos
+  - 🔹 **Principio DIP**: Endpoint depende de abstracción de database service
+  - 📁 **Ubicación**: `main.py:734-785`
+
+### 🏗️ **ARQUITECTURA**
+- **Separación de responsabilidades mejorada**: Database como única fuente de verdad para NITs administrativos
+- **Validación robusta**: Manejo de errores cuando código de negocio no existe o no tiene NIT asociado
+- **Logging mejorado**: Trazabilidad completa del NIT obtenido desde base de datos
+
+### 🔧 **CAMBIADO**
+- Estructura de parámetros en endpoint principal (BREAKING CHANGE)
+- Flujo de validación: primero consulta DB, luego extrae NIT, después valida
+- Documentación de endpoint actualizada para reflejar nuevo flujo
+
 ## [3.1.0] - 2025-09-27
 
 ### 🗄️ **MÓDULO DATABASE - ARQUITECTURA SOLID COMPLETA**

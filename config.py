@@ -174,6 +174,26 @@ CONCEPTOS_RETEFUENTE = {
     "Servicios de consultoría en informática":{
         "base_pesos":0,
         "tarifa_retencion":0.035
+    },
+    "Alquiler":{
+        "base_pesos": 0,
+        "tarifa_retencion": 0.03
+    },
+    "transporte de pasajeros":{
+        "base_pesos": 100000000,
+        "tarifa_retencion": 0.035
+    },
+    "comision a terceros":{
+        "base_pesos": 0,
+        "tarifa_retencion": 0.11
+    },
+    "personal de servicio":{
+        "base_pesos": 0,
+        "tarifa_retencion": 0.035
+    },
+    "pago a terceros":{
+        "base_pesos": 0,
+        "tarifa_retencion": 0.035
     }
 }
 
@@ -275,7 +295,7 @@ CONFIG = {
 # ===============================
 
 NITS_CONFIGURACION = {
-    "800.178.148-8": {
+    "800178148": {
         "nombre": "Fiduciaria Colombiana de Comercio Exterior S.A.",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
@@ -285,7 +305,7 @@ NITS_CONFIGURACION = {
             "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
         ]
     },
-    "830.054.060-5": {
+    "830054060": {
         "nombre": "FIDEICOMISOS SOCIEDAD FIDUCIARIA FIDUCOLDEX",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
@@ -295,7 +315,7 @@ NITS_CONFIGURACION = {
             "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
         ]
     },
-    "900.649.119-9": {
+    "900649119": {
         "nombre": "PATRIMONIO AUTÓNOMO FONTUR",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
@@ -305,28 +325,28 @@ NITS_CONFIGURACION = {
             "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
         ]
     },
-    "901.281.733-3": {
+    "901281733": {
         "nombre": "FONDOS DE INVERSIÓN - ABIERTA Y 60 MODERADO",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "RETENCION_ICA"
         ]
     },
-    "900.566.230-1": {
+    "900566230": {
         "nombre": "CONSORCIO",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "RETENCION_ICA"
         ]
     },
-    "901.427.860-1": {
+    "901427860": {
         "nombre": "CONSORCIO", 
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "RETENCION_ICA"
         ]
     },
-    "900.139.498-7": {
+    "900139498": {
         "nombre": "FIC FIDUCOLDEX",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
@@ -546,7 +566,7 @@ def obtener_constantes_articulo_383() -> Dict[str, Any]:
 
 # NITs válidos para AMBOS impuestos (estampilla + obra pública)
 NITS_ESTAMPILLA_UNIVERSIDAD = {
-    "800.178.148-8": "Fiduciaria Colombiana de Comercio Exterior S.A",
+    "8001781488": "Fiduciaria Colombiana de Comercio Exterior S.A",
     "830.054.060-5": "Fideicomisos Sociedad Fiduciaria Fiducoldex",
     "900.649.119-9": "Fondo Nacional del Turismo Fontur de la fiduciaria"
 }
@@ -732,17 +752,17 @@ def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
 
 # NITs de la fiduciaria que aplican IVA y ReteIVA
 NITS_IVA_RETEIVA = {
-    "800.178.148-8": {
+    "8001781488": {
         "nombre": "Fiduciaria Colombiana de Comercio Exterior S.A.",
         "aplica_iva": True,
         "aplica_reteiva": True
     },
-    "830.054.060-5": {
+    "830054060": {
         "nombre": "FIDEICOMISOS SOCIEDAD FIDUCIARIA FIDUCOLDEX",
         "aplica_iva": True,
         "aplica_reteiva": True
     },
-    "900.649.119-9": {
+    "900649119": {
         "nombre": "PATRIMONIO AUTÓNOMO FONTUR",
         "aplica_iva": True,
         "aplica_reteiva": True

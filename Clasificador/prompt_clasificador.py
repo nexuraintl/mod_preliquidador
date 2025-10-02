@@ -164,9 +164,9 @@ def _generar_seccion_archivos_directos(nombres_archivos_directos: List[str]) -> 
         str: Texto formateado para incluir en el prompt de análisis
     """
     if not nombres_archivos_directos:
-        return "📄 **ARCHIVOS DIRECTOS**: No hay archivos directos adjuntos."
+        return " **ARCHIVOS DIRECTOS**: No hay archivos directos adjuntos."
     
-    texto = "📄 **ARCHIVOS DIRECTOS ADJUNTOS** (verás estos archivos nativamente):\n"
+    texto = " **ARCHIVOS DIRECTOS ADJUNTOS** (verás estos archivos nativamente):\n"
     for nombre in nombres_archivos_directos:
         extension = nombre.split('.')[-1].upper() if '.' in nombre else "DESCONOCIDO"
         if extension == "PDF":
@@ -313,7 +313,7 @@ Verificar si aplica alguna condición de exclusión:
  NO calcules valores no mostrados
  NO deduzcas el régimen tributario por el tipo de empresa
  NO asumas que alguien es autorretenedor sin confirmación explícita
- NO uses información de la factura para determinar responsabilidad IVA
+ NO uses información de la factura para determinar responsabilidad IVA 
 
 ═══════════════════════════════════════════════════════════════════
  FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO):
@@ -373,6 +373,8 @@ CONCEPTOS YA IDENTIFICADOS EN ANÁLISIS PREVIO:
 ═══════════════════════════════════════════════════════════════════
  DOCUMENTOS DISPONIBLES PARA ANÁLISIS:
 ═══════════════════════════════════════════════════════════════════
+{_generar_seccion_archivos_directos(nombres_archivos_directos)}
+
 FACTURA PRINCIPAL:
 {factura_texto if factura_texto else "[NO PROPORCIONADA]"}
 
@@ -596,242 +598,476 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
         str: Prompt formateado para enviar a Gemini
     """
     
-    # Importar constantes del Artículo 383
-    from config import obtener_constantes_articulo_383
-    constantes_art383 = obtener_constantes_articulo_383()
-    
-    # Limitar conceptos a los más relevantes para reducir tokens
-    conceptos_simplificados = {k: v for i, (k, v) in enumerate(conceptos_dict.items()) if i < 20}
     
     return f"""
-      Eres un experto contador colombiano especializado en retención en la fuente que trabaja para la FIDUCIARIA FIDUCOLDEX (las FIDUCIARIA Tiene varios NITS administrados), tu trabajo es aplicar las retenciones a las empresas (terceros) que emiten las FACTURAS.
-    ANALIZA ESTE CONSORCIO Y CALCULA RETENCIONES POR CONSORCIADO.
-    
-    CONCEPTOS RETEFUENTE (usa NOMBRE EXACTO):
-    {json.dumps(conceptos_simplificados, indent=1, ensure_ascii=False)}
-    
-    **ARTÍCULO 383 - PERSONAS NATURALES (TARIFAS PROGRESIVAS):**
-    UVT 2025: ${constantes_art383['uvt_2025']:,}
-    SMMLV 2025: ${constantes_art383['smmlv_2025']:,}
-    
-    Conceptos que aplican para Art. 383:
-    {json.dumps(constantes_art383['conceptos_aplicables'], indent=1, ensure_ascii=False)}
-    
-    Tarifas progresivas Art. 383:
-    {json.dumps(constantes_art383['tarifas'], indent=1, ensure_ascii=False)}
-    
-    Límites de deducciones Art. 383:
-    {json.dumps(constantes_art383['limites_deducciones'], indent=1, ensure_ascii=False)}
-    
-    DOCUMENTOS DISPONIBLES:
-    
-    {_generar_seccion_archivos_directos(nombres_archivos_directos)}
-    
-    FACTURA:
-    {factura_texto}
-    
-    RUT:
-    {rut_texto if rut_texto else "NO DISPONIBLE"}
-    
-    ANEXOS:
-    {anexos_texto if anexos_texto else "NO DISPONIBLES"}
-    
-    
-    INSTRUCCIONES:
-    1. EXTRAE: nombre, NIT y % de cada consorciado (busca formato NIT_%, ej: 900123456_15.5%). en la factura principalmente si ahi no esta la informacion revisa los anexos.
-    2. IDENTIFICA: concepto de retefuente del servicio (usa nombre EXACTO del diccionario)
-    2.1 VALIDA : el valor total del concepto facturado por el CONSORCIO, debe superar la base minima.(La base minima NO SE ANALIZA POR CONSORCIADO)
-    3. CALCULA: valor_proporcional = valor_total * (porcentaje/100)
-    4. VALIDA por consorciado: responsable IVA, autorretenedor, régimen
-    5. **ARTÍCULO 383 POR CONSORCIADO**: Para cada consorciado que sea PERSONA NATURAL, valida Art. 383
-    6. APLICA: retención = valor_proporcional * tarifa (Art. 383 o convencional según validaciones)
-    7.**RETENCIÓN EN LA FUENTE:**
-    - Identifica información sobre retención en la fuente en los ANEXOS. (En ocasiones los anexos solo dicen APLICA o No aplica)
-   
-     **ESTRATEGIA DE ANÁLISIS**
-   
-      - Primero revisa la FACTURA para identificar conceptos
-       - Si la FACTURA solo muestra valores generales SIN DETALLE, revisa los ANEXOS y COTIZACIONES
-       - Los ANEXOS frecuentemente contienen el desglose detallado de cada concepto
-       - Las COTIZACIONES pueden mostrar la descripción específica de servicios/productos
-       - El objeto del contrato te puede ayudar a identificar cuales son los servicios que  se están prestando o cobrando en la factura
-       
-   **NATURALEZA DEL TERCERO - CRÍTICO PARA RETENCIÓN (POR CADA CONSORCIADO):**
-       - Busca esta información principalmente en el RUT (si esta disponible VERIFICALO EN LA SECCION RESPONSABILIDADES, CALIDADES Y ATRIBUTOS DEL RUT), si NO se adjunto el RUT verifica la naturaleza en la FACTURA o en los ANEXOS. 
-       - ¿Es persona natural o jurídica?
-       - ¿Es declarante de renta?
-       - ¿Qué régimen tributario? (Simple/Ordinario/Especial) 
-       - ¿Es autorretenedor?
-       - **¿Es responsable de IVA?** (CRÍTICO: Si NO es responsable de IVA, NO se le aplica retención en la fuente)
-       
-    **ARTÍCULO 383 - VALIDACIÓN POR CONSORCIADO (SOLO PERSONAS NATURALES):**
-        Para cada consorciado que sea PERSONA NATURAL, valida si aplica Art. 383:
-        
-        **CONDICIONES OBLIGATORIAS:**
-        - El consorciado es PERSONA NATURAL
-        - El concepto corresponde a: honorarios, prestación de servicios, diseños, comisiones, viáticos
-        - Conceptos aplicables exactos: {constantes_art383['conceptos_aplicables']}
-        
-        **DETECCIÓN DE PRIMER PAGO** (BUSCAR EN FACTURA Y ANEXOS):
-        Identifica si es el primer pago del contrato buscando indicadores como:
-        - "primer pago", "pago inicial", "anticipo", "pago adelantado"
-        - "primera cuota", "entrega inicial", "adelanto"
-        - Numeración de facturas: 001, 01, #1
-        - "inicio de contrato", "pago de arranque"
-        - Sinónimos o variaciones de estos términos
-        
-        **SOPORTES OBLIGATORIOS A BUSCAR EN LOS ANEXOS:**
-        a) Planilla de aportes a salud y pensión (máximo 2 meses antigüedad):
-           - **PRIMER PAGO**: NO es obligatoria, pero verificar si está presente
-           - **PAGOS POSTERIORES**: SÍ es obligatoria
-           - Debe ser sobre el 40% del valor del ingreso
-           - Si el ingreso NO supera $1,423,500 (SMMLV), esta condición no cuenta
-           
-        b) Cuenta de cobro (honorarios, comisiones, prestación de servicios) - SIEMPRE OBLIGATORIA
-        
-        **LÓGICA DE VALIDACIÓN DE PLANILLA POR CONSORCIADO:**
-        - Si es PRIMER PAGO y tiene planilla: perfecto, continuar con Art. 383
-        - Si es PRIMER PAGO y NO tiene planilla: agregar observación pero continuar con Art. 383
-        - Si NO es primer pago y NO tiene planilla: NO aplicar Art. 383, usar tarifa convencional
-        
-        **DEDUCCIONES PERMITIDAS A IDENTIFICAR EN ANEXOS (POR CONSORCIADO):**
-        Si hay soportes válidos, busca estas deducciones:
-        
-        - **Intereses por vivienda**: Hasta 100 UVT/mes (${constantes_art383['uvt_2025'] * 100:,}/mes)
-           Soporte: Certificación entidad financiera con nombre del consorciado
-           
-        - **Dependientes económicos**: Hasta 10% del ingreso o 32 UVT/mes (${constantes_art383['uvt_2025'] * 32:,}/mes)
-           Soporte: Declaración juramentada del beneficiario
-           
-        - **Medicina prepagada**: Hasta 16 UVT/mes (${constantes_art383['uvt_2025'] * 16:,}/mes)
-           Soporte: Certificación EPS o entidad medicina prepagada
-           
-        - **Rentas exentas (AFC, pensiones voluntarias)**: Hasta 25% del ingreso mensual sin exceder 3,800 UVT/año
-           Soporte: Planilla de aportes (máximo 2 meses antigüedad)
-           Si ingreso NO supera $1,423,500, esta deducción no cuenta
-        
-        **CÁLCULO BASE GRAVABLE ART. 383 POR CONSORCIADO:**
-        Base gravable = Valor proporcional - Aportes seguridad social (40%) - Deducciones soportadas
-        
-        IMPORTANTE: Deducciones NO PUEDEN superar 40% del valor proporcional
-        
-        **TARIFA A APLICAR SEGÚN BASE GRAVABLE EN UVT:**
-        - 0 a 95 UVT: 0%
-        - 95 a 150 UVT: 19%
-        - 150 a 360 UVT: 28%
-        - 360 a 640 UVT: 33%
-        - 640 a 945 UVT: 35%
-        - 945 a 2300 UVT: 37%
-        - 2300 UVT en adelante: 39%
-    
-    REGLAS:
-    - NO retención si: NO responsable IVA, autorretenedor, régimen SIMPLE, o valor concepto del consorcio (en general) < base mínima
-    - Para personas naturales: Aplicar Art. 383 si cumple condiciones, sino tarifa convencional
-    - Para personas jurídicas: Siempre tarifa convencional
-    - Normaliza porcentajes a 100% si necesario
-    - ANALIZA E IDENTIFICA TODOS LOS CONSORCIADOS QUE VEAS. NO PONGAS "// ... (rest of the consorciados)" PARA SIMPLIFICAR TU RESPUESTA
-    - Devuélveme el JSON completo y válido (sin truncar), aunque sea largo
-    - ES CRÍTICO QUE SOLO RESPONDAS CON EL JSON, NO HAGAS COMENTARIOS EXTRAS
-    
-     IMPORTANTE:
-    - Si NO puedes identificar un concepto específico, indica "CONCEPTO_NO_IDENTIFICADO"
-    - Si la facturación es fuera de Colombia, marca es_facturacion_exterior: true
-    - Si no puedes determinar la naturaleza del tercero, marca como null
-    - Para regimen_tributario usa EXACTAMENTE: "SIMPLE", "ORDINARIO" o "ESPECIAL" según lo que encuentres en el RUT
-    - NO generalices régimen especial como ordinario - mantén la diferenciación específica
-     -Si hay varios conceptos en la factura, identifica cada uno de los conceptos y sus valores.
+Eres un sistema de análisis tributario colombiano para FIDUCIARIA FIDUCOLDEX.
+Tu función es IDENTIFICAR con PRECISIÓN conceptos de retención en la fuente, naturaleza del tercero para CONSORCIOS y UNIONES TEMPORALES individualmente.
+
+ REGLA FUNDAMENTAL: SOLO usa información EXPLÍCITAMENTE presente en los documentos.
+ NUNCA inventes, asumas o deduzcas información no visible.
+ Si no encuentras un dato, usa NULL o el valor por defecto especificado.
+
+═══════════════════════════════════════════════════════════════════
+ CONCEPTOS VÁLIDOS DE RETENCIÓN (USA SOLO ESTOS):
+═══════════════════════════════════════════════════════════════════
+{json.dumps(conceptos_dict, indent=2, ensure_ascii=False)}
+
+═══════════════════════════════════════════════════════════════════
+ DOCUMENTOS PROPORCIONADOS:
+═══════════════════════════════════════════════════════════════════
+
+{_generar_seccion_archivos_directos(nombres_archivos_directos)}
+
+FACTURA PRINCIPAL:
+{factura_texto}
+
+RUT DEL TERCERO:
+{rut_texto if rut_texto else "[NO PROPORCIONADO]"}
+
+ANEXOS Y DETALLES:
+{anexos_texto if anexos_texto else "[NO PROPORCIONADOS]"}
+
+COTIZACIONES:
+{cotizaciones_texto if cotizaciones_texto else "[NO PROPORCIONADAS]"}
+
+OBJETO DEL CONTRATO:
+{anexo_contrato if anexo_contrato else "[NO PROPORCIONADO]"}
+
+═══════════════════════════════════════════════════════════════════
+ PROTOCOLO DE ANÁLISIS ESTRICTO:
+═══════════════════════════════════════════════════════════════════
+
+ PASO 1: IDENTIFICACIÓN DEL TIPO DE ENTIDAD
+Buscar en RUT y documentos:
+├─ Si encuentras "CONSORCIO" → es_consorcio: true 
+├─ Si encuentras "UNIÓN TEMPORAL" o "UNION TEMPORAL" → es_consorcio: true
+├─ Si encuentras "CONSORCIO" o "UNIÓN TEMPORAL" extrae el nombre general del Consorcio/Unión 
+└─ Si NO encuentras ninguno → es_consorcio: false y asignar análisis con los valores en 0.0 o null o ""
+
+═══════════════════════════════════════════════════════════════════
+ PROTOCOLO ESPECIAL PARA CONSORCIOS/UNIONES TEMPORALES:
+═══════════════════════════════════════════════════════════════════
+
+Si es_consorcio == true:
+
+ PASO A: IDENTIFICAR TODOS LOS CONSORCIADOS
+Buscar en ESTE ORDEN:
+1. Sección "CONSORCIADOS" o "INTEGRANTES" en el RUT principal
+2. Tabla de participación en facturas o anexos
+3. Documento de constitución del consorcio
+4. Cualquier documento que liste los integrantes
+
+Para CADA consorciado extraer:
+├─ NIT/Cédula: Número exacto sin puntos ni guiones
+├─ Nombre/Razón Social: Nombre completo tal como aparece
+├─ Porcentaje participación: Extraer SOLO el número del porcentaje (ej: si encuentras "30%" → 30, si encuentras "0.4%" → 0.4, si encuentras "25.5%" → 25.5)
+└─ Si no hay porcentaje → porcentaje_participacion: null
+
+ PASO B: ANALIZAR CADA CONSORCIADO INDIVIDUALMENTE
+Para CADA consorciado identificado:
+1. Buscar su RUT individual en los anexos (archivo con su NIT)
+2. Si encuentra RUT individual → Extraer naturaleza tributaria
+3. Si NO encuentra RUT → Todos los campos de naturaleza en null
+
+Extraer del RUT INDIVIDUAL de cada consorciado:
+TIPO DE CONTRIBUYENTE (Sección 24 o equivalente):
+├─ Si encuentras "Persona natural" → es_persona_natural: true
+├─ Si encuentras "Persona jurídica" → es_persona_natural: false
+└─ Si NO encuentras → es_persona_natural: null
+
+ RÉGIMEN TRIBUTARIO (Buscar texto exacto):
+├─ Si encuentras "RÉGIMEN SIMPLE" o "SIMPLE" → regimen_tributario: "SIMPLE"
+├─ Si encuentras "RÉGIMEN ORDINARIO" u "ORDINARIO" → regimen_tributario: "ORDINARIO"
+├─ Si encuentras "RÉGIMEN ESPECIAL", "ESPECIAL" o "SIN ÁNIMO DE LUCRO" → regimen_tributario: "ESPECIAL"
+└─ Si NO encuentras → regimen_tributario: null
+
+ AUTORRETENEDOR:
+├─ Si encuentras texto "ES AUTORRETENEDOR" → es_autorretenedor: true
+└─ Si NO encuentras esa frase → es_autorretenedor: false
 
 
-    RESPONDE SOLO JSON:
-    {{
-        "es_consorcio": true,
-        "consorcio_info": {{
-            "nombre_consorcio": "string",
-            "nit_consorcio": "string",
-            "total_consorciados": 0
-        }},
-        "consorciados": [{{
-            "nombre": "string",
-            "nit": "string",
-            "porcentaje_participacion": 0.0,
-            "valor_proporcional": 0.0,
-            "naturaleza_tercero": {{
-                "es_persona_natural": false,
-                "es_declarante": true,
-                "regimen_tributario": "ORDINARIO",
-                "es_autorretenedor": false,
-                "es_responsable_iva": true
+ RESPONSABLE DE IVA (Sección Responsabilidades):
+├─ Si encuentras "NO RESPONSABLE DE IVA" o "49 - No responsable de IVA" → es_responsable_iva: false
+├─ Si encuentras "RESPONSABLE DE IVA" (sin el NO) → es_responsable_iva: true
+└─ Si NO encuentras ninguna mención → es_responsable_iva: null
+
+ PASO C: VALIDACIÓN DE CONDICIONES DE NO APLICACIÓN
+Verificar si aplica alguna condición de exclusión:
+
+ NO APLICA RETENCIÓN INDIVIDUAL SI:
+├─ regimen_tributario == "SIMPLE" → "aplica_retencion_individual": false, "razon_no_aplicacion": "regimen_simple"
+├─ es_autorretenedor == true → "aplica_retencion_individual": false, "razon_no_aplicacion": "autorretenedor"
+└─ es_responsable_iva == false → "aplica_retencion_individual": false, "razon_no_aplicacion": "no_responsable_iva"
+
+
+ PASO D: IDENTIFICAR CONCEPTOS (UNA VEZ, APLICA A TODOS)
+Los conceptos de retención son los MISMOS para todos los consorciados:
+├─ Identificar los servicios/bienes facturados y extraer el nombre exacto 
+├─ Buscar coincidencias en CONCEPTOS VÁLIDOS
+└─ Estos conceptos se aplican a TODOS por igual
+
+ MATCHING DE CONCEPTOS - ESTRICTO:
+├─ Si encuentras coincidencia EXACTA → usar ese concepto
+├─ Si encuentras coincidencia PARCIAL clara → usar el concepto más específico
+├─ Si NO hay coincidencia clara → "CONCEPTO_NO_IDENTIFICADO"
+└─ NUNCA inventes un concepto que no esté en la lista
+
+
+ PASO E: VALIDAR PORCENTAJES
+├─ Sumar todos los porcentajes de participación
+├─ Si suma != 100% → agregar observación pero CONTINUAR
+└─ Si faltan porcentajes → agregar observación pero CONTINUAR
+
+═══════════════════════════════════════════════════════════════════
+ PROHIBICIONES ABSOLUTAS:
+═══════════════════════════════════════════════════════════════════
+ NO inventes consorciados no listados
+ NO asumas porcentajes de participación
+ NO deduzcas naturaleza sin RUT específico
+ NO modifiques nombres de conceptos
+ NO calcules valores no mostrados
+ NO asumas que consorciados tienen misma naturaleza
+
+═══════════════════════════════════════════════════════════════════
+ FORMATO DE RESPUESTA (JSON ESTRICTO):
+═══════════════════════════════════════════════════════════════════
+
+FORMATO SI ES CONSORCIO/UNIÓN TEMPORAL:
+{{
+    "es_consorcio": true,
+    "nombre_consorcio": "Nombre del Consorcio/Unión Temporal",
+    "tipo_entidad": "CONSORCIO" | "UNION_TEMPORAL",
+    "conceptos_identificados": [
+        {{
+            "nombre_concepto": "Texto LITERAL del concepto extraido",
+            "concepto": "Nombre MAPEADO del diccionario o CONCEPTO_NO_IDENTIFICADO",
+            "tarifa_retencion": número o 0.0,
+            "base_gravable": número extraido de la factura o 0.0
+        }}
+    ],
+    "consorciados": [
+        {{
+            "nit": "número identificación",
+            "nombre": "razón social completa",
+            "porcentaje_participacion": número o null,  // Solo el número: 30% → 30, 0.4% → 0.4
+            "tiene_rut_individual": boolean,
+            "naturaleza_tributaria": {{
+                "es_persona_natural": true | false | null,
+                "regimen_tributario": "SIMPLE" | "ORDINARIO" | "ESPECIAL" | null,
+                "es_autorretenedor": true | false | null,
+                "es_responsable_iva": true | false | null
             }},
+            "aplica_retencion_individual": boolean,
+            "razon_no_aplicacion": "autorretenedor" | "regimen_simple" | "no_responsable_iva" | null
+        }}
+    ],
+    "validacion_porcentajes": {{
+        "suma_total": número o 0.0,
+        "es_valido": boolean
+    }},
+    "valor_total": número encontrado o 0.0,
+    "iva": número encontrado o 0.0,
+    "observaciones": ["Lista de observaciones"]
+}}
+
+    """
+def PROMPT_ANALISIS_ART_383_CONSORCIADOS(
+    consorciados_persona_natural: List[Dict],
+    factura_texto: str = "",
+    rut_texto: str = "",
+    anexos_texto: str = "",
+    cotizaciones_texto: str = "",
+    anexo_contrato: str = "",
+    nombres_archivos_directos: List[str] = None,
+    
+) -> str:
+    """
+    Genera prompt para análisis de Artículo 383 de MÚLTIPLES consorciados.
+    
+    Args:
+        consorciados: Lista de consorciados con su información de liquidación
+        documentos_por_consorciado: Dict con documentos específicos por NIT
+            Ejemplo: {
+                "8301078411": {
+                    "rut": "texto_rut",
+                    "anexos": "texto_anexos",
+                    "cotizaciones": "texto_cotizaciones",
+                    "planilla": "texto_planilla"
+                }
+            }
+        factura_principal: Texto de factura principal del consorcio (opcional)
+        anexo_contrato: Texto del anexo del contrato (opcional)
+        nombres_archivos_directos: Lista de nombres de archivos (opcional)
+    """
+    
+    from config import obtener_constantes_articulo_383
+    
+    constantes_art383 = obtener_constantes_articulo_383()
+
+    
+    return f"""
+Eres un sistema de validación del Artículo 383 del Estatuto Tributario Colombiano para FIDUCIARIA FIDUCOLDEX.
+Tu función es VERIFICAR si aplican deducciones especiales para personas naturales en un CONSORCIO.
+
+⚠️ REGLA FUNDAMENTAL: SOLO reporta información TEXTUALMENTE presente en documentos.
+⚠️ NUNCA asumas, deduzcas o inventes información no visible.
+⚠️ Si no encuentras un dato específico, usa el valor por defecto indicado.
+
+═══════════════════════════════════════════════════════════════════
+📊 DATOS DE REFERENCIA ART. 383:
+═══════════════════════════════════════════════════════════════════
+CONCEPTOS QUE APLICAN PARA ART. 383:
+{json.dumps(constantes_art383['conceptos_aplicables'], indent=2, ensure_ascii=False)}
+
+═══════════════════════════════════════════════════════════════════
+📄 DOCUMENTOS GENERALES DEL CONSORCIO:
+═══════════════════════════════════════════════════════════════════
+{_generar_seccion_archivos_directos(nombres_archivos_directos)}
+
+FACTURA PRINCIPAL:
+{factura_texto if factura_texto else "[NO PROPORCIONADA]"}
+
+RUT DEL TERCERO:
+{rut_texto if rut_texto else "[NO PROPORCIONADO]"}
+
+ANEXOS:
+{anexos_texto if anexos_texto else "[NO PROPORCIONADOS]"}
+
+COTIZACIONES:
+{cotizaciones_texto if cotizaciones_texto else "[NO PROPORCIONADAS]"}
+
+OBJETO DEL CONTRATO:
+{anexo_contrato if anexo_contrato else "[NO PROPORCIONADO]"}
+
+═══════════════════════════════════════════════════════════════════
+👥 INFORMACIÓN DE CONSORCIADOS A ANALIZAR:
+═══════════════════════════════════════════════════════════════════
+TOTAL DE CONSORCIADOS: {len(consorciados_persona_natural)}
+
+LISTA DE CONSORCIADOS:
+{json.dumps([{'nombre': c.get('nombre'), 'nit': c.get('nit'), 'participacion': c.get('porcentaje_participacion'), 'conceptos_liquidados': c.get('conceptos_liquidados')} for c in consorciados_persona_natural], indent=2, ensure_ascii=False)}
+
+
+═══════════════════════════════════════════════════════════════════
+🔍 PROTOCOLO DE VERIFICACIÓN ESTRICTO - ARTÍCULO 383 PARA CONSORCIADOS:
+═══════════════════════════════════════════════════════════════════
+
+⚠️ IMPORTANTE: Debes analizar CADA CONSORCIADO de forma INDEPENDIENTE.
+⚠️ Cada consorciado tiene sus propios documentos (RUT, anexos, planilla).
+⚠️ NO mezcles información entre consorciados.
+
+PARA CADA CONSORCIADO, REALIZAR LOS SIGUIENTES PASOS:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 PASO 1: VERIFICAR TIPO DE CONTRIBUYENTE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+├─ Buscar EN EL RUT DEL CONSORCIADO → Sección 24 o "Tipo de contribuyente"
+├─ Si encuentra "Persona natural" o "natural" → es_persona_natural: true
+├─ Si encuentra "Persona jurídica" → es_persona_natural: false
+└─ Si NO encuentra información → es_persona_natural: false (DEFAULT)
+
+⚠️ SOLO CONTINUAR si es_persona_natural: true
+⚠️ Si es persona jurídica, pasar al siguiente consorciado
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 PASO 2: VALIDAR CONCEPTOS APLICABLES AL ART. 383
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔹 REGLA DE MATCHING ESTRICTA:
+Para CADA concepto en conceptos_liquidados del consorciado:
+  1. Comparar TEXTUALMENTE con lista de conceptos_aplicables Art. 383
+  2. CRITERIOS DE COINCIDENCIA:
+     ├─ Coincidencia EXACTA del texto → INCLUIR
+     ├─ Palabras clave coinciden (honorarios, servicios, comisiones) → INCLUIR
+     └─ NO hay coincidencia clara → EXCLUIR
+
+🔹 RESULTADO:
+├─ Si HAY conceptos que coinciden → Agregar a conceptos_identificados con sus valores
+├─ Si hay conceptos que coinciden → conceptos_aplicables: true
+├─ Si NO hay coincidencias → conceptos_identificados: [] (lista vacía)
+└─ Si NO hay coincidencias → conceptos_aplicables: false
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 PASO 3: DETECTAR PRIMER PAGO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔹 BUSCAR TEXTUALMENTE en ANEXOS DEL CONSORCIADO estas frases EXACTAS:
+├─ "primer pago"
+├─ "pago inicial"
+├─ "anticipo"
+├─ "pago adelantado"
+├─ "primera cuota"
+├─ "entrega inicial"
+├─ "adelanto"
+├─ "pago #1" o "pago 1" o "pago 001"
+├─ "inicio de contrato"
+└─ "pago de arranque"
+
+🔹 RESULTADO:
+├─ Si encuentras ALGUNA frase → es_primer_pago: true
+└─ Si NO encuentras ALGUNA → es_primer_pago: false (DEFAULT)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 PASO 4: BUSCAR PLANILLA DE SEGURIDAD SOCIAL Y EXTRAER IBC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔹 BUSCAR en PLANILLA DEL CONSORCIADO palabras clave:
+├─ "planilla" Y ("salud" O "pensión" O "seguridad social" O "PILA")
+├─ "aportes" Y ("EPS" O "AFP" O "parafiscales")
+└─ "pago seguridad social"
+
+🔹 SI ENCUENTRA PLANILLA:
+├─ planilla_seguridad_social: true
+├─ Buscar fecha en formato: DD/MM/AAAA o AAAA-MM-DD o "mes de XXXX"
+│  ├─ Si encuentra fecha → fecha_de_planilla_seguridad_social: "AAAA-MM-DD"
+│  └─ Si NO encuentra fecha → fecha_de_planilla_seguridad_social: "0000-00-00"
+├─ BUSCAR Y EXTRAER IBC (Ingreso Base de Cotización):
+│  ├─ Buscar "IBC" o "Ingreso Base de Cotización" o "Base de cotización"
+│  ├─ Si encuentra valor → IBC_seguridad_social: [valor extraído]
+│  └─ Si NO encuentra → IBC_seguridad_social: 0.0
+│
+└─ ⚠️ IMPORTANTE: El IBC SOLO se extrae de la PLANILLA DE SEGURIDAD SOCIAL
+
+🔹 SI NO ENCUENTRA PLANILLA:
+├─ planilla_seguridad_social: false (DEFAULT)
+├─ fecha_de_planilla_seguridad_social: "0000-00-00" (DEFAULT)
+└─ IBC_seguridad_social: 0.0 (DEFAULT)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 PASO 5: VERIFICAR DOCUMENTO SOPORTE Y EXTRAER VALOR DE INGRESO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔹 BUSCAR en ANEXOS DEL CONSORCIADO estas palabras EXACTAS:
+├─ "cuenta de cobro"
+├─ "factura de venta"
+├─ "documento soporte"
+└─ "no obligado a facturar"
+
+🔹 SI ENCUENTRA "DOCUMENTO SOPORTE":
+├─ Documento_soporte: true
+├─ BUSCAR Y EXTRAER VALOR DE INGRESO DEL DOCUMENTO SOPORTE:
+│  ├─ Buscar palabras clave EN EL DOCUMENTO SOPORTE: "valor", "total", "honorarios", "servicios prestados"
+│  ├─ Identificar el monto principal facturado (sin IVA ni retenciones)
+│  ├─ Si encuentra valor → ingreso: [valor extraído]
+│  └─ Si NO encuentra valor → usar valor_base del consorciado como referencia
+│
+└─ ⚠️ IMPORTANTE:  
+   └─ Si hay múltiples documentos soporte, priorizar el valor del ingreso de la cuenta de cobro
+
+🔹 SI NO ENCUENTRA "DOCUMENTO SOPORTE":
+├─ Documento_soporte: false (DEFAULT)
+└─ ingreso: 0.0 (DEFAULT) - No extraer de otros documentos
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 PASO 6: IDENTIFICAR DEDUCCIONES (BÚSQUEDA TEXTUAL ESTRICTA)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ BUSCAR EN ANEXOS Y DOCUMENTOS DEL CONSORCIADO ESPECÍFICO
+
+🔹 INTERESES POR VIVIENDA:
+BUSCAR: "intereses" Y ("vivienda" O "hipoteca" O "crédito hipotecario")
+├─ Si encuentra certificación bancaria:
+│  ├─ Extraer valor numérico de "intereses corrientes" → intereses_corrientes: [valor]
+│  └─ certificado_bancario: true
+└─ Si NO encuentra:
+   ├─ intereses_corrientes: 0.0 (DEFAULT)
+   └─ certificado_bancario: false (DEFAULT)
+
+🔹 DEPENDIENTES ECONÓMICOS:
+BUSCAR: "dependiente" O "declaración juramentada" Y "económico"
+├─ Si encuentra declaración:
+│  ├─ Extraer nombre del titular encargado si está presente → nombre_encargado: "[nombre]"
+│  └─ declaracion_juramentada: true
+└─ Si NO encuentra:
+   ├─ nombre_encargado: "" (DEFAULT)
+   └─ declaracion_juramentada: false (DEFAULT)
+
+🔹 MEDICINA PREPAGADA:
+BUSCAR: "medicina prepagada" O "plan complementario" O "póliza de salud"
+├─ Si encuentra certificación:
+│  ├─ Extraer valor "sin IVA" o "valor neto" → valor_sin_iva_med_prepagada: [valor]
+│  └─ certificado_med_prepagada: true
+└─ Si NO encuentra:
+   ├─ valor_sin_iva_med_prepagada: 0.0 (DEFAULT)
+   └─ certificado_med_prepagada: false (DEFAULT)
+
+🔹 AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN):
+BUSCAR: "AFC" O "ahorro para fomento" O "cuenta AFC"
+├─ Si encuentra soporte:
+│  ├─ Extraer "valor a depositar" → valor_a_depositar: [valor]
+│  └─ planilla_de_cuenta_AFC: true
+└─ Si NO encuentra:
+   ├─ valor_a_depositar: 0.0 (DEFAULT)
+   └─ planilla_de_cuenta_AFC: false (DEFAULT)
+
+═══════════════════════════════════════════════════════════════════
+⚠️ REGLAS ABSOLUTAS - NO NEGOCIABLES:
+═══════════════════════════════════════════════════════════════════
+❌ NO inventes valores numéricos - usa 0.0 si no los encuentras
+❌ NO asumas fechas - usa "0000-00-00" si no las encuentras
+❌ NO deduzcas información por contexto
+❌ NO completes campos vacíos con suposiciones
+❌ NO interpretes - solo busca texto LITERAL
+❌ NO calcules valores derivados
+❌ NO mezcles información entre consorciados
+❌ IBC solo se extrae de PLANILLA DE SEGURIDAD SOCIAL del consorciado específico
+✅ Analiza CADA consorciado de forma INDEPENDIENTE con sus propios documentos
+
+═══════════════════════════════════════════════════════════════════
+📤 FORMATO JSON DE RESPUESTA OBLIGATORIO:
+═══════════════════════════════════════════════════════════════════
+{{
+    "consorciados_art383": [
+        {{
+            "nit": "NIT del consorciado",
+            "nombre": "Nombre del consorciado",
+            "porcentaje_participacion": número,
             "articulo_383": {{
-                "aplica": false,
                 "condiciones_cumplidas": {{
-                    "es_persona_natural": false,
-                    "concepto_aplicable": false,
-                    "es_primer_pago": false,
-                    "planilla_seguridad_social": false,
-                    "cuenta_cobro": false
+                    "es_persona_natural": boolean (default: false),
+                    "conceptos_identificados": [
+                        {{
+                            "concepto": "texto exacto del concepto",
+                            "base_gravable": número encontrado o 0.0
+                        }}
+                    ] o [],
+                    "conceptos_aplicables": boolean (true si hay conceptos que aplican, false si no aplican),
+                    "ingreso": número o 0.0,
+                    "es_primer_pago": boolean (default: false),
+                    "documento_soporte": boolean (default: false)
                 }},
                 "deducciones_identificadas": {{
                     "intereses_vivienda": {{
-                        "valor": 0.0,
-                        "tiene_soporte": false,
-                        "limite_aplicable": 0.0
+                        "intereses_corrientes": número o 0.0,
+                        "certificado_bancario": boolean (default: false)
                     }},
                     "dependientes_economicos": {{
-                        "valor": 0.0,
-                        "tiene_soporte": false,
-                        "limite_aplicable": 0.0
+                        "nombre_encargado": "texto encontrado" o "",
+                        "declaracion_juramentada": boolean (default: false)
                     }},
                     "medicina_prepagada": {{
-                        "valor": 0.0,
-                        "tiene_soporte": false,
-                        "limite_aplicable": 0.0
+                        "valor_sin_iva_med_prepagada": número o 0.0,
+                        "certificado_med_prepagada": boolean (default: false)
                     }},
-                    "rentas_exentas": {{
-                        "valor": 0.0,
-                        "tiene_soporte": false,
-                        "limite_aplicable": 0.0
+                    "AFC": {{
+                        "valor_a_depositar": número o 0.0,
+                        "planilla_de_cuenta_AFC": boolean (default: false)
+                    }},
+                    "planilla_seguridad_social": {{
+                        "IBC_seguridad_social": número o 0.0 (SOLO de planilla),
+                        "planilla_seguridad_social": boolean (default: false),
+                        "fecha_de_planilla_seguridad_social": "AAAA-MM-DD" (default: "0000-00-00")
                     }}
-                }},
-                "calculo": {{
-                    "ingreso_bruto": 0.0,
-                    "aportes_seguridad_social": 0.0,
-                    "total_deducciones": 0.0,
-                    "deducciones_limitadas": 0.0,
-                    "base_gravable_final": 0.0,
-                    "base_gravable_uvt": 0.0,
-                    "tarifa_aplicada": 0.0,
-                    "valor_retencion_art383": 0.0
                 }}
-            }},
-            "aplica_retencion": true,
-            "valor_retencion": 0.0,
-            "tarifa_aplicada": 0.0,
-            "tipo_calculo": "CONVENCIONAL",
-            "razon_no_retencion": null
-        }}],
-        "conceptos_identificados": [{{
-            "concepto": "string",
-            "tarifa_retencion": 0.0,
-            "base_gravable": 0.0,
-            "base_minima": 0.0
-        }}],
-        
-        "resumen_retencion": {{
-            "valor_total_factura": 0.0,
-            "iva_total": 0.0,
-            "total_retenciones": 0.0,
-            "consorciados_con_retencion": 0,
-            "consorciados_sin_retencion": 0,
-            "consorciados_art383": 0,
-            "consorciados_convencional": 0,
-            "suma_porcentajes_original": 0.0,
-            "porcentajes_normalizados": false
-        }},
-        "es_facturacion_exterior": false,
-        "observaciones": []
-    }}
-    """
+            }}
+        }}
+    ]
+}}
+
+⚠️ RESPONDE ÚNICAMENTE CON EL JSON. SIN EXPLICACIONES ADICIONALES.
+⚠️ Incluye un objeto por cada consorciado analizado.
+⚠️ Mantén el orden de los consorciados según fueron proporcionados.
+"""
 def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexos_texto: str, 
                                        cotizaciones_texto: str, anexo_contrato: str, 
                                        conceptos_extranjeros_dict: dict, paises_convenio: list, 
@@ -1431,7 +1667,7 @@ INSTRUCCIONES CRÍTICAS:
    • Resultado: "Preliquidación sin finalizar"
    • Observaciones: "En el RUT/ANEXOS se identificó que el tercero no es responsable de IVA según el RUT aunque la factura muestra un IVA"
 
-7. 📊 **CÁLCULO DE RETEIVA**:
+7.  **CÁLCULO DE RETEIVA**:
    • **Fuente Nacional**: ReteIVA = Valor IVA x 15%
    • **Fuente Extranjera**: ReteIVA = Valor IVA x 100%
    • GEMINI solo debe analizar el porcentaje, el cálculo manual se hace en liquidador_iva.py
