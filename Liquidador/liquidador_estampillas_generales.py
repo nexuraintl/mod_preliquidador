@@ -35,13 +35,15 @@ class EstampillaGeneral(BaseModel):
     nombre_estampilla: str
     porcentaje: Optional[float] = None
     valor: Optional[float] = None
-    estado: str  # "preliquidacion_completa", "preliquidacion_sin_finalizar", "no_aplica_impuesto"
+    estado: str  # "preliquidado", "preliquidacion_sin_finalizar", "no_aplica_impuesto"
     texto_referencia: Optional[str] = None
     observaciones: Optional[str] = None
 
 class ResumenAnalisisEstampillas(BaseModel):
     """
     Modelo para el resumen del análisis de estampillas.
+    NOTA: Solo para uso interno (logging y validaciones).
+    NO se incluye en el resultado final JSON.
     """
     total_estampillas_identificadas: int
     estampillas_completas: int
@@ -52,9 +54,10 @@ class ResumenAnalisisEstampillas(BaseModel):
 class ResultadoEstampillasGenerales(BaseModel):
     """
     Modelo completo para el resultado de estampillas generales.
+    NOTA: resumen_analisis solo se usa internamente, no aparece en JSON final.
     """
     estampillas_generales: List[EstampillaGeneral]
-    resumen_analisis: ResumenAnalisisEstampillas
+    resumen_analisis: ResumenAnalisisEstampillas  # Solo uso interno
     procesamiento_exitoso: bool = True
     fecha_procesamiento: str = ""
     observaciones_generales: List[str] = []
@@ -65,7 +68,7 @@ class ResultadoEstampillasGenerales(BaseModel):
 
 def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> Dict[str, Any]:
     """
-    🆕 Valida que el formato de salida de Gemini coincida con el modelo pydantic.
+     Valida que el formato de salida de Gemini coincida con el modelo pydantic.
     
     Args:
         respuesta_gemini: Respuesta JSON de Gemini para estampillas generales
@@ -91,11 +94,12 @@ def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> D
             validacion["respuesta_validada"]["estampillas_generales"] = _obtener_estampillas_default()
             validacion["datos_corregidos"] = True
         
+        # resumen_analisis ya no viene en la respuesta de Gemini (se elimina en clasificador.py)
+        # Generar automáticamente desde las estampillas
         if "resumen_analisis" not in respuesta_gemini:
-            validacion["advertencias"].append("Campo 'resumen_analisis' faltante, generando automáticamente")
             estampillas = validacion["respuesta_validada"]["estampillas_generales"]
             validacion["respuesta_validada"]["resumen_analisis"] = _generar_resumen_automatico(estampillas)
-            validacion["datos_corregidos"] = True
+            # No es error ni corrección, es comportamiento esperado
         
         # Validar que sean exactamente 6 estampillas
         estampillas = validacion["respuesta_validada"]["estampillas_generales"]
@@ -128,7 +132,7 @@ def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> D
                 validacion["formato_valido"] = False
         
         # Validar estados válidos
-        estados_validos = {"preliquidacion_completa", "preliquidacion_sin_finalizar", "no_aplica_impuesto"}
+        estados_validos = {"preliquidado", "preliquidacion_sin_finalizar", "no_aplica_impuesto"}
         for estampilla in estampillas:
             estado = estampilla.get("estado", "")
             if estado not in estados_validos:
@@ -173,7 +177,7 @@ def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> D
 
 def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]) -> Dict[str, Any]:
     """
-    🆕 Presenta toda la información de estampillas generales en el formato correcto para el JSON final.
+     Presenta toda la información de estampillas generales en el formato correcto para el JSON final.
     
     Args:
         respuesta_validada: Respuesta ya validada de Gemini
@@ -187,33 +191,30 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
         # Extraer datos principales
         estampillas = respuesta_validada.get("estampillas_generales", [])
         resumen = respuesta_validada.get("resumen_analisis", {})
-        
-        # Crear resultado final estructurado (SIMPLIFICADO)
+
+        # Calcular contadores para logging (sin incluir en resultado final)
+        completas = sum(1 for e in estampillas if e.get("estado") == "preliquidado")
+        incompletas = sum(1 for e in estampillas if e.get("estado") == "preliquidacion_sin_finalizar")
+
+        # Crear resultado final estructurado (SIMPLIFICADO - SIN RESUMEN)
         resultado_final = {
             "estampillas_generales": {
                 "procesamiento_exitoso": True,
                 "fecha_procesamiento": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "total_estampillas_analizadas": 6,
-                "estampillas": {},
-                "resumen": {
-                    "identificadas": resumen.get("total_estampillas_identificadas", 0),
-                    "completas": resumen.get("estampillas_completas", 0),
-                    "incompletas": resumen.get("estampillas_incompletas", 0),
-                    "no_aplican": resumen.get("estampillas_no_aplican", 6),
-                    "documentos_revisados": resumen.get("documentos_revisados", [])
-                }
+                "estampillas": {}
             }
         }
-        
+
         # Procesar cada estampilla SOLO UNA VEZ (sin duplicar)
         for estampilla in estampillas:
             nombre = estampilla.get("nombre_estampilla", "Desconocida")
             estado = estampilla.get("estado", "no_aplica_impuesto")
-            
+
             # Estructura individual por estampilla (SIMPLIFICADA)
             detalle_estampilla = {
                 "nombre": nombre,
-                "aplica": estado in ["preliquidacion_completa", "preliquidacion_sin_finalizar"],
+                "aplica": estado in ["preliquidado", "preliquidacion_sin_finalizar"],
                 "estado": estado,
                 "informacion_identificada": {
                     "porcentaje": estampilla.get("porcentaje"),
@@ -223,27 +224,25 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
                 "observaciones": estampilla.get("observaciones"),
                 "requiere_atencion": estado == "preliquidacion_sin_finalizar"
             }
-            
+
             # Agregar SOLO a estructura por nombre (sin duplicar en lista)
             nombre_clave = nombre.lower().replace(" ", "_").replace("ó", "o").replace("é", "e")
             resultado_final["estampillas_generales"]["estampillas"][nombre_clave] = detalle_estampilla
-        
+
         # Agregar observaciones generales si hay estampillas incompletas
         observaciones_generales = []
-        incompletas = resultado_final["estampillas_generales"]["resumen"]["incompletas"]
         if incompletas > 0:
             observaciones_generales.append(f"Se encontraron {incompletas} estampillas con información incompleta")
             observaciones_generales.append("Revise los documentos para obtener porcentajes y valores faltantes")
-        
-        completas = resultado_final["estampillas_generales"]["resumen"]["completas"]
+
         if completas > 0:
             observaciones_generales.append(f"Se identificaron correctamente {completas} estampillas con información completa")
-        
+
         resultado_final["estampillas_generales"]["observaciones_generales"] = observaciones_generales
-        
+
         # Log informativo
         logger.info(f" Resultado final presentado - {completas} completas, {incompletas} incompletas")
-        
+
         return resultado_final
         
     except Exception as e:
@@ -288,10 +287,10 @@ def _validar_estampilla_individual(estampilla: Dict[str, Any], indice: int) -> L
     estado = estampilla.get("estado", "")
     porcentaje = estampilla.get("porcentaje")
     valor = estampilla.get("valor")
-    
-    if estado == "preliquidacion_completa":
+
+    if estado == "preliquidado":
         if porcentaje is None or valor is None:
-            errores.append(f"Estampilla {indice}: Estado 'completa' pero faltan porcentaje o valor")
+            errores.append(f"Estampilla {indice}: Estado 'preliquidado' pero faltan porcentaje o valor")
     
     # Validar tipos de datos
     if porcentaje is not None and not isinstance(porcentaje, (int, float)):
@@ -333,17 +332,17 @@ def _obtener_estampillas_default() -> List[Dict[str, Any]]:
 def _generar_resumen_automatico(estampillas: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Genera resumen automático basado en la lista de estampillas.
-    
+
     Args:
         estampillas: Lista de estampillas
-        
+
     Returns:
         Dict con resumen generado
     """
-    completas = sum(1 for e in estampillas if e.get("estado") == "preliquidacion_completa")
+    completas = sum(1 for e in estampillas if e.get("estado") == "preliquidado")
     incompletas = sum(1 for e in estampillas if e.get("estado") == "preliquidacion_sin_finalizar")
     no_aplican = sum(1 for e in estampillas if e.get("estado") == "no_aplica_impuesto")
-    
+
     return {
         "total_estampillas_identificadas": completas + incompletas,
         "estampillas_completas": completas,

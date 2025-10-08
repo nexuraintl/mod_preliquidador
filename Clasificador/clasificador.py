@@ -1221,43 +1221,24 @@ class ProcesadorGemini:
             
             # Limpiar respuesta
             respuesta_limpia = self._limpiar_respuesta_json(respuesta)
-            
+
             # Parsear JSON
             resultado = json.loads(respuesta_limpia)
-            
+
             # Guardar respuesta de análisis en Results
             await self._guardar_respuesta("analisis_impuestos_especiales.json", resultado)
-            
-            # Procesar resultado según detección automática
-            deteccion = resultado.get("deteccion_automatica", {})
-            aplica_estampilla = deteccion.get("aplica_estampilla_universidad", False)
-            aplica_obra_publica = deteccion.get("aplica_contribucion_obra_publica", False)
-            procesamiento_paralelo = deteccion.get("procesamiento_paralelo", False)
-            
-            # Estructurar respuesta integrada
-            respuesta_integrada = {
-                "analisis_gemini": resultado,
-                "deteccion_automatica": {
-                    "aplica_estampilla_universidad": aplica_estampilla,
-                    "aplica_contribucion_obra_publica": aplica_obra_publica,
-                    "procesamiento_paralelo": procesamiento_paralelo,
-                    "impuestos_detectados": [
-                        impuesto for impuesto, aplica in [
-                            ("ESTAMPILLA_UNIVERSIDAD", aplica_estampilla),
-                            ("CONTRIBUCION_OBRA_PUBLICA", aplica_obra_publica)
-                        ] if aplica
-                    ]
-                },
-                "tercero_identificado": resultado.get("tercero_identificado", {}),
-                "estampilla_universidad": resultado.get("estampilla_universidad", {}) if aplica_estampilla else None,
-                "contribucion_obra_publica": resultado.get("contribucion_obra_publica", {}) if aplica_obra_publica else None,
-                "observaciones": resultado.get("observaciones", [])
-            }
-            
-            logger.info(f" Análisis de impuestos especiales completado exitosamente")
-            logger.info(f" Impuestos detectados: {respuesta_integrada['deteccion_automatica']['impuestos_detectados']}")
-            
-            return respuesta_integrada
+
+            # ✅ ARQUITECTURA v3.0: Retornar JSON simple de extracción y clasificación
+            # El liquidador hará todas las validaciones manuales con Python
+            logger.info(" Análisis de Gemini completado - Retornando extracción y clasificación para validaciones Python")
+            logger.info(f" Estructura: extraccion={bool(resultado.get('extraccion'))}, clasificacion={bool(resultado.get('clasificacion'))}")
+
+            # Validar que la estructura sea la correcta
+            if "extraccion" not in resultado or "clasificacion" not in resultado:
+                logger.warning("⚠️ Respuesta de Gemini no tiene estructura esperada v3.0")
+                logger.warning(f"Claves encontradas: {list(resultado.keys())}")
+
+            return resultado
             
         except json.JSONDecodeError as e:
             logger.error(f"Error parseando JSON de impuestos especiales: {e}")
@@ -2523,7 +2504,7 @@ class ProcesadorGemini:
 
     async def analizar_estampillas_generales(self, documentos_clasificados: Dict[str, Dict], archivos_directos: list[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
         """
-        🆕 Nueva funcionalidad: Análisis de 6 Estampillas Generales.
+         Nueva funcionalidad: Análisis de 6 Estampillas Generales.
         
         Analiza documentos para identificar información de estampillas:
         - Procultura
@@ -2546,7 +2527,7 @@ class ProcesadorGemini:
         """
         logger.info(" Analizando 6 estampillas generales con Gemini")
         
-        # 💾 USAR CACHE SI ESTÁ DISPONIBLE (igual que otras funciones)
+        #  USAR CACHE SI ESTÁ DISPONIBLE (igual que otras funciones)
         archivos_directos = archivos_directos or []
         if cache_archivos:
             logger.info(f" Estampillas generales usando cache de archivos: {len(cache_archivos)} archivos")
@@ -2576,7 +2557,7 @@ class ProcesadorGemini:
                 elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
                     anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
             
-            # ✅ VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
+            #  VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
             hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
             
             # 💾 OBTENER NOMBRES DE ARCHIVOS (compatible con cache)
@@ -2625,21 +2606,25 @@ class ProcesadorGemini:
             if "estampillas_generales" not in resultado:
                 logger.warning(" Campo 'estampillas_generales' no encontrado en respuesta")
                 resultado["estampillas_generales"] = self._obtener_estampillas_default()
-            
-            if "resumen_analisis" not in resultado:
-                logger.warning(" Campo 'resumen_analisis' no encontrado en respuesta")
-                resultado["resumen_analisis"] = self._obtener_resumen_default(resultado.get("estampillas_generales", []))
-            
-            # Extraer información clave para logging
+
+            # Extraer información clave para logging (usar resumen interno si existe)
             estampillas_data = resultado.get("estampillas_generales", [])
             resumen_data = resultado.get("resumen_analisis", {})
-            
+
+            # Si no hay resumen en la respuesta de Gemini, generarlo solo para logging
+            if not resumen_data:
+                resumen_data = self._obtener_resumen_default(estampillas_data)
+
             total_identificadas = resumen_data.get("total_estampillas_identificadas", 0)
             completas = resumen_data.get("estampillas_completas", 0)
             incompletas = resumen_data.get("estampillas_incompletas", 0)
-            
+
             logger.info(f" Análisis estampillas completado: {total_identificadas} identificadas, {completas} completas, {incompletas} incompletas")
-            
+
+            # Eliminar resumen_analisis del resultado final - solo se usa internamente para logging
+            if "resumen_analisis" in resultado:
+                del resultado["resumen_analisis"]
+
             return resultado
             
         except json.JSONDecodeError as e:
@@ -2689,7 +2674,7 @@ class ProcesadorGemini:
             Dict con resumen por defecto
         """
         total = len(estampillas)
-        completas = sum(1 for e in estampillas if e.get("estado") == "preliquidacion_completa")
+        completas = sum(1 for e in estampillas if e.get("estado") == "preliquidado")
         incompletas = sum(1 for e in estampillas if e.get("estado") == "preliquidacion_sin_finalizar")
         no_aplican = sum(1 for e in estampillas if e.get("estado") == "no_aplica_impuesto")
         
@@ -2712,18 +2697,11 @@ class ProcesadorGemini:
             Dict[str, Any]: Respuesta básica de estampillas
         """
         logger.warning(f"Usando fallback de estampillas: {error_msg}")
-        
+
         estampillas_default = self._obtener_estampillas_default()
-        
+
         return {
             "estampillas_generales": estampillas_default,
-            "resumen_analisis": {
-                "total_estampillas_identificadas": 0,
-                "estampillas_completas": 0,
-                "estampillas_incompletas": 0,
-                "estampillas_no_aplican": 6,
-                "documentos_revisados": ["ERROR"]
-            },
             "tipo_procesamiento": "ESTAMPILLAS_FALLBACK",
             "error": error_msg,
             "observaciones": [

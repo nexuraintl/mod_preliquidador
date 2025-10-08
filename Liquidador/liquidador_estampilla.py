@@ -26,18 +26,18 @@ logger = logging.getLogger(__name__)
 
 from config import (
     UVT_2025,
-    NITS_ESTAMPILLA_UNIVERSIDAD,
-    NITS_CONTRIBUCION_OBRA_PUBLICA,
+    CODIGOS_NEGOCIO_ESTAMPILLA,
+    CODIGOS_NEGOCIO_OBRA_PUBLICA,
     TERCEROS_RECURSOS_PUBLICOS,
     OBJETOS_CONTRATO_ESTAMPILLA,
     OBJETOS_CONTRATO_OBRA_PUBLICA,
     RANGOS_ESTAMPILLA_UNIVERSIDAD,
-    nit_aplica_estampilla_universidad,
-    nit_aplica_contribucion_obra_publica,
+    codigo_negocio_aplica_estampilla_universidad,
+    codigo_negocio_aplica_obra_publica,
     es_tercero_recursos_publicos,
     obtener_tarifa_estampilla_universidad,
     calcular_contribucion_obra_publica,
-    detectar_impuestos_aplicables,
+    detectar_impuestos_aplicables_por_codigo,
     obtener_configuracion_estampilla_universidad,
     obtener_configuracion_obra_publica,
     obtener_configuracion_impuestos_integrada
@@ -68,10 +68,11 @@ class AnalisisContrato(BaseModel):
 class ResultadoEstampilla(BaseModel):
     aplica: bool
     estado: str  # "Preliquidado", "No aplica el impuesto", "Preliquidación sin finalizar"
-    nit_administrativo_valido: bool
-    tercero_valido: bool
-    objeto_contrato_valido: bool
-    valor_contrato_identificado: bool
+    razon: Optional[str] = None  # Razón cuando no aplica
+    codigo_negocio_valido: bool = False
+    tercero_valido: bool = False
+    objeto_contrato_valido: bool = False
+    valor_contrato_identificado: bool = False
     valor_estampilla: float = 0.0
     tarifa_aplicada: float = 0.0
     rango_uvt: str = ""
@@ -85,10 +86,11 @@ class ResultadoEstampilla(BaseModel):
 class ResultadoContribucionObraPublica(BaseModel):
     aplica: bool
     estado: str  # "Preliquidado", "No aplica el impuesto", "Preliquidación sin finalizar"
-    nit_administrativo_valido: bool
-    tercero_valido: bool
-    objeto_contrato_valido: bool
-    valor_factura_identificado: bool
+    razon: Optional[str] = None  # Razón cuando no aplica
+    codigo_negocio_valido: bool = False
+    tercero_valido: bool = False
+    objeto_contrato_valido: bool = False
+    valor_factura_identificado: bool = False
     valor_contribucion: float = 0.0
     tarifa_aplicada: float = 0.05  # Siempre 5%
     valor_factura_sin_iva: float = 0.0
@@ -99,7 +101,8 @@ class ResultadoContribucionObraPublica(BaseModel):
 
 class ResultadoImpuestosIntegrado(BaseModel):
     """Resultado integrado para ambos impuestos"""
-    nit_administrativo: str
+    codigo_negocio: int
+    nombre_negocio: str
     impuestos_aplicables: List[str]
     procesamiento_paralelo: bool
     estampilla_universidad: Optional[ResultadoEstampilla] = None
@@ -142,24 +145,48 @@ class LiquidadorEstampilla:
     def __init__(self):
         self.uvt_2025 = UVT_2025
         logger.info(f" LiquidadorEstampilla INTEGRADO inicializado - UVT 2025: ${self.uvt_2025:,}")
-        logger.info(f" Configuración: {len(NITS_ESTAMPILLA_UNIVERSIDAD)} NITs unificados")
+        logger.info(f" Configuración: {len(CODIGOS_NEGOCIO_ESTAMPILLA)} códigos de negocio válidos")
         logger.info(f" Modo: ANÁLISIS INTEGRADO (estampilla + obra pública)")
-    
-    def validar_nit_administrativo(self, nit: str) -> Tuple[bool, str]:
+
+    def validar_codigo_negocio_estampilla(self, codigo_negocio: int, nombre_negocio: str = None) -> Tuple[bool, str]:
         """
-        Valida si el NIT administrativo aplica para estampilla universidad
-        
+        Valida si el código de negocio aplica para estampilla universidad.
+
+        SRP: Solo valida código de negocio para estampilla
+
         Args:
-            nit: NIT de la entidad administrativa
-            
+            codigo_negocio: Código único del negocio
+            nombre_negocio: Nombre del negocio (opcional)
+
         Returns:
             Tuple[bool, str]: (es_valido, mensaje)
         """
-        if nit_aplica_estampilla_universidad(nit):
-            nombre_entidad = NITS_ESTAMPILLA_UNIVERSIDAD[nit]
-            return True, f"NIT válido: {nombre_entidad}"
+        if codigo_negocio_aplica_estampilla_universidad(codigo_negocio):
+            nombre = CODIGOS_NEGOCIO_ESTAMPILLA.get(codigo_negocio, nombre_negocio or "Desconocido")
+            return True, f"Código de negocio válido: {nombre}"
         else:
-            return False, f"El NIT {nit} no aplica para estampilla pro universidad nacional"
+            nombre = nombre_negocio or f"Código {codigo_negocio}"
+            return False, f"el negocio {nombre} no aplica este impuesto"
+
+    def validar_codigo_negocio_obra_publica(self, codigo_negocio: int, nombre_negocio: str = None) -> Tuple[bool, str]:
+        """
+        Valida si el código de negocio aplica para contribución a obra pública.
+
+        SRP: Solo valida código de negocio para obra pública
+
+        Args:
+            codigo_negocio: Código único del negocio
+            nombre_negocio: Nombre del negocio (opcional)
+
+        Returns:
+            Tuple[bool, str]: (es_valido, mensaje)
+        """
+        if codigo_negocio_aplica_obra_publica(codigo_negocio):
+            nombre = CODIGOS_NEGOCIO_OBRA_PUBLICA.get(codigo_negocio, nombre_negocio or "Desconocido")
+            return True, f"Código de negocio válido: {nombre}"
+        else:
+            nombre = nombre_negocio or f"Código {codigo_negocio}"
+            return False, f"el negocio {nombre} no aplica este impuesto"
     
     def validar_tercero(self, nombre_tercero: str) -> Tuple[bool, str]:
         """
@@ -393,11 +420,14 @@ class LiquidadorEstampilla:
         return resultados
     
     def liquidar_estampilla(self, analisis_contrato: AnalisisContrato, valor_factura_sin_iva: float,
-                          nit_administrativo: str) -> ResultadoEstampilla:
+                          codigo_negocio: int, nombre_negocio: str = None) -> ResultadoEstampilla:
         """
-        Procesa la liquidación completa de estampilla pro universidad nacional
-        
+        Procesa la liquidación completa de estampilla pro universidad nacional.
+
+        SRP: Solo liquidación de estampilla universidad
+
         CUMPLE EXACTAMENTE LOS REQUISITOS:
+        ✅ Valida código de negocio
         ✅ Valida objeto del contrato (obra, interventoría, servicios conexos)
         ✅ Si NO se identifica objeto → "Preliquidación sin finalizar"
         ✅ Valida valor del contrato (para determinar tarifa UVT)
@@ -405,33 +435,31 @@ class LiquidadorEstampilla:
         ✅ Fórmula: Estampilla = Valor factura (sin IVA) x Porcentaje tarifa
         ✅ Estados: "Preliquidado" / "No aplica el impuesto" / "Preliquidación sin finalizar"
         ✅ Manejo de consorcios con porcentaje de participación
-        
+
         Args:
             analisis_contrato: Resultado del análisis de Gemini
             valor_factura_sin_iva: Valor de la factura sin IVA (para cálculo final)
-            nit_administrativo: NIT de la entidad administrativa
-            
+            codigo_negocio: Código único del negocio
+            nombre_negocio: Nombre del negocio (opcional)
+
         Returns:
             ResultadoEstampilla: Resultado completo de la liquidación
         """
         resultado = ResultadoEstampilla(
             aplica=False,
             estado="Preliquidación sin finalizar",
-            nit_administrativo_valido=False,
-            tercero_valido=False,
-            objeto_contrato_valido=False,
-            valor_contrato_identificado=False,
             fecha_calculo=datetime.now().isoformat()
         )
-        
+
         try:
-            # 1. VALIDAR NIT ADMINISTRATIVO
-            nit_valido, mensaje_nit = self.validar_nit_administrativo(nit_administrativo)
-            resultado.nit_administrativo_valido = nit_valido
-            
-            if not nit_valido:
-                resultado.mensajes_error.append(mensaje_nit)
+            # 1. VALIDAR CÓDIGO DE NEGOCIO
+            codigo_valido, mensaje_codigo = self.validar_codigo_negocio_estampilla(codigo_negocio, nombre_negocio)
+            resultado.codigo_negocio_valido = codigo_valido
+
+            if not codigo_valido:
+                resultado.mensajes_error.append(mensaje_codigo)
                 resultado.estado = "No aplica el impuesto"
+                resultado.razon = mensaje_codigo
                 return resultado
             
             # 2. VALIDAR TERCERO
@@ -543,56 +571,58 @@ class LiquidadorEstampilla:
     # MÉTODOS PARA CONTRIBUCIÓN A OBRA PÚBLICA 5% (NUEVO)
     # ===============================
     
-    def liquidar_contribucion_obra_publica(self, valor_factura_sin_iva: float, 
-                                           nit_administrativo: str,
+    def liquidar_contribucion_obra_publica(self, valor_factura_sin_iva: float,
+                                           codigo_negocio: int,
+                                           nombre_negocio: str = None,
                                            nombre_tercero: str = "",
                                            objeto_contrato: str = "",
                                            es_consorcio: bool = False,
                                            consorciados_info: List[Dict] = None) -> ResultadoContribucionObraPublica:
         """
-        Liquida contribución a obra pública del 5%
-        
+        Liquida contribución a obra pública del 5%.
+
+        SRP: Solo liquidación de contribución a obra pública
+
         CUMPLE EXACTAMENTE LOS REQUISITOS:
+        ✅ Valida código de negocio
         ✅ Solo contrato de obra (construcción, mantenimiento, instalación)
         ✅ Si NO se identifica objeto → "Preliquidación sin finalizar"
         ✅ Si NO se identifica valor → "Preliquidación sin finalizar"
         ✅ Fórmula: Contribución = Valor factura (sin IVA) x 5%
         ✅ Consorcios: Contribución = Valor factura (sin IVA) x 5% x % participación
         ✅ Estados: "Preliquidado" / "No aplica el impuesto" / "Preliquidación sin finalizar"
-        
+
         Args:
             valor_factura_sin_iva: Valor de la factura sin IVA
-            nit_administrativo: NIT de la entidad administrativa
+            codigo_negocio: Código único del negocio
+            nombre_negocio: Nombre del negocio (opcional)
             nombre_tercero: Nombre del tercero beneficiario
             objeto_contrato: Descripción del objeto del contrato
             es_consorcio: Si es un consorcio o unión temporal
             consorciados_info: Lista de consorciados con participación
-            
+
         Returns:
             ResultadoContribucionObraPublica: Resultado completo del cálculo
         """
         logger.info(f" Iniciando liquidación contribución obra pública - Valor: ${valor_factura_sin_iva:,.2f}")
-        
+
         fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         resultado = ResultadoContribucionObraPublica(
             aplica=False,
             estado="Preliquidación sin finalizar",
-            nit_administrativo_valido=False,
-            tercero_valido=False,
-            objeto_contrato_valido=False,
-            valor_factura_identificado=False,
             fecha_calculo=fecha_actual
         )
-        
+
         try:
-            # 1. ✅ VALIDAR NIT ADMINISTRATIVO
-            if nit_aplica_contribucion_obra_publica(nit_administrativo):
-                resultado.nit_administrativo_valido = True
-                logger.info(f" NIT válido para obra pública: {NITS_CONTRIBUCION_OBRA_PUBLICA[nit_administrativo]}")
-            else:
-                resultado.mensajes_error.append(f"NIT {nit_administrativo} no aplica para contribución a obra pública")
+            # 1. VALIDAR CÓDIGO DE NEGOCIO
+            codigo_valido, mensaje_codigo = self.validar_codigo_negocio_obra_publica(codigo_negocio, nombre_negocio)
+            resultado.codigo_negocio_valido = codigo_valido
+
+            if not codigo_valido:
+                resultado.mensajes_error.append(mensaje_codigo)
                 resultado.estado = "No aplica el impuesto"
-                logger.warning(f"NIT no válido: {nit_administrativo}")
+                resultado.razon = mensaje_codigo
+                logger.warning(f"Código de negocio no válido: {codigo_negocio}")
                 return resultado
             
             # 2. ✅ VALIDAR TERCERO (solo si se proporciona nombre)
@@ -731,172 +761,444 @@ class LiquidadorEstampilla:
         
         return resultado
     
-    def liquidar_integrado(self, analisis_especiales: dict, nit_administrativo: str) -> dict:
+    # ===============================
+    # VALIDACIONES MANUALES PYTHON (NUEVO v3.0)
+    # ===============================
+
+    def _validar_objeto_contrato_identificado(self, clasificacion: dict) -> Tuple[bool, str, str]:
         """
-        🚀 MÉTODO INTEGRADO - Procesa estampilla + obra pública en una sola llamada
-        
-        Esta función es requerida por el endpoint principal para procesamiento paralelo.
-        Analiza qué impuestos aplican y los liquida según los datos de Gemini.
-        
+        Valida que el objeto del contrato fue identificado y clasificado por Gemini.
+
+        SRP: Solo valida clasificación del objeto
+
         Args:
-            analisis_especiales: Respuesta de Gemini con análisis de estampilla + obra pública
-            nit_administrativo: NIT de la entidad administrativa
-            
+            clasificacion: Diccionario con clasificación de Gemini
+
+        Returns:
+            Tuple[bool, str, str]: (es_valido, tipo_contrato, mensaje_error)
+
+        Nota:
+            - NO_IDENTIFICADO: No se pudo identificar el objeto → "Preliquidacion sin finalizar"
+            - NO_APLICA: Objeto identificado pero no elegible → "No aplica el impuesto"
+        """
+        tipo_contrato = clasificacion.get("tipo_contrato", "NO_IDENTIFICADO")
+
+        # Tipos válidos: CONTRATO_OBRA, INTERVENTORIA, SERVICIOS_CONEXOS
+        tipos_validos = ["CONTRATO_OBRA", "INTERVENTORIA", "SERVICIOS_CONEXOS"]
+
+        if tipo_contrato in tipos_validos:
+            return True, tipo_contrato, ""
+
+        # Si es NO_IDENTIFICADO o cualquier otro valor no válido
+        if tipo_contrato == "NO_IDENTIFICADO":
+            return False, tipo_contrato, "El objeto del contrato no fue identificado en los documentos"
+
+        # Si es NO_APLICA (objeto identificado pero no elegible)
+        if tipo_contrato == "NO_APLICA":
+            return False, tipo_contrato, "El objeto del contrato no aplica para impuestos especiales"
+
+        # Cualquier otro valor desconocido
+        return False, tipo_contrato, f"Tipo de contrato desconocido: {tipo_contrato}"
+
+    def _validar_valor_factura_sin_iva(self, extraccion: dict) -> Tuple[bool, float, str]:
+        """
+        Valida que el valor de la factura sin IVA fue identificado.
+
+        SRP: Solo valida valor de factura
+
+        Args:
+            extraccion: Diccionario con extracción de valores de Gemini
+
+        Returns:
+            Tuple[bool, float, str]: (es_valido, valor, mensaje_error)
+        """
+        valores = extraccion.get("valores", {})
+        valor_factura = valores.get("factura_sin_iva", 0)
+
+        if valor_factura <= 0:
+            return False, 0, "Valor de factura sin IVA no identificado o es cero"
+
+        return True, valor_factura, ""
+
+    def _validar_valor_contrato_total(self, extraccion: dict) -> Tuple[bool, float, str]:
+        """
+        Valida que el valor total del contrato fue identificado (sin adiciones).
+
+        SRP: Solo valida valor del contrato
+
+        Args:
+            extraccion: Diccionario con extracción de valores de Gemini
+
+        Returns:
+            Tuple[bool, float, str]: (es_valido, valor, mensaje_error)
+        """
+        valores = extraccion.get("valores", {})
+        contrato_total = valores.get("contrato_total", 0)
+
+        if contrato_total <= 0:
+            return False, 0, "Valor total del contrato no identificado o es cero"
+
+        return True, contrato_total, ""
+
+    def _calcular_contrato_mas_adiciones(self, extraccion: dict) -> float:
+        """
+        Calcula el valor total del contrato incluyendo adiciones.
+
+        SRP: Solo suma contrato + adiciones
+        DRY: Evita repetir esta lógica
+
+        Args:
+            extraccion: Diccionario con extracción de valores de Gemini
+
+        Returns:
+            float: Valor total (contrato + adiciones)
+        """
+        valores = extraccion.get("valores", {})
+        contrato_total = valores.get("contrato_total", 0)
+        adiciones = valores.get("adiciones", 0)
+
+        return contrato_total + adiciones
+
+    def _liquidar_obra_publica_manual(self, analisis_gemini: dict, codigo_negocio: int,
+                                     nombre_negocio: str = None) -> dict:
+        """
+        Liquida Contribución a Obra Pública 5% con validaciones manuales Python.
+
+        SRP: Solo liquida obra pública
+
+        VALIDACIONES MANUALES:
+        1. Validar que objeto fue identificado y clasificado
+        2. Validar que tipo_contrato == CONTRATO_OBRA (solo este tipo aplica)
+        3. Validar que valor_factura_sin_iva > 0
+        4. Calcular: contribucion = valor_factura_sin_iva * 0.05
+
+        Args:
+            analisis_gemini: Respuesta JSON de Gemini con extracción y clasificación
+            codigo_negocio: Código único del negocio
+            nombre_negocio: Nombre del negocio (opcional)
+
+        Returns:
+            dict: Resultado de liquidación con formato solicitado
+        """
+        logger.info("Iniciando validaciones manuales para Obra Pública...")
+
+        resultado = {
+            "aplica": False,
+            "estado": "Preliquidacion sin finalizar",
+            "tarifa_aplicada": 0.05,
+            "valor_contribucion": 0.0,
+            "valor_factura_sin_iva": 0.0,
+            "mensajes_error": []
+        }
+
+        try:
+            extraccion = analisis_gemini.get("extraccion", {})
+            clasificacion = analisis_gemini.get("clasificacion", {})
+
+            # VALIDACIÓN 1: Objeto identificado y clasificado
+            objeto_valido, tipo_contrato, error_objeto = self._validar_objeto_contrato_identificado(clasificacion)
+
+            if not objeto_valido:
+                # Distinguir entre NO_APLICA y NO_IDENTIFICADO
+                if tipo_contrato == "NO_APLICA":
+                    resultado["estado"] = "No aplica el impuesto"
+                    resultado["razon"] = error_objeto
+                    logger.info(f"Obra Pública: {error_objeto}")
+                elif tipo_contrato == "NO_IDENTIFICADO":
+                    resultado["estado"] = "Preliquidacion sin finalizar"
+                    resultado["razon"] = error_objeto
+                    resultado["mensajes_error"].append(error_objeto)
+                    logger.warning(f"Obra Pública: {error_objeto}")
+                else:
+                    # Otros casos desconocidos
+                    resultado["estado"] = "Preliquidacion sin finalizar"
+                    resultado["razon"] = error_objeto
+                    resultado["mensajes_error"].append(error_objeto)
+                    logger.warning(f"Obra Pública: {error_objeto}")
+                return resultado
+
+            # VALIDACIÓN 2: Solo CONTRATO_OBRA aplica para obra pública
+            if tipo_contrato != "CONTRATO_OBRA":
+                resultado["aplica"] = False
+                resultado["estado"] = "No aplica el impuesto"
+                resultado["razon"] = f"Solo contratos de obra aplican contribución. Tipo detectado: {tipo_contrato}"
+                logger.info(f"Obra Pública: No aplica para tipo {tipo_contrato}")
+                return resultado
+
+            # VALIDACIÓN 3: Valor de factura sin IVA debe estar identificado
+            factura_valida, valor_factura, error_factura = self._validar_valor_factura_sin_iva(extraccion)
+
+            if not factura_valida:
+                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["razon"] = error_factura
+                resultado["mensajes_error"].append(error_factura)
+                logger.warning(f"Obra Pública: {error_factura}")
+                return resultado
+
+            # CÁLCULO MANUAL: Contribución = Valor factura sin IVA x 5%
+            valor_contribucion = valor_factura * 0.05
+
+            resultado["aplica"] = True
+            resultado["estado"] = "Preliquidado"
+            resultado["valor_contribucion"] = valor_contribucion
+            resultado["valor_factura_sin_iva"] = valor_factura
+            resultado["tarifa_aplicada"] = 0.05
+            resultado["mensajes_error"] = []
+
+            logger.info(f"Obra Pública liquidada: ${valor_contribucion:,.2f} (5% de ${valor_factura:,.2f})")
+
+            return resultado
+
+        except Exception as e:
+            logger.error(f"Error en validaciones manuales obra pública: {e}")
+            resultado["estado"] = "Preliquidacion sin finalizar"
+            resultado["razon"] = f"Error técnico: {str(e)}"
+            resultado["mensajes_error"].append(f"Error interno: {str(e)}")
+            return resultado
+
+    def _liquidar_estampilla_manual(self, analisis_gemini: dict, codigo_negocio: int,
+                                   nombre_negocio: str = None) -> dict:
+        """
+        Liquida Estampilla Pro Universidad Nacional con validaciones manuales Python.
+
+        SRP: Solo liquida estampilla universidad
+
+        VALIDACIONES MANUALES:
+        1. Validar que objeto fue identificado y clasificado
+        2. Validar que tipo_contrato en [CONTRATO_OBRA, INTERVENTORIA, SERVICIOS_CONEXOS]
+        3. Validar que valor_contrato_total > 0 (sin adiciones)
+        4. Sumar: contrato_total + adiciones
+        5. Calcular UVT del contrato total
+        6. Buscar rango UVT y obtener tarifa
+        7. Calcular: estampilla = valor_factura_sin_iva * tarifa
+
+        Args:
+            analisis_gemini: Respuesta JSON de Gemini con extracción y clasificación
+            codigo_negocio: Código único del negocio
+            nombre_negocio: Nombre del negocio (opcional)
+
+        Returns:
+            dict: Resultado de liquidación con formato solicitado
+        """
+        logger.info("Iniciando validaciones manuales para Estampilla Universidad...")
+
+        resultado = {
+            "aplica": False,
+            "estado": "Preliquidacion sin finalizar",
+            "valor_estampilla": 0.0,
+            "tarifa_aplicada": 0.0,
+            "rango_uvt": "",
+            "valor_contrato_pesos": 0.0,
+            "valor_contrato_uvt": 0.0,
+            "mensajes_error": []
+        }
+
+        try:
+            extraccion = analisis_gemini.get("extraccion", {})
+            clasificacion = analisis_gemini.get("clasificacion", {})
+
+            # VALIDACIÓN 1: Objeto identificado y clasificado
+            objeto_valido, tipo_contrato, error_objeto = self._validar_objeto_contrato_identificado(clasificacion)
+
+            if not objeto_valido:
+                # Distinguir entre NO_APLICA y NO_IDENTIFICADO
+                if tipo_contrato == "NO_APLICA":
+                    resultado["estado"] = "No aplica el impuesto"
+                    resultado["razon"] = error_objeto
+                    logger.info(f"Estampilla: {error_objeto}")
+                elif tipo_contrato == "NO_IDENTIFICADO":
+                    resultado["estado"] = "Preliquidacion sin finalizar"
+                    resultado["razon"] = error_objeto
+                    resultado["mensajes_error"].append(error_objeto)
+                    logger.warning(f"Estampilla: {error_objeto}")
+                else:
+                    # Otros casos desconocidos
+                    resultado["estado"] = "Preliquidacion sin finalizar"
+                    resultado["razon"] = error_objeto
+                    resultado["mensajes_error"].append(error_objeto)
+                    logger.warning(f"Estampilla: {error_objeto}")
+                return resultado
+
+            # VALIDACIÓN 2: Tipos válidos para estampilla
+            tipos_validos_estampilla = ["CONTRATO_OBRA", "INTERVENTORIA", "SERVICIOS_CONEXOS"]
+
+            if tipo_contrato not in tipos_validos_estampilla:
+                resultado["aplica"] = False
+                resultado["estado"] = "No aplica el impuesto"
+                resultado["razon"] = f"Tipo de contrato '{tipo_contrato}' no aplica para estampilla"
+                logger.info(f"Estampilla: No aplica para tipo {tipo_contrato}")
+                return resultado
+
+            # VALIDACIÓN 3: Valor del contrato total (sin adiciones) debe estar identificado
+            contrato_valido, valor_contrato_base, error_contrato = self._validar_valor_contrato_total(extraccion)
+
+            if not contrato_valido:
+                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["razon"] = error_contrato
+                resultado["mensajes_error"].append(error_contrato)
+                logger.warning(f"Estampilla: {error_contrato}")
+                return resultado
+
+            # VALIDACIÓN 4: Valor de factura sin IVA debe estar identificado
+            factura_valida, valor_factura, error_factura = self._validar_valor_factura_sin_iva(extraccion)
+
+            if not factura_valida:
+                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["razon"] = error_factura
+                resultado["mensajes_error"].append(error_factura)
+                logger.warning(f"Estampilla: {error_factura}")
+                return resultado
+
+            # CÁLCULO MANUAL: Contrato total + adiciones
+            valor_contrato_total = self._calcular_contrato_mas_adiciones(extraccion)
+
+            # CÁLCULO MANUAL: UVT del contrato
+            valor_contrato_uvt = valor_contrato_total / self.uvt_2025
+
+            # CÁLCULO MANUAL: Buscar rango UVT y obtener tarifa
+            info_tarifa = obtener_tarifa_estampilla_universidad(valor_contrato_total)
+            tarifa_aplicable = info_tarifa["tarifa"]
+
+            # CÁLCULO MANUAL: Estampilla = Valor factura sin IVA x Tarifa
+            valor_estampilla = valor_factura * tarifa_aplicable
+
+            # Formatear rango UVT
+            if info_tarifa["rango_hasta_uvt"] == float('inf'):
+                rango_texto = f"{info_tarifa['rango_desde_uvt']:,.0f}-∞ UVT ({tarifa_aplicable*100:.1f}%)"
+            else:
+                rango_texto = f"{info_tarifa['rango_desde_uvt']:,.0f}-{info_tarifa['rango_hasta_uvt']:,.0f} UVT ({tarifa_aplicable*100:.1f}%)"
+
+            resultado["aplica"] = True
+            resultado["estado"] = "Preliquidado"
+            resultado["valor_estampilla"] = valor_estampilla
+            resultado["tarifa_aplicada"] = tarifa_aplicable
+            resultado["rango_uvt"] = rango_texto
+            resultado["valor_contrato_pesos"] = valor_contrato_total
+            resultado["valor_contrato_uvt"] = valor_contrato_uvt
+            resultado["mensajes_error"] = []
+
+            logger.info(f"Estampilla liquidada: ${valor_estampilla:,.2f} ({tarifa_aplicable*100:.1f}% de ${valor_factura:,.2f})")
+            logger.info(f"Contrato: ${valor_contrato_total:,.2f} ({valor_contrato_uvt:.2f} UVT) - Rango: {rango_texto}")
+
+            return resultado
+
+        except Exception as e:
+            logger.error(f"Error en validaciones manuales estampilla: {e}")
+            resultado["estado"] = "Preliquidacion sin finalizar"
+            resultado["razon"] = f"Error técnico: {str(e)}"
+            resultado["mensajes_error"].append(f"Error interno: {str(e)}")
+            return resultado
+
+    def liquidar_integrado(self, analisis_especiales: dict, codigo_negocio: int, nombre_negocio: str = None) -> dict:
+        """
+        Método integrado REFACTORIZADO - Procesa estampilla + obra pública con validaciones manuales Python.
+
+        SRP: Orquesta liquidación integrada de ambos impuestos especiales
+        DRY: Reutiliza validaciones comunes
+
+        NUEVA ARQUITECTURA v3.0:
+        - Gemini: Solo extracción y clasificación de datos
+        - Python: Todas las validaciones y cálculos
+
+        Args:
+            analisis_especiales: Respuesta JSON de Gemini con estructura:
+                {
+                    "extraccion": {
+                        "objeto_contrato": {...},
+                        "valores": {"factura_sin_iva": X, "contrato_total": Y, "adiciones": Z}
+                    },
+                    "clasificacion": {
+                        "tipo_contrato": "CONTRATO_OBRA|INTERVENTORIA|SERVICIOS_CONEXOS|NO_APLICA|NO_IDENTIFICADO",
+                        ...
+                    }
+                }
+            codigo_negocio: Código único del negocio
+            nombre_negocio: Nombre del negocio (opcional)
+
         Returns:
             dict: Resultado consolidado con ambos impuestos
         """
-        logger.info(f"Liquidación integrada iniciada para NIT: {nit_administrativo}")
-        
+        logger.info(f"Liquidación integrada v3.0 (validaciones manuales) para código negocio: {codigo_negocio}")
+
         resultado_integrado = {
-            "nit_administrativo": nit_administrativo,
+            "codigo_negocio": codigo_negocio,
+            "nombre_negocio": nombre_negocio or "Desconocido",
             "timestamp": datetime.now().isoformat(),
-            "procesamiento_integrado": True
+            "procesamiento_integrado": True,
+            "version_arquitectura": "3.0 - Validaciones Manuales Python"
         }
-        
+
         try:
-            # Detectar qué impuestos aplican automáticamente
-            aplica_estampilla = nit_aplica_estampilla_universidad(nit_administrativo)
-            aplica_obra_publica = nit_aplica_contribucion_obra_publica(nit_administrativo)
-            
-            logger.info(f" Estampilla aplica: {aplica_estampilla}")
-            logger.info(f" Obra pública aplica: {aplica_obra_publica}")
-            
-            # LIQUIDAR ESTAMPILLA UNIVERSIDAD (si aplica)
-            if aplica_estampilla and analisis_especiales.get("estampilla_universidad"):
+            # Detectar qué impuestos aplican automáticamente por código de negocio
+            aplica_estampilla = codigo_negocio_aplica_estampilla_universidad(codigo_negocio)
+            aplica_obra_publica = codigo_negocio_aplica_obra_publica(codigo_negocio)
+
+            logger.info(f"Estampilla aplica: {aplica_estampilla}")
+            logger.info(f"Obra pública aplica: {aplica_obra_publica}")
+
+            # LIQUIDAR ESTAMPILLA UNIVERSIDAD con validaciones manuales Python
+            if aplica_estampilla:
                 try:
-                    estampilla_data = analisis_especiales["estampilla_universidad"]
-                    tercero_data = analisis_especiales.get("tercero_identificado", {})
-                    
-                    # Crear objeto AnalisisContrato desde respuesta de Gemini
-                    tercero = TerceroContrato(
-                        nombre=tercero_data.get("nombre", ""),
-                        es_consorcio=tercero_data.get("es_consorcio", False),
-                        administra_recursos_publicos=tercero_data.get("administra_recursos_publicos", False)
+                    resultado_integrado["estampilla_universidad"] = self._liquidar_estampilla_manual(
+                        analisis_especiales, codigo_negocio, nombre_negocio
                     )
-                    
-                    objeto_contrato = ObjetoContratoIdentificado(
-                        objeto=estampilla_data.get("objeto_contrato", {}).get("tipo", "no_identificado"),
-                        aplica_estampilla=estampilla_data.get("objeto_contrato", {}).get("aplica_estampilla", False),
-                        palabras_clave_encontradas=estampilla_data.get("objeto_contrato", {}).get("palabras_clave_encontradas", [])
-                    )
-                    
-                    analisis_contrato = AnalisisContrato(
-                        valor_total_contrato=estampilla_data.get("valor_contrato", {}).get("valor_total_pesos", 0.0),
-                        valor_total_uvt=estampilla_data.get("valor_contrato", {}).get("valor_total_uvt", 0.0),
-                        objeto_identificado=objeto_contrato,
-                        tercero=tercero,
-                        observaciones=[]
-                    )
-                    
-                    # Usar valor de la factura si está disponible
-                    valor_factura = estampilla_data.get("valor_factura", {}).get("valor_sin_iva", analisis_contrato.valor_total_contrato)
-                    
-                    # Liquidar estampilla
-                    resultado_estampilla = self.liquidar_estampilla(analisis_contrato, valor_factura, nit_administrativo)
-                    
-                    # Convertir a diccionario para compatibilidad
-                    resultado_integrado["estampilla_universidad"] = {
-                        "aplica": resultado_estampilla.aplica,
-                        "estado": resultado_estampilla.estado,
-                        "valor_estampilla": resultado_estampilla.valor_estampilla,
-                        "tarifa_aplicada": resultado_estampilla.tarifa_aplicada,
-                        "rango_uvt": resultado_estampilla.rango_uvt,
-                        "valor_contrato_pesos": resultado_estampilla.valor_contrato_pesos,
-                        "valor_contrato_uvt": resultado_estampilla.valor_contrato_uvt,
-                        "mensajes_error": resultado_estampilla.mensajes_error,
-                        "fecha_calculo": resultado_estampilla.fecha_calculo
-                    }
-                    
-                    logger.info(f" Estampilla procesada: ${resultado_estampilla.valor_estampilla:,.2f}")
-                    
                 except Exception as e:
-                    logger.error(f" Error procesando estampilla: {e}")
+                    logger.error(f"Error en validaciones manuales estampilla: {e}")
                     resultado_integrado["estampilla_universidad"] = {
                         "aplica": False,
                         "estado": "Error en procesamiento",
-                        "error": str(e),
+                        "razon": str(e),
                         "mensajes_error": [f"Error interno: {str(e)}"]
                     }
             else:
+                nombre = nombre_negocio or f"Código {codigo_negocio}"
                 resultado_integrado["estampilla_universidad"] = {
                     "aplica": False,
                     "estado": "No aplica el impuesto",
-                    "razon": "NIT no configurado para estampilla" if not aplica_estampilla else "No se detectó información de estampilla en el análisis"
+                    "razon": f"El negocio {nombre} no aplica este impuesto"
                 }
-            
-            # LIQUIDAR CONTRIBUCIÓN OBRA PÚBLICA (si aplica)
-            if aplica_obra_publica and analisis_especiales.get("contribucion_obra_publica"):
+
+            # LIQUIDAR OBRA PÚBLICA con validaciones manuales Python
+            if aplica_obra_publica:
                 try:
-                    obra_data = analisis_especiales["contribucion_obra_publica"]
-                    tercero_data = analisis_especiales.get("tercero_identificado", {})
-                    
-                    # Extraer parámetros para obra pública
-                    valor_factura_sin_iva = obra_data.get("valor_factura", {}).get("valor_sin_iva", 0.0)
-                    nombre_tercero = tercero_data.get("nombre", "")
-                    es_consorcio = tercero_data.get("es_consorcio", False)
-                    consorciados_info = tercero_data.get("consorciados", [])
-                    
-                    # Crear descripción del objeto
-                    palabras_clave = obra_data.get("objeto_contrato", {}).get("palabras_clave_encontradas", [])
-                    objeto_contrato = " ".join(palabras_clave) if palabras_clave else "contrato de obra"
-                    
-                    # Liquidar obra pública
-                    resultado_obra_publica = self.liquidar_contribucion_obra_publica(
-                        valor_factura_sin_iva=valor_factura_sin_iva,
-                        nit_administrativo=nit_administrativo,
-                        nombre_tercero=nombre_tercero,
-                        objeto_contrato=objeto_contrato,
-                        es_consorcio=es_consorcio,
-                        consorciados_info=consorciados_info
+                    resultado_integrado["contribucion_obra_publica"] = self._liquidar_obra_publica_manual(
+                        analisis_especiales, codigo_negocio, nombre_negocio
                     )
-                    
-                    # Convertir a diccionario para compatibilidad
-                    resultado_integrado["contribucion_obra_publica"] = {
-                        "aplica": resultado_obra_publica.aplica,
-                        "estado": resultado_obra_publica.estado,
-                        "valor_contribucion": resultado_obra_publica.valor_contribucion,
-                        "tarifa_aplicada": resultado_obra_publica.tarifa_aplicada,
-                        "valor_factura_sin_iva": resultado_obra_publica.valor_factura_sin_iva,
-                        "mensajes_error": resultado_obra_publica.mensajes_error,
-                        "fecha_calculo": resultado_obra_publica.fecha_calculo
-                    }
-                    
-                    logger.info(f" Obra pública procesada: ${resultado_obra_publica.valor_contribucion:,.2f}")
-                    
                 except Exception as e:
-                    logger.error(f" Error procesando obra pública: {e}")
+                    logger.error(f"Error en validaciones manuales obra pública: {e}")
                     resultado_integrado["contribucion_obra_publica"] = {
                         "aplica": False,
                         "estado": "Error en procesamiento",
-                        "error": str(e),
+                        "razon": str(e),
                         "mensajes_error": [f"Error interno: {str(e)}"]
                     }
             else:
+                nombre = nombre_negocio or f"Código {codigo_negocio}"
                 resultado_integrado["contribucion_obra_publica"] = {
                     "aplica": False,
                     "estado": "No aplica el impuesto",
-                    "razon": "NIT no configurado para obra pública" if not aplica_obra_publica else "No se detectó información de obra pública en el análisis"
+                    "razon": f"El negocio {nombre} no aplica este impuesto"
                 }
-            
+
             # RESUMEN TOTAL
             valor_total_estampilla = resultado_integrado.get("estampilla_universidad", {}).get("valor_estampilla", 0)
             valor_total_obra_publica = resultado_integrado.get("contribucion_obra_publica", {}).get("valor_contribucion", 0)
-            
+
             resultado_integrado["resumen_total"] = {
                 "valor_total_impuestos_especiales": valor_total_estampilla + valor_total_obra_publica,
                 "estampilla_calculada": valor_total_estampilla,
                 "obra_publica_calculada": valor_total_obra_publica,
                 "procesamiento_exitoso": True
             }
-            
-            logger.info(f" Total impuestos especiales: ${valor_total_estampilla + valor_total_obra_publica:,.2f}")
-            
+
+            logger.info(f"Total impuestos especiales: ${valor_total_estampilla + valor_total_obra_publica:,.2f}")
+
             return resultado_integrado
-            
+
         except Exception as e:
-            logger.error(f" Error en liquidación integrada: {e}")
+            logger.error(f"Error en liquidación integrada: {e}")
             return {
-                "nit_administrativo": nit_administrativo,
+                "codigo_negocio": codigo_negocio,
                 "error": f"Error en liquidación integrada: {str(e)}",
                 "procesamiento_exitoso": False,
                 "timestamp": datetime.now().isoformat()

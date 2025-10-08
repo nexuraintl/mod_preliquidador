@@ -1319,13 +1319,10 @@ def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_te
                                                        cotizaciones_texto: str, anexo_contrato: str, 
                                                        nit_administrativo: str, nombres_archivos_directos: List[str] = None) -> str:
     """
-    PROMPT INTEGRADO OPTIMIZADO-MULTIMODAL - OBRA PÚBLICA + ESTAMPILLA UNIVERSIDAD
+    PROMPT INTEGRADO OPTIMIZADO - EXTRACCIÓN Y CLASIFICACIÓN
     
-    Analiza documentos para detectar y calcular AMBOS impuestos simultáneamente:
-    - Estampilla Pro Universidad Nacional (tarifas por rangos UVT)
-    - Contribución a Obra Pública del 5% (tarifa fija)
-    
-    Desde 2025, ambos impuestos aplican para los MISMOS NITs administrativos.
+    Analiza documentos para extraer información y clasificar el tipo de contrato
+    para posterior cálculo de impuestos (Estampilla y Obra Pública).
     
     Args:
         factura_texto: Texto extraído de la factura principal
@@ -1334,15 +1331,16 @@ def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_te
         cotizaciones_texto: Texto de cotizaciones
         anexo_contrato: Texto del anexo de concepto de contrato
         nit_administrativo: NIT de la entidad administrativa
+        nombres_archivos_directos: Lista de nombres de archivos analizados
         
     Returns:
-        str: Prompt optimizado para análisis integrado con Gemini
+        str: Prompt optimizado para extracción y clasificación
     """
     
     # Importar configuración desde config.py
     from config import (
         UVT_2025,
-        NITS_ESTAMPILLA_UNIVERSIDAD,
+        CODIGOS_NEGOCIO_ESTAMPILLA,
         TERCEROS_RECURSOS_PUBLICOS,
         OBJETOS_CONTRATO_ESTAMPILLA,
         OBJETOS_CONTRATO_OBRA_PUBLICA,
@@ -1353,187 +1351,150 @@ def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_te
     config_integrada = obtener_configuracion_impuestos_integrada()
     
     return f"""
-🏛️ ANÁLISIS INTEGRADO: ESTAMPILLA PRO UNIVERSIDAD NACIONAL + CONTRIBUCIÓN OBRA PÚBLICA 5%
-==================================================================================
+### TAREA: EXTRACCIÓN DE DATOS Y CLASIFICACIÓN DE CONTRATO ###
+═════════════════════════════════════════════════════════════
 
-Eres un experto contador colombiano especializado en IMPUESTOS ESPECIALES INTEGRADOS que trabaja para la FIDUCIARIA FIDUCOLDEX (las FIDUCIARIA Tiene varios NITS administrados), tu trabajo es aplicar las retenciones a las empresas (terceros) que emiten las FACTURAS.
-DESDE 2025, ambos impuestos aplican para los MISMOS NITs administrativos.
+INSTRUCCIÓN PRINCIPAL:
+Eres un sistema de extracción de datos especializado en documentos contractuales colombianos.
+Tu ÚNICA tarea es:
+1. Extraer información específica de los documentos proporcionados
+2. Clasificar el tipo de contrato basándote en el objeto extraído
 
-CONFIGURACIÓN ACTUAL:
-🔹 NIT Administrativo: {nit_administrativo} 
-🔹 UVT 2025: ${UVT_2025:,} pesos colombianos
-🔹 NITs válidos (Solo estos Nits aplican AMBOS impuestos): {list(NITS_ESTAMPILLA_UNIVERSIDAD.keys())} 
+NO debes:
+- Calcular impuestos
+- Determinar si aplican o no los impuestos
+- Inventar información que no esté en los documentos
+- Hacer interpretaciones más allá de la clasificación
 
-TERCEROS QUE ADMINISTRAN RECURSOS PÚBLICOS (COMPARTIDO):
-{chr(10).join([f"  ✓ {tercero}" for tercero in TERCEROS_RECURSOS_PUBLICOS.keys()])}
-
-IMPUESTO 1 - ESTAMPILLA PRO UNIVERSIDAD NACIONAL:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 OBJETOS QUE APLICAN:
-  a) CONTRATO DE OBRA: construcción, mantenimiento, instalación
-  b) INTERVENTORÍA: interventoría, interventoria  
-  c) SERVICIOS CONEXOS: estudios, asesorías técnicas, gerencia de obra/proyectos, diseño.
-  
-💰 TARIFAS POR RANGOS UVT:
-{chr(10).join([f"  • {rango['desde_uvt']:,} a {rango['hasta_uvt']:,} UVT: {rango['tarifa']*100}%" if rango['hasta_uvt'] != float('inf') else f"  • Más de {rango['desde_uvt']:,} UVT: {rango['tarifa']*100}%" for rango in RANGOS_ESTAMPILLA_UNIVERSIDAD])}
-
-IMPUESTO 2 - CONTRIBUCIÓN A OBRA PÚBLICA 5%:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 OBJETOS QUE APLICAN:
-  SOLO CONTRATO DE OBRA: construcción, mantenimiento, instalación
-  ⚠️ NO aplica para interventoría ni servicios conexos
-  
-💰 TARIFA FIJA: 5% del valor de la factura sin IVA
-
-DOCUMENTOS DISPONIBLES:
-━━━━━━━━━━━━━━━━━━━━━━━━
+### DOCUMENTOS PROPORCIONADOS ###
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {_generar_seccion_archivos_directos(nombres_archivos_directos)}
 
+<<INICIO_FACTURA>>
+{factura_texto if factura_texto else "[NO PROPORCIONADO]"}
+<<FIN_FACTURA>>
 
-FACTURA PRINCIPAL:
-{factura_texto}
+<<INICIO_RUT>>
+{rut_texto if rut_texto else "[NO PROPORCIONADO]"}
+<<FIN_RUT>>
 
-RUT DEL TERCERO:
-{rut_texto if rut_texto else "NO DISPONIBLE"}
+<<INICIO_ANEXOS>>
+{anexos_texto if anexos_texto else "[NO PROPORCIONADO]"}
+<<FIN_ANEXOS>>
 
-ANEXOS ADICIONALES:
-{anexos_texto if anexos_texto else "NO DISPONIBLES"}
+<<INICIO_COTIZACIONES>>
+{cotizaciones_texto if cotizaciones_texto else "[NO PROPORCIONADO]"}
+<<FIN_COTIZACIONES>>
 
-COTIZACIONES:
-{cotizaciones_texto if cotizaciones_texto else "NO DISPONIBLES"}
+<<INICIO_ANEXO_CONTRATO>>
+{anexo_contrato if anexo_contrato else "[NO PROPORCIONADO]"}
+<<FIN_ANEXO_CONTRATO>>
 
-ANEXO CONCEPTO CONTRATO:
-{anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
+### PROCESO DE EXTRACCIÓN ###
+════════════════════════════
 
-INSTRUCCIONES CRÍTICAS:
-━━━━━━━━━━━━━━━━━━━━━━━━
+PASO 1 - EXTRAER OBJETO DEL CONTRATO:
+--------------------------------------
+• ORDEN DE BÚSQUEDA: Anexo Contrato → Factura → Anexos → Cotizaciones
+• IDENTIFICACION : Buscar frases que indiquen TEXTUALMENTE el objeto del contrato, No confundas CONCEPTO de la factura con OBJETO del contrato
+• ACCIÓN: Copiar la descripción TEXTUAL EXACTA del objeto del contrato
+• SI NO EXISTE: Asignar valor "no_identificado"
+• IMPORTANTE: No parafrasear, copiar literalmente
 
-1.  DETECCIÓN AUTOMÁTICA DE IMPUESTOS:
-   • Analiza si el objeto del contrato aplica para ESTAMPILLA (obra + interventoría + servicios conexos)
-   • Analiza si el objeto del contrato aplica para OBRA PÚBLICA (SOLO obra)
-   • Marca qué impuestos aplican según la lógica
+PASO 2 - EXTRAER VALORES MONETARIOS:
+------------------------------------
+2.1 VALOR FACTURA SIN IVA:
+    • Buscar en la factura principal
+    • Identificar: "subtotal", "valor antes de IVA", "base gravable"
+    • SI NO EXISTE: Asignar valor 0
 
-2.  IDENTIFICACIÓN DEL TERCERO:
-   • Busca el nombre EXACTO del tercero/beneficiario en la FACTURA
-   • Verifica si administra recursos públicos (lista TERCEROS QUE ADMINISTRAN RECURSOS PÚBLICOS (COMPARTIDO):), sino administra recursos publicos NO se liquidan ninguno de los dos impuestos 
-   • Si es consorcio, identifica consorciados y porcentajes
-   • CRÍTICO: Nombres deben coincidir EXACTAMENTE con la lista
+2.2 VALOR TOTAL DEL CONTRATO SIN ADICIONES:
+    • Buscar en CUALQUIER documento disponible
+    • Identificar: "valor del contrato", "valor total contrato"
+    • SI NO EXISTE: Asignar valor 0
 
-3.  ANÁLISIS DEL OBJETO DEL CONTRATO:
+2.3 VALOR DE ADICIONES/MODIFICACIONES:
+    • Buscar términos: "adición", "otrosí", "modificación", "prórroga con adición"
+    • Sumar TODOS los valores de adiciones encontradas
+    • SI NO EXISTE: Asignar valor 0
 
-   Identifica si el tipo de contrato se clasifica en SOLO UNO de estos tipos:
-   Busca palabras clave:
-   • Obra: {OBJETOS_CONTRATO_ESTAMPILLA['contrato_obra']['palabras_clave']}
+PASO 3 - CLASIFICAR TIPO DE CONTRATO:
+-------------------------------------
+Comparar el objeto extraído con estas palabras clave ESPECÍFICAS:
+
+• Obra: {OBJETOS_CONTRATO_ESTAMPILLA['contrato_obra']['palabras_clave']}
    • Interventoría: {OBJETOS_CONTRATO_ESTAMPILLA['interventoria']['palabras_clave']}
-   • Servicios conexos: estudios, asesorías, gerencia, diseño, planos.
-   si no clasifica en alguno de estos tipos, NO aplican los dos impuestos.
+   • Servicios conexos: {OBJETOS_CONTRATO_ESTAMPILLA['servicios_conexos_obra']['palabras_clave']}
 
-4.  IDENTIFICACIÓN DE VALORES CRÍTICOS:
+═══ TIPO A: CONTRATO_OBRA ═══
+PALABRAS CLAVE EXACTAS {OBJETOS_CONTRATO_ESTAMPILLA['contrato_obra']['palabras_clave']}
 
-   • Para ESTAMPILLA: 
-     - Valor TOTAL del CONTRATO (determina tarifa UVT) 
-     **De Algunas FACTURAS puedes identificar eL porcentaje del VALOR DEL CONTRATO, EJEMPLO factura : segundo pago del 20% del contrato por 50,000,000, con ese porcentaje OBLIGATORIAMENTE CALCULA el valor total del contrato total contrato calculado  = 50,000,000/0.2  =  $250,000,000)**
-     
-      ⚠️ Si NO se identifica valor del contrato → "Preliquidación sin finalizar"
-      
-     - Valor de la FACTURA sin IVA (para cálculo final)
-      FÓRMULA: Estampilla = Valor factura (sin IVA) x Porcentaje tarifa aplicable
-      
 
-   • Para OBRA PÚBLICA: 
-     - Valor de la FACTURA sin IVA (para cálculo directo)
-     ⚠️ FÓRMULA: Contribución = Valor factura (sin IVA) x 5%
-     ⚠️ Si NO se identifica valor de factura → "Preliquidación sin finalizar"
-     
-   • Para CONSORCIOS: 
-     - Identificar porcentaje de participación de cada consorciado
-     - Fórmula: Impuesto = Valor factura sin IVA x Tarifa x % participación
+═══ TIPO B: INTERVENTORIA ═══
+PALABRAS CLAVE EXACTAS: {OBJETOS_CONTRATO_ESTAMPILLA['interventoria']['palabras_clave']}
 
-5. 🏢 MANEJO DE CONSORCIOS:
-   • Si el tercero incluye "CONSORCIO" o "UNIÓN TEMPORAL"
-   • Busca participación de cada consorciado
-   • Normaliza porcentajes si no suman 100%
 
-ESTRATEGIA DE ANÁLISIS:
-━━━━━━━━━━━━━━━━━━━━━━
-1. Revisar FACTURA para información básica
-2. Si la factura es general, revisar ANEXOS para detalles
-3. COTIZACIONES pueden tener descripción específica
-4. ANEXO CONTRATO tiene el objeto exacto del contrato
-5. RUT puede tener información del tercero
+═══ TIPO C: SERVICIOS_CONEXOS ═══
+PALABRAS CLAVE EXACTAS: {OBJETOS_CONTRATO_ESTAMPILLA['servicios_conexos_obra']['palabras_clave']}
 
-LÓGICA DE DETECCIÓN Y ESTADOS:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• Si es  OBRA → Aplican AMBOS impuestos (estampilla + obra pública)
-• Si es INTERVENTORÍA → Aplica SOLO estampilla
-• Si es SERVICIOS CONEXOS → Aplica SOLO estampilla
-• Si NO se identifica objeto → Ningún impuesto aplica, estado: "Preliquidación sin finalizar"
-• Si NO se identifica valor → Estado: "Preliquidación sin finalizar"
 
-🗒 ESTADOS REQUERIDOS:
-• "Preliquidado" → Cuando todos los requisitos se cumplen
-• "No aplica el impuesto" → Cuando tercero o objeto no aplican
-• "Preliquidación sin finalizar" → Cuando falta información crítica
+═══ TIPO D: NO_APLICA ═══
+Asignar cuando el objeto del contrato extraído:
+• No contiene NINGUNA relación con las palabras clave de los tipos anteriores
+• Es un servicio/producto completamente diferente
 
-RESPONDE ÚNICAMENTE EN FORMATO JSON SIN TEXTO ADICIONAL:
+═══ TIPO E: NO_IDENTIFICADO ═══
+Asignar cuando el objeto del contrato no se haya podido extraer de los documentos proporcionados   
+
+
+### REGLAS ESTRICTAS ###
+═══════════════════════
+
+ PROHIBIDO:
+1. Inventar valores o descripciones no presentes en documentos
+2. Redondear o modificar valores numéricos
+3. Hacer cálculos de ningún tipo
+4. Interpretar más allá de la clasificación por palabras clave
+5. Decidir sobre aplicación de impuestos
+6. Asignar el concepto de la factura como OBJETO del contrato
+
+✓ OBLIGATORIO:
+1. Copiar textualmente las descripciones encontradas
+2. Usar 0 cuando no encuentres un valor
+3. Usar "no_identificado" cuando no encuentres una descripción
+4. Clasificar ÚNICAMENTE basándote en palabras clave exactas
+5. Incluir la evidencia textual que justifica la clasificación
+
+### FORMATO DE RESPUESTA - JSON ESTRICTO ###
+════════════════════════════════════════════
+
+Responde ÚNICAMENTE con el siguiente JSON.
+NO incluyas texto antes o después del JSON:
+
 {{
-    "deteccion_automatica": {{
-        "aplica_estampilla_universidad": true/false,
-        "aplica_contribucion_obra_publica": true/false,
-        "procesamiento_paralelo": true/false,
-        "razon_deteccion": "Explicación de por qué aplican o no"
-    }},
-    "tercero_identificado": {{
-        "nombre": "NOMBRE EXACTO DEL TERCERO",
-        "es_consorcio": true/false,
-        "administra_recursos_publicos": true/false,
-        "consorciados": [
-            {{
-                "nombre": "NOMBRE CONSORCIADO",
-                "porcentaje_participacion": 0.0
-            }}
-        ]
-    }},
+  "extraccion": {{
     "objeto_contrato": {{
-        "descripcion_identificada": "DESCRIPCIÓN DEL OBJETO",
-        "clasificacion_estampilla": "contrato_obra|interventoria|servicios_conexos_obra|no_identificado",
-        "clasificacion_obra_publica": "contrato_obra|no_aplica",
-        "palabras_clave_estampilla": ["palabra1", "palabra2"],
-        "palabras_clave_obra_publica": ["palabra1", "palabra2"]
+      "descripcion_literal": "Copiar texto exacto del documento o 'no_identificado'",
+      "documento_origen": "Nombre del documento donde se encontró o 'ninguno'",
     }},
-    "valores_identificados": {{
-        "estampilla_universidad": {{
-            "valor_contrato_pesos": 0.0,  // Valor TOTAL del contrato (determina tarifa UVT)
-            "valor_contrato_uvt": 0.0,    // valor_contrato_pesos / {UVT_2025}
-            "valor_factura_sin_iva": 0.0, // Valor de la FACTURA sin IVA (para cálculo final)
-            "metodo_identificacion": "directo|porcentaje_calculado|no_identificado",
-            "texto_referencia": "TEXTO DONDE SE ENCONTRÓ"
-        }},
-        "contribucion_obra_publica": {{
-            "valor_factura_sin_iva": 0.0, // Valor de la FACTURA sin IVA
-            "metodo_identificacion": "directo|calculado|no_identificado",
-            "texto_referencia": "TEXTO DONDE SE ENCONTRÓ"
-        }}
-    }},
-    "observaciones": [
-        "Observación 1",
-        "Observación 2"
-    ]
+    "valores": {{
+      "factura_sin_iva": valor encontrado o 0,
+      "contrato_total": valor encontrado o 0,
+      "adiciones": valor encontrado o 0,
+      "observaciones_valores": "Notas sobre valores encontrados o faltantes"
+    }}
+  }},
+  
+  "clasificacion": {{
+    "tipo_contrato": "CONTRATO_OBRA|INTERVENTORIA|SERVICIOS_CONEXOS|NO_APLICA|NO_IDENTIFICADO",
+    "palabras_clave_encontradas": ["lista", "de", "palabras", "encontradas"],
+    "fragmento_evidencia": "Copiar la frase exacta del documento que contiene las palabras clave",
+    "confianza_clasificacion": "ALTA|MEDIA|BAJA",
+    "razon_confianza": "Explicación breve del nivel de confianza"
+    
+  }}
 }}
-
-🔥 CRÍTICO - CONDICIONES EXACTAS: 
-• ESTAMPILLA: Si NO se identifica objeto del contrato → "Preliquidación sin finalizar"
-• ESTAMPILLA: Si NO se identifica valor del contrato → "Preliquidación sin finalizar"
-• OBRA PÚBLICA: Si NO se identifica objeto (solo obra) → "Preliquidación sin finalizar"
-• OBRA PÚBLICA: Si NO se identifica valor factura → "Preliquidación sin finalizar"
-• Solo marca como válido si el tercero aparece EXACTAMENTE en la lista
-• Para obra pública, SOLO aplica si es contrato de obra (no interventoría)
-• Para estampilla, aplica para obra + interventoría + servicios conexos
-• Si hay dudas sobre valores, especifica en observaciones
-• CONSORCIOS: Fórmula = Valor factura sin IVA x Tarifa x % participación
-• Si encuentras UN PORCENTAJE del VALOR del contrato en la FACTURA, OBLIGATORIAMENTE CALCULA el valor total del contrato COMO EL SIGUIENTE EJEMPLO -> FACTURA MENCIONA : 20% del contrato por $50,000,000 -> CALCULA -> total contrato = 50,000,000/0.2  =  $250,000,000)
-    """
-
+"""
 # ===============================
 # ✅ NUEVO PROMPT: ANÁLISIS DE IVA Y RETEIVA
 # ===============================
@@ -1749,7 +1710,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 def PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(factura_texto: str, rut_texto: str, anexos_texto: str, 
                                              cotizaciones_texto: str, anexo_contrato: str, nombres_archivos_directos: list[str] = None) -> str:
     """
-    🆕 NUEVO PROMPT: Análisis de 6 Estampillas Generales
+     NUEVO PROMPT: Análisis de 6 Estampillas Generales
     
     Analiza documentos para identificar información de estampillas:
     - Procultura
@@ -1778,25 +1739,25 @@ def PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(factura_texto: str, rut_texto: str, an
 Eres un experto contador colombiano especializado en ESTAMPILLAS GENERALES que trabaja para la FIDUCIARIA FIDUCOLDEX.
 Tu tarea es identificar información sobre 6 estampillas específicas en los documentos adjuntos.
 
-🎯 ESTAMPILLAS A IDENTIFICAR:
+ ESTAMPILLAS A IDENTIFICAR:
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-1. 🎨 **PROCULTURA** - Estampilla Pro Cultura
-2. 🏥 **BIENESTAR** - Estampilla Pro Bienestar
-3. 👴 **ADULTO MAYOR** - Estampilla Pro Adulto Mayor
-4. 🎓 **PROUNIVERSIDAD PEDAGÓGICA** - Estampilla Pro Universidad Pedagógica
-5. 🔬 **FRANCISCO JOSÉ DE CALDAS** - Estampilla Francisco José de Caldas
-6. ⚽ **PRODEPORTE** - Estampilla Pro Deporte
+1.  **PROCULTURA** - Estampilla Pro Cultura
+2.  **BIENESTAR** - Estampilla Pro Bienestar
+3.  **ADULTO MAYOR** - Estampilla Pro Adulto Mayor
+4.  **PROUNIVERSIDAD PEDAGÓGICA** - Estampilla Pro Universidad Pedagógica
+5.  **FRANCISCO JOSÉ DE CALDAS** - Estampilla Francisco José de Caldas
+6.  **PRODEPORTE** - Estampilla Pro Deporte
 
-📋 ESTRATEGIA DE ANÁLISIS SECUENCIAL:
+ ESTRATEGIA DE ANÁLISIS SECUENCIAL:
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-🔄 **ANÁLISIS ACUMULATIVO** - Revisar TODOS los documentos en este orden:
-1. 📄 **FACTURA PRINCIPAL** - Buscar desglose de estampillas
-2. 📋 **ANEXOS** - Información adicional sobre estampillas
-3. 📜 **ANEXO CONTRATO** - Referencias a estampillas aplicables
-4. 🏛️ **RUT** - Validación del tercero
+ **ANÁLISIS ACUMULATIVO** - Revisar TODOS los documentos en este orden:
+1.  **FACTURA PRINCIPAL** - Buscar desglose de estampillas
+2.  **ANEXOS** - Información adicional sobre estampillas
+3.  **ANEXO CONTRATO** - Referencias a estampillas aplicables
+4.  **RUT** - Validación del tercero
 
-⚠️ **IMPORTANTE**: Revisar TODOS los documentos y consolidar información encontrada
+ **IMPORTANTE**: Revisar TODOS los documentos y consolidar información encontrada
 
 DOCUMENTOS DISPONIBLES:
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1822,7 +1783,7 @@ ANEXO CONCEPTO CONTRATO:
 INSTRUCCIONES CRÍTICAS:
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-1. 🔍 **IDENTIFICACIÓN DE ESTAMPILLAS**:
+1.  **IDENTIFICACIÓN DE ESTAMPILLAS**:
    • Busca menciones EXACTAS de los nombres de las estampillas
    • Identifica variaciones comunes:
      - "Pro Cultura" / "Procultura" / "Estampilla ProCultura"/ PROCULTURA
@@ -1832,24 +1793,24 @@ INSTRUCCIONES CRÍTICAS:
      - "Francisco José de Caldas" / "FJDC" / Estampilla Francisco José de Caldas
      - "Pro Deporte" / "Prodeporte" / "Estampilla ProDeporte"
 
-2. 💰 **EXTRACCIÓN DE INFORMACIÓN**:
+2.  **EXTRACCIÓN DE INFORMACIÓN**:
    Para cada estampilla identificada, extrae:
    • **Nombre exacto** como aparece en el documento
    • **Porcentaje** (ej: 1.5 , 2.0 , 0.5 , 1.1)
    • **Valor a deducir** en pesos colombianos
    • **Texto de referencia** donde se encontró la información
 
-3. 📊 **VALIDACIÓN DE INFORMACIÓN COMPLETA**:
-   • **INFORMACIÓN COMPLETA**: Nombre + Porcentaje + Valor → Estado: "preliquidacion_completa"
+3.  **VALIDACIÓN DE INFORMACIÓN COMPLETA**:
+   • **INFORMACIÓN COMPLETA**: Nombre + Porcentaje + Valor → Estado: "preliquidado"
    • **INFORMACIÓN INCOMPLETA**: Solo nombre o porcentaje sin valor → Estado: "preliquidacion_sin_finalizar"
    • **NO IDENTIFICADA**: No se encuentra información → Estado: "no_aplica_impuesto"
 
-4. 🔄 **CONSOLIDACIÓN ACUMULATIVA**:
+4.  **CONSOLIDACIÓN ACUMULATIVA**:
    • Si FACTURA tiene info de 3 estampillas Y ANEXOS tienen info de 2 adicionales
    • RESULTADO: Mostrar las 5 estampillas consolidadas
    • Si hay duplicados, priorizar información más detallada
 
-5. 📝 **OBSERVACIONES ESPECÍFICAS**:
+5.  **OBSERVACIONES ESPECÍFICAS**:
    • Si encuentra estampillas mencionadas pero sin información completa
    • Si hay inconsistencias entre documentos
    • Si faltan detalles específicos de porcentaje o valor
@@ -1857,16 +1818,16 @@ INSTRUCCIONES CRÍTICAS:
 EJEMPLOS DE IDENTIFICACIÓN:
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-✅ **EJEMPLO 1 - INFORMACIÓN COMPLETA**:
+ **EJEMPLO 1 - INFORMACIÓN COMPLETA**:
 Factura: "Estampilla Pro Cultura 1.5% = $150,000"
 Resultado: {{
   "nombre_estampilla": "Procultura",
   "porcentaje": 1.5,
   "valor": 150000,
-  "estado": "preliquidacion_completa"
+  "estado": "preliquidado"
 }}
 
-⚠️ **EJEMPLO 2 - INFORMACIÓN INCOMPLETA**:
+ **EJEMPLO 2 - INFORMACIÓN INCOMPLETA**:
 Anexo: "Aplica estampilla Pro Bienestar"
 Resultado: {{
   "nombre_estampilla": "Bienestar",
@@ -1876,7 +1837,7 @@ Resultado: {{
   "observaciones": "Se menciona la estampilla pero no se encontró porcentaje ni valor"
 }}
 
-❌ **EJEMPLO 3 - NO IDENTIFICADA**:
+ **EJEMPLO 3 - NO IDENTIFICADA**:
 Resultado: {{
   "nombre_estampilla": "Prodeporte",
   "porcentaje": null,
@@ -1900,7 +1861,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
             "nombre_estampilla": "Procultura",
             "porcentaje": 1.5,
             "valor": 150000,
-            "estado": "preliquidacion_completa",
+            "estado": "preliquidado",
             "texto_referencia": "Factura línea 15: Estampilla Pro Cultura 1.5% = $150,000",
             "observaciones": null
         }},
@@ -1944,19 +1905,12 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
             "texto_referencia": null,
             "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
         }}
-    ],
-    "resumen_analisis": {{
-        "total_estampillas_identificadas": 2,
-        "estampillas_completas": 1,
-        "estampillas_incompletas": 1,
-        "estampillas_no_aplican": 4,
-        "documentos_revisados": ["FACTURA", "ANEXOS", "ANEXO_CONTRATO", "RUT"]
-    }}
+    ]
 }}
 
-🔥 **CRÍTICO - CONDICIONES EXACTAS**:
+ **CRÍTICO - CONDICIONES EXACTAS**:
 • SIEMPRE incluir las 6 estampillas en el resultado (aunque sea como "no_aplica_impuesto")
-• Estados válidos: "preliquidacion_completa", "preliquidacion_sin_finalizar", "no_aplica_impuesto"
+• Estados válidos: "preliquidado", "preliquidacion_sin_finalizar", "no_aplica_impuesto"
 • Si encuentra información parcial, marcar como "preliquidacion_sin_finalizar" con observaciones específicas
 • Consolidar información de TODOS los documentos de forma acumulativa
 • Especificar claramente dónde se encontró cada información

@@ -87,15 +87,15 @@ from database import (
 
 # Cargar configuración global - INCLUYE ESTAMPILLA Y OBRA PÚBLICA
 from config import (
-    inicializar_configuracion, 
-    obtener_nits_disponibles, 
-    validar_nit_administrativo, 
+    inicializar_configuracion,
+    obtener_nits_disponibles,
+    validar_nit_administrativo,
     nit_aplica_retencion_fuente,
-    nit_aplica_estampilla_universidad,
-    nit_aplica_contribucion_obra_publica,  #  NUEVA IMPORTACIÓN
+    codigo_negocio_aplica_estampilla_universidad,
+    codigo_negocio_aplica_obra_publica,
     nit_aplica_iva_reteiva,  #  NUEVA IMPORTACIÓN IVA
-    detectar_impuestos_aplicables,  #  DETECCIÓN AUTOMÁTICA
-    
+    detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
+
 )
 
 # Dependencias para preprocesamiento Excel
@@ -797,13 +797,17 @@ async def procesar_facturas_integrado(
         
         logger.info(f" NIT válido: {nombre_entidad}")
         logger.info(f"Impuestos configurados: {impuestos_aplicables}")
-        
-        # Detectar automáticamente qué impuestos aplican
-        deteccion_impuestos = detectar_impuestos_aplicables(nit_administrativo)
+
+        # Detectar automáticamente qué impuestos aplican usando código de negocio
+        nombre_negocio = datos_negocio.get('negocio', 'Desconocido')
+        deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(codigo_del_negocio, nombre_negocio)
         aplica_retencion = "RETENCION_FUENTE" in impuestos_aplicables
         aplica_estampilla = deteccion_impuestos["aplica_estampilla_universidad"]
         aplica_obra_publica = deteccion_impuestos["aplica_contribucion_obra_publica"]
         aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # VALIDACIÓN IVA
+
+        logger.info(f" Código de negocio: {codigo_del_negocio} - {nombre_negocio}")
+        logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}")
         
         # Determinar estrategia de procesamiento
         impuestos_a_procesar = []
@@ -814,11 +818,9 @@ async def procesar_facturas_integrado(
         if aplica_obra_publica:
             impuestos_a_procesar.append("CONTRIBUCION_OBRA_PUBLICA")
         if aplica_iva:
-            impuestos_a_procesar.append("IVA_RETEIVA")  
-        
-        procesamiento_paralelo = len(impuestos_a_procesar) > 1
-        
-        logger.info(f" Estrategia: {'PARALELO' if procesamiento_paralelo else 'INDIVIDUAL'}")
+            impuestos_a_procesar.append("IVA_RETEIVA")
+
+        logger.info(f" Estrategia: PROCESAMIENTO PARALELO (todos los NITs aplican múltiples impuestos)")
         logger.info(f" Impuestos a procesar: {impuestos_a_procesar}")
         
         # =================================
@@ -932,7 +934,6 @@ async def procesar_facturas_integrado(
             "es_consorcio": es_consorcio,
             "es_facturacion_extranjera": es_facturacion_extranjera,
             "impuestos_aplicables": impuestos_a_procesar,
-            "procesamiento_paralelo": procesamiento_paralelo,
             "procesamiento_hibrido": {
                 "multimodalidad_activa": True,
                 "archivos_directos": len(archivos_directos),
@@ -948,472 +949,172 @@ async def procesar_facturas_integrado(
         logger.info(f" Consorcio detectado: {es_consorcio}")
         logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
         # =================================
-        # PASO 4A: PROCESAMIENTO PARALELO (MÚLTIPLES IMPUESTOS)
+        # PASO 4: PROCESAMIENTO PARALELO (TODOS LOS IMPUESTOS)
         # =================================
-        
-        if procesamiento_paralelo:
-            logger.info(f" Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
-            logger.info(f"Documentos a analizar: {documentos_clasificados}  ")
-            # Crear tareas paralelas para análisis con Gemini
-            tareas_analisis = []
-            logger.info(" Preparando cache para solucionar concurrencia en workers paralelos")
-            cache_archivos = await clasificador.preparar_archivos_para_workers_paralelos(archivos_directos)
 
-            # Tarea 1: Análisis de Retefuente (si aplica)
-            if aplica_retencion:
-                if es_consorcio:
-                    tarea_retefuente = clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera, None,cache_archivos)
-                else:
-                    #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
-                    tarea_retefuente = clasificador.analizar_factura(
-                        documentos_clasificados, 
-                        es_facturacion_extranjera,
-                        None,
-                        cache_archivos  
-                    )
-                tareas_analisis.append(("retefuente", tarea_retefuente))
-            
-            # Tarea 2: Análisis de Impuestos Especiales (si aplican)
-            if aplica_estampilla or aplica_obra_publica:
-                tarea_impuestos_especiales = clasificador.analizar_estampilla(documentos_clasificados, None, cache_archivos)
-                tareas_analisis.append(("impuestos_especiales", tarea_impuestos_especiales))
-            
-            # Tarea 3: Análisis de IVA (si aplica) - NUEVA TAREA
-            if aplica_iva:
-                tarea_iva = clasificador.analizar_iva(documentos_clasificados, None, cache_archivos)
-                tareas_analisis.append(("iva_reteiva", tarea_iva))
-            
-            # Tarea 4: Análisis de Estampillas Generales - 🆕 NUEVA FUNCIONALIDAD
-            # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
-            tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
-            tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
-            
-            # Ejecutar todas las tareas en paralelo
-            logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
-            
-            # Esperar todos los resultados
-            resultados_analisis = {}
-            try:
+        logger.info(f" Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
+        logger.info(f"Documentos a analizar: {documentos_clasificados}  ")
+        # Crear tareas paralelas para análisis con Gemini
+        tareas_analisis = []
+        logger.info(" Preparando cache para solucionar concurrencia en workers paralelos")
+        cache_archivos = await clasificador.preparar_archivos_para_workers_paralelos(archivos_directos)
 
-                # 🔧 OPTIMIZACIÓN: Procesamiento con semáforo de 4 workers
-                semaforo = asyncio.Semaphore(4)  # Máximo 4 llamados simultáneos a Gemini
-
-                async def ejecutar_tarea_con_worker(nombre_impuesto: str, tarea_async, worker_id: int):
-                    """
-                    Ejecuta una tarea de análisis con control de concurrencia.
-                    
-                    Args:
-                        nombre_impuesto: Nombre del impuesto (retefuente, impuestos_especiales, etc.)
-                        tarea_async: Tarea asíncrona a ejecutar
-                        worker_id: ID del worker (1 o 2)
-                        
-                    Returns:
-                        tuple: (nombre_impuesto, resultado_o_excepcion, tiempo_ejecucion)
-                    """
-                    async with semaforo:
-                        inicio_worker = datetime.now()
-                        logger.info(f" Worker {worker_id}: Iniciando análisis de {nombre_impuesto}")
-                        
-                        try:
-                            resultado = await tarea_async
-                            tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
-                            logger.info(f" Worker {worker_id}: {nombre_impuesto} completado en {tiempo_ejecucion:.2f}s")
-                            return (nombre_impuesto, resultado, tiempo_ejecucion)
-                            
-                        except Exception as e:
-                            tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
-                            logger.error(f" Worker {worker_id}: Error en {nombre_impuesto} tras {tiempo_ejecucion:.2f}s: {str(e)}")
-                            return (nombre_impuesto, e, tiempo_ejecucion)
-                
-                # Crear tareas con workers
-                inicio_total = datetime.now()
-                tareas_con_workers = [
-                    ejecutar_tarea_con_worker(nombre_impuesto, tarea, i + 1) 
-                    for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis)
-                ]
-                
-                logger.info(f" Ejecutando {len(tareas_con_workers)} tareas con máximo 2 workers simultáneos...")
-                
-                # Esperar todos los resultados con workers limitados
-                resultados_con_workers = await asyncio.gather(*tareas_con_workers, return_exceptions=True)
-                
-                # Mapear resultados a sus nombres
-                for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis):
-                    resultado_worker = resultados_con_workers[i]
-                    if isinstance(resultado_worker, Exception):
-                        logger.error(f" Error crítico en worker: {resultado_worker}")
-                        resultados_analisis[nombre_impuesto] = {"error": str(resultado_worker)}
-                        continue
-                    
-                    # Extraer información del worker: (nombre_impuesto, resultado, tiempo)
-                    _, resultado, tiempo_ejecucion = resultado_worker
-                    
-                    if isinstance(resultado, Exception):
-                        logger.error(f" Error en análisis de {nombre_impuesto}: {resultado}")
-                        resultados_analisis[nombre_impuesto] = {"error": str(resultado)}
-                    else:
-                        resultados_analisis[nombre_impuesto] = resultado.dict() if hasattr(resultado, 'dict') else resultado
-                        logger.info(f"Análisis de {nombre_impuesto} completado con éxito")
-            except Exception as e:
-                logger.error(f" Error ejecutando análisis paralelo: {e}")
-                raise HTTPException(status_code=500, detail=
-                    f"Error ejecutando análisis paralelo : {str(e)}"
+        # Tarea 1: Análisis de Retefuente (si aplica)
+        if aplica_retencion:
+            if es_consorcio:
+                tarea_retefuente = clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera, None,cache_archivos)
+            else:
+                #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
+                tarea_retefuente = clasificador.analizar_factura(
+                    documentos_clasificados, 
+                    es_facturacion_extranjera,
+                    None,
+                    cache_archivos  
                 )
+            tareas_analisis.append(("retefuente", tarea_retefuente))
+        
+        # Tarea 2: Análisis de Impuestos Especiales (si aplican)
+        if aplica_estampilla or aplica_obra_publica:
+            tarea_impuestos_especiales = clasificador.analizar_estampilla(documentos_clasificados, None, cache_archivos)
+            tareas_analisis.append(("impuestos_especiales", tarea_impuestos_especiales))
+        
+        # Tarea 3: Análisis de IVA (si aplica) - NUEVA TAREA
+        if aplica_iva:
+            tarea_iva = clasificador.analizar_iva(documentos_clasificados, None, cache_archivos)
+            tareas_analisis.append(("iva_reteiva", tarea_iva))
+        
+        # Tarea 4: Análisis de Estampillas Generales -  NUEVA FUNCIONALIDAD
+        # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
+        tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
+        tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
+        
+        # Ejecutar todas las tareas en paralelo
+        logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
+        
+        # Esperar todos los resultados
+        resultados_analisis = {}
+        try:
+
+            # 🔧 OPTIMIZACIÓN: Procesamiento con semáforo de 4 workers
+            semaforo = asyncio.Semaphore(4)  # Máximo 4 llamados simultáneos a Gemini
+
+            async def ejecutar_tarea_con_worker(nombre_impuesto: str, tarea_async, worker_id: int):
+                """
+                Ejecuta una tarea de análisis con control de concurrencia.
+                
+                Args:
+                    nombre_impuesto: Nombre del impuesto (retefuente, impuestos_especiales, etc.)
+                    tarea_async: Tarea asíncrona a ejecutar
+                    worker_id: ID del worker (1 o 2)
+                    
+                Returns:
+                    tuple: (nombre_impuesto, resultado_o_excepcion, tiempo_ejecucion)
+                """
+                async with semaforo:
+                    inicio_worker = datetime.now()
+                    logger.info(f" Worker {worker_id}: Iniciando análisis de {nombre_impuesto}")
+                    
+                    try:
+                        resultado = await tarea_async
+                        tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
+                        logger.info(f" Worker {worker_id}: {nombre_impuesto} completado en {tiempo_ejecucion:.2f}s")
+                        return (nombre_impuesto, resultado, tiempo_ejecucion)
+                        
+                    except Exception as e:
+                        tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
+                        logger.error(f" Worker {worker_id}: Error en {nombre_impuesto} tras {tiempo_ejecucion:.2f}s: {str(e)}")
+                        return (nombre_impuesto, e, tiempo_ejecucion)
+            
+            # Crear tareas con workers
+            inicio_total = datetime.now()
+            tareas_con_workers = [
+                ejecutar_tarea_con_worker(nombre_impuesto, tarea, i + 1) 
+                for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis)
+            ]
+            
+            logger.info(f" Ejecutando {len(tareas_con_workers)} tareas con máximo 2 workers simultáneos...")
+            
+            # Esperar todos los resultados con workers limitados
+            resultados_con_workers = await asyncio.gather(*tareas_con_workers, return_exceptions=True)
+            
+            # Mapear resultados a sus nombres
+            for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis):
+                resultado_worker = resultados_con_workers[i]
+                if isinstance(resultado_worker, Exception):
+                    logger.error(f" Error crítico en worker: {resultado_worker}")
+                    resultados_analisis[nombre_impuesto] = {"error": str(resultado_worker)}
+                    continue
+                
+                # Extraer información del worker: (nombre_impuesto, resultado, tiempo)
+                _, resultado, tiempo_ejecucion = resultado_worker
+                
+                if isinstance(resultado, Exception):
+                    logger.error(f" Error en análisis de {nombre_impuesto}: {resultado}")
+                    resultados_analisis[nombre_impuesto] = {"error": str(resultado)}
+                else:
+                    resultados_analisis[nombre_impuesto] = resultado.dict() if hasattr(resultado, 'dict') else resultado
+                    logger.info(f"Análisis de {nombre_impuesto} completado con éxito")
+        except Exception as e:
+            logger.error(f" Error ejecutando análisis paralelo: {e}")
+            raise HTTPException(status_code=500, detail=
+                f"Error ejecutando análisis paralelo : {str(e)}"
+            )
            
-            # Guardar análisis paralelo
-            analisis_paralelo_data = {
-                "timestamp": datetime.now().isoformat(),
-                "procesamiento_paralelo": True,
-                "impuestos_analizados": list(resultados_analisis.keys()),
-                "resultados_analisis": resultados_analisis
-            }
-            guardar_archivo_json(analisis_paralelo_data, "analisis_paralelo")
-            
-            # =================================
-            # PASO 5A: LIQUIDACIÓN PARALELA
-            # =================================
-            
-            logger.info(f" Iniciando liquidación paralela de impuestos...")
-            
-            resultado_final = {
-                "procesamiento_paralelo": True,
-                "impuestos_procesados": impuestos_a_procesar,
-                "nit_administrativo": nit_administrativo,
-                "nombre_entidad": nombre_entidad,
-                "timestamp": datetime.now().isoformat(),
-                "version": "2.9.3",
-                "impuestos": {}  # NUEVA ESTRUCTURA PARA TODOS LOS IMPUESTOS
-            }
-            
-            # Liquidar Retefuente
-            if "retefuente" in resultados_analisis and aplica_retencion:
-                try:
-                    if es_consorcio:
-                        # Usar nuevo liquidador de consorcios con validaciones manuales
-                        liquidador_consorcio = LiquidadorConsorcios()
-                        analisis_consorcio_gemini = resultados_analisis["retefuente"]  # Solo extracción de Gemini
-
-                        # Liquidar con validaciones manuales de Python (con caché de archivos)
-                        resultado_liquidacion_consorcio = await liquidador_consorcio.liquidar_consorcio(
-                            analisis_consorcio_gemini, CONCEPTOS_RETEFUENTE, archivos_directos, cache_archivos
-                        )
-
-                        # Convertir resultado a formato de respuesta y extraer la parte retefuente
-                        resultado_dict_completo = convertir_consorcio_a_dict(resultado_liquidacion_consorcio)
-                        resultado_retefuente = resultado_dict_completo["retefuente"]  # Extraer solo la parte de retefuente
-                    else:
-                        analisis_factura = resultados_analisis["retefuente"]
-                        
-                        #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO PARALELO
-                        logger.info(" Ejecutando liquidación segura en procesamiento paralelo...")
-                        
-                        # Crear estructura compatible
-                        analisis_retefuente_data = {
-                            "timestamp": datetime.now().isoformat(),
-                            "tipo_analisis": "retefuente_paralelo",
-                            "nit_administrativo": nit_administrativo,
-                            "procesamiento_paralelo": True,
-                            "analisis": analisis_factura.dict() if hasattr(analisis_factura, 'dict') else analisis_factura
-                        }
-                        
-                        # Guardar análisis para debugging
-                        guardar_archivo_json(analisis_retefuente_data, "analisis_retefuente_paralelo")
-                        
-                        # Liquidar con función segura
-                        resultado_retefuente_dict = liquidar_retefuente_seguro(
-                            analisis_retefuente_data, nit_administrativo
-                        )
-                        
-                        #  FIX: Manejar casos válidos sin retención correctamente
-                        if resultado_retefuente_dict.get("calculo_exitoso", False) or not resultado_retefuente_dict.get("error"):
-                            # Caso exitoso O caso válido sin retención
-                           
-                            valor_retencion = resultado_retefuente_dict.get('valor_retencion', 0.0)
-                            
-
-                            if valor_retencion > 0:
-                                logger.info(f" Retefuente paralela liquidada: ${valor_retencion:,.2f}")
-                            else:
-                                logger.info(f"Retefuente procesada (no aplica retención)")
-                            
-                            # Crear objeto mock que simula ResultadoLiquidacion
-                            resultado_retefuente = type('ResultadoLiquidacion', (object,), {
-                                'puede_liquidar': resultado_retefuente_dict.get("aplica", False),
-                                'valor_retencion': resultado_retefuente_dict.get('valor_retencion', 0.0),
-                                'conceptos_aplicados': resultado_retefuente_dict.get("conceptos_aplicados", []),
-                                'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
-                                'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
-                                'mensajes_error': resultado_retefuente_dict.get("observaciones", []),
-                                'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A")
-                          
-                            })()
-                        else:
-                            # Solo registrar como error si realmente hay un error técnico
-                            error_msg = resultado_retefuente_dict.get('error', 'Error técnico en liquidación')
-                            logger.error(f" Error técnico en liquidación paralela: {error_msg}")
-                            
-                            # Crear objeto con valores por defecto para errores técnicos
-                            resultado_retefuente = type('ResultadoLiquidacion', (object,), {
-                                'puede_liquidar': False,
-                                'valor_retencion': 0.0,
-                                'conceptos_aplicados': ["Error técnico en liquidación"],
-                                'valor_base_retencion': 0.0,
-                                'fecha_calculo': datetime.now().isoformat(),
-                                'mensajes_error': [error_msg],
-                                'resumen_conceptos': 'N/A'
-                            })()
-                    
-                    #  ESTRUCTURA FINAL CONSOLIDADA
-                    if hasattr(resultado_retefuente, 'valor_retencion'):
-                        
-                        resultado_final["impuestos"]["retefuente"] = {
-                        "aplica": resultado_retefuente_dict.get("aplica", False),
-                        "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
-                        "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
-                        "mensajes_error": resultado_retefuente_dict.get("observaciones", []),
-                        "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
-                        }
-                        logger.info(f" Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0.0):,.2f}")
-
-                    else:
-                        # Es un diccionario (resultado de consorcio)
-                        resultado_final["impuestos"]["retefuente"] = resultado_retefuente
-                        logger.info(f" Retefuente liquidada: ${resultado_retefuente.get('valor_retencion', 0):,.2f}")
-                except Exception as e:
-                    logger.error(f" Error liquidando retefuente: {e}")
-                    resultado_final["impuestos"]["retefuente"] = {"error": str(e), "aplica": False}
-            
-            # Liquidar Impuestos Especiales (Estampilla + Obra Pública)
-            if "impuestos_especiales" in resultados_analisis and (aplica_estampilla or aplica_obra_publica):
-                try:
-                    from Liquidador.liquidador_estampilla import LiquidadorEstampilla
-                    liquidador_estampilla = LiquidadorEstampilla()
-                    
-                    analisis_especiales = resultados_analisis["impuestos_especiales"]
-                    resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, nit_administrativo)
-                    
-                    #  ASIGNAR A NUEVA ESTRUCTURA: Separar resultados por impuesto
-                    if aplica_estampilla and "estampilla_universidad" in resultado_estampilla:
-                        resultado_final["impuestos"]["estampilla_universidad"] = resultado_estampilla["estampilla_universidad"]
-                        logger.info(f" Estampilla liquidada: ${resultado_estampilla['estampilla_universidad'].get('valor_estampilla', 0):,.2f}")
-                    
-                    if aplica_obra_publica and "contribucion_obra_publica" in resultado_estampilla:
-                        resultado_final["impuestos"]["contribucion_obra_publica"] = resultado_estampilla["contribucion_obra_publica"]
-                        logger.info(f" Obra pública liquidada: ${resultado_estampilla['contribucion_obra_publica'].get('valor_contribucion', 0):,.2f}")
-                        
-                except Exception as e:
-                    logger.error(f" Error liquidando impuestos especiales: {e}")
-                    if aplica_estampilla:
-                        resultado_final["impuestos"]["estampilla_universidad"] = {"error": str(e), "aplica": False}
-                    if aplica_obra_publica:
-                        resultado_final["impuestos"]["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
-            
-            # Liquidar IVA y ReteIVA -  NUEVA LIQUIDACIÓN
-            if "iva_reteiva" in resultados_analisis and aplica_iva:
-                try:
-                    from Liquidador.liquidador_iva import LiquidadorIVA
-                    liquidador_iva = LiquidadorIVA()
-                    
-                    analisis_iva = resultados_analisis["iva_reteiva"]
-                    resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
-                    
-                    #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["iva_reteiva"]
-                    from Liquidador.liquidador_iva import convertir_resultado_a_dict
-                    resultado_final["impuestos"]["iva_reteiva"] = convertir_resultado_a_dict(resultado_iva_completo)
-                    
-                    logger.info(f" IVA identificado: ${resultado_iva_completo.valor_iva_identificado:,.2f}")
-                    logger.info(f" ReteIVA liquidada: ${resultado_iva_completo.valor_reteiva:,.2f}")
-                    
-                except Exception as e:
-                    logger.error(f" Error liquidando IVA/ReteIVA: {e}")
-                    resultado_final["impuestos"]["iva_reteiva"] = {"error": str(e), "aplica": False}
-            
-            # Liquidar Estampillas Generales - NUEVA LIQUIDACIÓN
-            if "estampillas_generales" in resultados_analisis:
-                try:
-                    from Liquidador.liquidador_estampillas_generales import (
-                        validar_formato_estampillas_generales, 
-                        presentar_resultado_estampillas_generales
-                    )
-                    
-                    analisis_estampillas = resultados_analisis["estampillas_generales"]
-                    
-                    # Validar formato de respuesta de Gemini
-                    validacion = validar_formato_estampillas_generales(analisis_estampillas)
-                    
-                    if validacion["formato_valido"]:
-                        logger.info(" Formato de estampillas generales válido")
-                        respuesta_validada = validacion["respuesta_validada"]
-                    else:
-                        logger.warning(f" Formato de estampillas con errores: {len(validacion['errores'])} errores")
-                        logger.warning(f"Errores: {validacion['errores']}")
-                        respuesta_validada = validacion["respuesta_validada"]  # Usar respuesta corregida
-                    
-                    # Presentar resultado final
-                    resultado_estampillas = presentar_resultado_estampillas_generales(respuesta_validada)
-                    
-                    #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
-                    resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas.get("estampillas_generales", {})
-                    
-                    # Log informativo
-                    resumen = resultado_estampillas.get("estampillas_generales", {}).get("resumen", {})
-                    completas = resumen.get("completas", 0)
-                    incompletas = resumen.get("incompletas", 0)
-                    
-                    logger.info(f" Estampillas generales procesadas: {completas} completas, {incompletas} incompletas")
-                    
-                except Exception as e:
-                    logger.error(f" Error liquidando estampillas generales: {e}")
-                    resultado_final["impuestos"]["estampillas_generales"] = {
-                        "procesamiento_exitoso": False,
-                        "error": str(e),
-                        "observaciones_generales": ["Error procesando estampillas generales"]
-                    }
-            
-            #  CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
-            valor_total_impuestos = 0.0
-            
-            # Usar nuevas rutas: resultado_final["impuestos"][nombre_impuesto]
-            if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
-                valor_total_impuestos += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
-            
-            if "estampilla_universidad" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["estampilla_universidad"], dict):
-                valor_total_impuestos += resultado_final["impuestos"]["estampilla_universidad"].get("valor_estampilla", 0)
-            
-            if "contribucion_obra_publica" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["contribucion_obra_publica"], dict):
-                valor_total_impuestos += resultado_final["impuestos"]["contribucion_obra_publica"].get("valor_contribucion", 0)
-            
-            if "iva_reteiva" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["iva_reteiva"], dict):
-                valor_total_impuestos += resultado_final["impuestos"]["iva_reteiva"].get("valor_reteiva", 0)
-            
-            resultado_final["resumen_total"] = {
-                "valor_total_impuestos": valor_total_impuestos,
-                "impuestos_liquidados": [imp for imp in impuestos_a_procesar if imp.lower().replace("_", "") in [k.lower().replace("_", "") for k in resultado_final["impuestos"].keys()]],
-                "procesamiento_exitoso": True
-            }
-            
-            logger.info(f" Total impuestos calculados: ${valor_total_impuestos:,.2f}")
+        # Guardar análisis paralelo
+        analisis_paralelo_data = {
+            "timestamp": datetime.now().isoformat(),
+            "impuestos_analizados": list(resultados_analisis.keys()),
+            "resultados_analisis": resultados_analisis
+        }
+        guardar_archivo_json(analisis_paralelo_data, "analisis_paralelo")
         
         # =================================
-        # PASO 4B: PROCESAMIENTO INDIVIDUAL (SOLO UN IMPUESTO)
+        # PASO 5: LIQUIDACIÓN DE IMPUESTOS
         # =================================
+
+        logger.info(f" Iniciando liquidación de impuestos en paralelo...")
         
-        else:
-            logger.info(f" Procesamiento individual: {impuestos_a_procesar[0]}")
-            
-            impuesto_unico = impuestos_a_procesar[0]
-            
-            #  EJECUTAR SIEMPRE ANÁLISIS DE ESTAMPILLAS GENERALES
-            # Las estampillas generales se analizan independientemente del impuesto principal
+        resultado_final = {
+            "impuestos_procesados": impuestos_a_procesar,
+            "nit_administrativo": nit_administrativo,
+            "nombre_entidad": nombre_entidad,
+            "timestamp": datetime.now().isoformat(),
+            "version": "2.9.3",
+            "impuestos": {}  # NUEVA ESTRUCTURA PARA TODOS LOS IMPUESTOS
+        }
+        
+        # Liquidar Retefuente
+        if "retefuente" in resultados_analisis and aplica_retencion:
             try:
-                logger.info(" Ejecutando análisis de estampillas generales en procesamiento individual...")
-                analisis_estampillas_generales = await clasificador.analizar_estampillas_generales(documentos_clasificados)
-                
-                # Validar y presentar resultados de estampillas generales
-                from Liquidador.liquidador_estampillas_generales import (
-                    validar_formato_estampillas_generales, 
-                    presentar_resultado_estampillas_generales
-                )
-                
-                validacion_estampillas = validar_formato_estampillas_generales(analisis_estampillas_generales)
-                
-                if validacion_estampillas["formato_valido"]:
-                    logger.info(" Formato de estampillas generales válido en procesamiento individual")
-                    respuesta_estampillas_validada = validacion_estampillas["respuesta_validada"]
-                else:
-                    logger.warning(f" Errores en formato de estampillas: {len(validacion_estampillas['errores'])}")
-                    respuesta_estampillas_validada = validacion_estampillas["respuesta_validada"]
-                
-                resultado_estampillas_individual = presentar_resultado_estampillas_generales(respuesta_estampillas_validada)
-                
-                # Log informativo
-                resumen_est = resultado_estampillas_individual.get("estampillas_generales", {}).get("resumen", {})
-                completas_est = resumen_est.get("completas", 0)
-                incompletas_est = resumen_est.get("incompletas", 0)
-                logger.info(f" Estampillas generales (individual): {completas_est} completas, {incompletas_est} incompletas")
-                
-            except Exception as e:
-                logger.error(f" Error en estampillas generales (individual): {e}")
-                resultado_estampillas_individual = {
-                    "estampillas_generales": {
-                        "procesamiento_exitoso": False,
-                        "error": str(e),
-                        "observaciones_generales": ["Error procesando estampillas generales en modo individual"]
-                    }
-                }
-            
-            if impuesto_unico == "RETENCION_FUENTE":
-                # Flujo original de retefuente mantenido
-                if es_consorcio:
-                    analisis_factura = await clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera)
-                else:
-                    #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido individual
-                    analisis_factura = await clasificador.analizar_factura(
-                        documentos_clasificados, 
-                        es_facturacion_extranjera,
-                        archivos_directos=archivos_directos
-                    )
-                
                 if es_consorcio:
                     # Usar nuevo liquidador de consorcios con validaciones manuales
                     liquidador_consorcio = LiquidadorConsorcios()
-
-                    # Crear caché de archivos para posible análisis Art 383
-                    clasificador = ProcesadorGemini()
-                    cache_archivos = await clasificador.preparar_archivos_para_workers_paralelos(archivos_directos)
+                    analisis_consorcio_gemini = resultados_analisis["retefuente"]  # Solo extracción de Gemini
 
                     # Liquidar con validaciones manuales de Python (con caché de archivos)
                     resultado_liquidacion_consorcio = await liquidador_consorcio.liquidar_consorcio(
-                        analisis_factura, CONCEPTOS_RETEFUENTE, archivos_directos, cache_archivos
+                        analisis_consorcio_gemini, CONCEPTOS_RETEFUENTE, archivos_directos, cache_archivos
                     )
 
-                    # Convertir resultado a formato de respuesta y extraer solo la parte retefuente
+                    # Convertir resultado a formato de respuesta y extraer la parte retefuente
                     resultado_dict_completo = convertir_consorcio_a_dict(resultado_liquidacion_consorcio)
-                    resultado_liquidacion = resultado_dict_completo["retefuente"]  # Extraer solo la parte de retefuente
-                    #  NUEVA ESTRUCTURA: Consorcio Individual
-                    resultado_final = {
-                        "procesamiento_paralelo": False,
-                        "impuestos_procesados": ["RETENCION_FUENTE"],
-                        "nit_administrativo": nit_administrativo,
-                        "nombre_entidad": nombre_entidad,
-                        "timestamp": datetime.now().isoformat(),
-                        "version": "2.9.3",
-                        "impuestos": {
-                            "retefuente": resultado_liquidacion,  # Viene como dict del consorcio
-                            "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                            "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
-                            "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
-                        },
-                        #  COMPATIBILIDAD: Incluir campos legacy del consorcio
-                        **{k: v for k, v in resultado_liquidacion.items() if k not in ["retefuente", "estampilla_universidad", "contribucion_obra_publica", "iva_reteiva"]}
-                    }
-                    
-                    #  CALCULAR RESUMEN TOTAL PARA CONSORCIO
-                    valor_total_consorcio = 0.0
-                    if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
-                        valor_total_consorcio += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
-                    
-                    resultado_final["resumen_total"] = {
-                        "valor_total_impuestos": valor_total_consorcio,
-                        "impuestos_liquidados": ["RETENCION_FUENTE"] if valor_total_consorcio > 0 else [],
-                        "procesamiento_exitoso": True
-                    }
+                    resultado_retefuente = resultado_dict_completo["retefuente"]  # Extraer solo la parte de retefuente
                 else:
-                    #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO INDIVIDUAL (No-consorcio)
-                    logger.info(" Ejecutando liquidación segura individual...")
-                    liquidador_retencion = LiquidadorRetencion()
+                    analisis_factura = resultados_analisis["retefuente"]
+                    
+                    #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO PARALELO
+                    logger.info(" Ejecutando liquidación segura en procesamiento paralelo...")
                     
                     # Crear estructura compatible
                     analisis_retefuente_data = {
                         "timestamp": datetime.now().isoformat(),
-                        "tipo_analisis": "retefuente_individual",
+                        "tipo_analisis": "retefuente_paralelo",
                         "nit_administrativo": nit_administrativo,
-                        "procesamiento_paralelo": False,
                         "analisis": analisis_factura.dict() if hasattr(analisis_factura, 'dict') else analisis_factura
                     }
                     
                     # Guardar análisis para debugging
-                    guardar_archivo_json(analisis_retefuente_data, "analisis_retefuente_individual")
+                    guardar_archivo_json(analisis_retefuente_data, "analisis_retefuente_paralelo")
                     
                     # Liquidar con función segura
                     resultado_retefuente_dict = liquidar_retefuente_seguro(
@@ -1423,157 +1124,202 @@ async def procesar_facturas_integrado(
                     #  FIX: Manejar casos válidos sin retención correctamente
                     if resultado_retefuente_dict.get("calculo_exitoso", False) or not resultado_retefuente_dict.get("error"):
                         # Caso exitoso O caso válido sin retención
+                       
                         valor_retencion = resultado_retefuente_dict.get('valor_retencion', 0.0)
-                        concepto = resultado_retefuente_dict.get("concepto", "")
                         
+
                         if valor_retencion > 0:
-                            logger.info(f" Retefuente individual liquidada: ${valor_retencion:,.2f}")
+                            logger.info(f" Retefuente paralela liquidada: ${valor_retencion:,.2f}")
                         else:
-                            logger.info(f" Retefuente procesada (no aplica retención): {concepto}")
+                            logger.info(f"Retefuente procesada (no aplica retención)")
                         
-                        # Crear objeto que simula ResultadoLiquidacion
-                        resultado_liquidacion = type('ResultadoLiquidacion', (object,), {
+                        # Crear objeto mock que simula ResultadoLiquidacion
+                        resultado_retefuente = type('ResultadoLiquidacion', (object,), {
                             'puede_liquidar': resultado_retefuente_dict.get("aplica", False),
-                            'valor_retencion': valor_retencion,
-                            'concepto_aplicado': concepto,
-                            'tarifa_aplicada': resultado_retefuente_dict.get("tarifa_aplicada", 0.0),
+                            'valor_retencion': resultado_retefuente_dict.get('valor_retencion', 0.0),
+                            'conceptos_aplicados': resultado_retefuente_dict.get("conceptos_aplicados", []),
                             'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
                             'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
-                            'mensajes_error': resultado_retefuente_dict.get("observaciones", [])
+                            'mensajes_error': resultado_retefuente_dict.get("observaciones", []),
+                            'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A")
+                      
                         })()
                     else:
                         # Solo registrar como error si realmente hay un error técnico
                         error_msg = resultado_retefuente_dict.get('error', 'Error técnico en liquidación')
-                        logger.error(f" Error técnico en liquidación individual: {error_msg}")
+                        logger.error(f" Error técnico en liquidación paralela: {error_msg}")
                         
                         # Crear objeto con valores por defecto para errores técnicos
-                        resultado_liquidacion = type('ResultadoLiquidacion', (object,), {
+                        resultado_retefuente = type('ResultadoLiquidacion', (object,), {
                             'puede_liquidar': False,
                             'valor_retencion': 0.0,
-                            'concepto_aplicado': "Error técnico en liquidación",
-                            'tarifa_aplicada': 0.0,
+                            'conceptos_aplicados': ["Error técnico en liquidación"],
                             'valor_base_retencion': 0.0,
                             'fecha_calculo': datetime.now().isoformat(),
-                            'mensajes_error': [error_msg]
+                            'mensajes_error': [error_msg],
+                            'resumen_conceptos': 'N/A'
                         })()
+                
+                #  ESTRUCTURA FINAL CONSOLIDADA
+                if hasattr(resultado_retefuente, 'valor_retencion'):
                     
-                    #  🆕 NUEVA ESTRUCTURA: Usar directamente el diccionario con nueva estructura
-                    resultado_final = {
-                        "procesamiento_paralelo": False,
-                        "impuestos_procesados": ["RETENCION_FUENTE"],
-                        "nit_administrativo": nit_administrativo,
-                        "nombre_entidad": nombre_entidad,
-                        "timestamp": datetime.now().isoformat(),
-                        "version": "2.9.3",
-                        "impuestos": {
-                            "retefuente": {
-                                # 🆕 USAR DIRECTAMENTE EL DICCIONARIO CON NUEVA ESTRUCTURA
-                                "aplica": resultado_retefuente_dict.get("aplica", False),
-                                "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
-                                "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
-                                "fecha_calculo": resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
-                                "mensajes_error": resultado_retefuente_dict.get("observaciones", []),
-                                # 🆕 NUEVOS CAMPOS CON ESTRUCTURA MEJORADA:
-                                "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
-                                "resumen_conceptos": resultado_retefuente_dict.get("resumen_conceptos", "N/A"),
-                                # 🗑️ CAMPOS DEPRECATED (mantenidos por compatibilidad):
-                                "concepto": resultado_retefuente_dict.get("concepto", "N/A"),
-                                "tarifa_retencion": resultado_retefuente_dict.get("tarifa_aplicada", 0.0)
-                            },
-                            "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                            "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
-                            "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
-                        },
-                        #  CAMPOS LEGACY (compatibilidad temporal) - 🆕 TAMBIÉN CON NUEVA ESTRUCTURA
-                        "aplica_retencion": resultado_retefuente_dict.get("aplica", False),
-                        "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
-                        "concepto": resultado_retefuente_dict.get("concepto", "N/A"),
-                        "tarifa_retencion": resultado_retefuente_dict.get("tarifa_aplicada", 0.0),
-                        # 🆕 NUEVOS CAMPOS LEGACY TAMBIÉN DISPONIBLES:
-                        "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
-                        "resumen_conceptos": resultado_retefuente_dict.get("resumen_conceptos", "N/A")
+                    resultado_final["impuestos"]["retefuente"] = {
+                    "aplica": resultado_retefuente_dict.get("aplica", False),
+                    "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
+                    "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
+                    "mensajes_error": resultado_retefuente_dict.get("observaciones", []),
+                    "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
                     }
-                    
-                    #  AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
-                    resultado_final.update(resultado_estampillas_individual)
-                    
-                    #  CALCULAR RESUMEN TOTAL PARA PROCESAMIENTO INDIVIDUAL
-                    valor_total_impuestos_individual = 0.0
-                    if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
-                        valor_total_impuestos_individual += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
-                    
-                    resultado_final["resumen_total"] = {
-                        "valor_total_impuestos": valor_total_impuestos_individual,
-                        "impuestos_liquidados": [imp for imp in resultado_final["impuestos_procesados"] if resultado_final["impuestos"].get(imp.lower().replace("_", ""), {}).get("aplica", False)],
-                        "procesamiento_exitoso": True
-                    }
-            
-            elif impuesto_unico == "IVA_RETEIVA":
-                # Procesamiento individual de IVA -  NUEVO FLUJO
-                analisis_iva = await clasificador.analizar_iva(documentos_clasificados)
-                
-                from Liquidador.liquidador_iva import LiquidadorIVA, convertir_resultado_a_dict
-                liquidador_iva = LiquidadorIVA()
-                resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
-                
-                #  NUEVA ESTRUCTURA: IVA Individual
-                resultado_final = {
-                    "procesamiento_paralelo": False,
-                    "impuestos_procesados": ["IVA_RETEIVA"],
-                    "nit_administrativo": nit_administrativo,
-                    "nombre_entidad": nombre_entidad,
-                    "timestamp": datetime.now().isoformat(),
-                    "version": "2.9.3",
-                    "impuestos": {
-                        "iva_reteiva": convertir_resultado_a_dict(resultado_iva_completo),
-                        "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
-                        "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                        "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"}
-                    }
-                }
-                
-                #  AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
-                resultado_final.update(resultado_estampillas_individual)
-                
-                #  CALCULAR RESUMEN TOTAL PARA OTROS IMPUESTOS
-                valor_total_otros = 0.0
-                if "estampilla_universidad" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["estampilla_universidad"], dict):
-                    valor_total_otros += resultado_final["impuestos"]["estampilla_universidad"].get("valor_estampilla", 0)
-                if "contribucion_obra_publica" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["contribucion_obra_publica"], dict):
-                    valor_total_otros += resultado_final["impuestos"]["contribucion_obra_publica"].get("valor_contribucion", 0)
-                
-                resultado_final["resumen_total"] = {
-                    "valor_total_impuestos": valor_total_otros,
-                    "impuestos_liquidados": [impuesto_unico] if valor_total_otros > 0 else [],
-                    "procesamiento_exitoso": True
-                }
-            
-            else:
-                # Otros impuestos individuales (estampilla, obra pública)
-                analisis_especiales = await clasificador.analizar_estampilla(documentos_clasificados)
-                
+                    logger.info(f" Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0.0):,.2f}")
+
+                else:
+                    # Es un diccionario (resultado de consorcio)
+                    resultado_final["impuestos"]["retefuente"] = resultado_retefuente
+                    logger.info(f" Retefuente liquidada: ${resultado_retefuente.get('valor_retencion', 0):,.2f}")
+            except Exception as e:
+                logger.error(f" Error liquidando retefuente: {e}")
+                resultado_final["impuestos"]["retefuente"] = {"error": str(e), "aplica": False}
+
+        # Liquidar Impuestos Especiales (Estampilla Pro Universidad Nacional + Obra Pública)
+        if "impuestos_especiales" in resultados_analisis and (aplica_estampilla or aplica_obra_publica):
+            try:
                 from Liquidador.liquidador_estampilla import LiquidadorEstampilla
                 liquidador_estampilla = LiquidadorEstampilla()
-                resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, nit_administrativo)
+
+                analisis_especiales = resultados_analisis["impuestos_especiales"]
+                resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, codigo_del_negocio, nombre_negocio)
                 
-                #  NUEVA ESTRUCTURA: Otros impuestos individuales
-                resultado_final = {
-                    "procesamiento_paralelo": False,
-                    "impuestos_procesados": [impuesto_unico],
-                    "nit_administrativo": nit_administrativo,
-                    "nombre_entidad": nombre_entidad,
-                    "timestamp": datetime.now().isoformat(),
-                    "version": "2.9.3",
-                    "impuestos": {
-                        **{k: v for k, v in resultado_estampilla.items() if k in ["estampilla_universidad", "contribucion_obra_publica"]},
-                        "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
-                        "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
-                    }
-                }
+                #  ASIGNAR A NUEVA ESTRUCTURA: Separar resultados por impuesto
+                if aplica_estampilla and "estampilla_universidad" in resultado_estampilla:
+                    resultado_final["impuestos"]["estampilla_universidad"] = resultado_estampilla["estampilla_universidad"]
+                    logger.info(f" Estampilla liquidada: ${resultado_estampilla['estampilla_universidad'].get('valor_estampilla', 0):,.2f}")
                 
-                #  AGREGAR ESTAMPILLAS GENERALES AL RESULTADO FINAL
-                resultado_final.update(resultado_estampillas_individual)
+                if aplica_obra_publica and "contribucion_obra_publica" in resultado_estampilla:
+                    resultado_final["impuestos"]["contribucion_obra_publica"] = resultado_estampilla["contribucion_obra_publica"]
+                    logger.info(f" Obra pública liquidada: ${resultado_estampilla['contribucion_obra_publica'].get('valor_contribucion', 0):,.2f}")
+                    
+            except Exception as e:
+                logger.error(f" Error liquidando impuestos especiales: {e}")
+                if aplica_estampilla:
+                    resultado_final["impuestos"]["estampilla_universidad"] = {"error": str(e), "aplica": False}
+                if aplica_obra_publica:
+                    resultado_final["impuestos"]["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
         
+        # Liquidar IVA y ReteIVA -  NUEVA LIQUIDACIÓN
+        if "iva_reteiva" in resultados_analisis and aplica_iva:
+            try:
+                from Liquidador.liquidador_iva import LiquidadorIVA
+                liquidador_iva = LiquidadorIVA()
+                
+                analisis_iva = resultados_analisis["iva_reteiva"]
+                resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
+                
+                #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["iva_reteiva"]
+                from Liquidador.liquidador_iva import convertir_resultado_a_dict
+                resultado_final["impuestos"]["iva_reteiva"] = convertir_resultado_a_dict(resultado_iva_completo)
+                
+                logger.info(f" IVA identificado: ${resultado_iva_completo.valor_iva_identificado:,.2f}")
+                logger.info(f" ReteIVA liquidada: ${resultado_iva_completo.valor_reteiva:,.2f}")
+                
+            except Exception as e:
+                logger.error(f" Error liquidando IVA/ReteIVA: {e}")
+                resultado_final["impuestos"]["iva_reteiva"] = {"error": str(e), "aplica": False}
+        
+        # Liquidar Estampillas Generales - NUEVA LIQUIDACIÓN
+        if "estampillas_generales" in resultados_analisis:
+            try:
+                from Liquidador.liquidador_estampillas_generales import (
+                    validar_formato_estampillas_generales, 
+                    presentar_resultado_estampillas_generales
+                )
+                
+                analisis_estampillas = resultados_analisis["estampillas_generales"]
+                
+                # Validar formato de respuesta de Gemini
+                validacion = validar_formato_estampillas_generales(analisis_estampillas)
+                
+                if validacion["formato_valido"]:
+                    logger.info(" Formato de estampillas generales válido")
+                    respuesta_validada = validacion["respuesta_validada"]
+                else:
+                    logger.warning(f" Formato de estampillas con errores: {len(validacion['errores'])} errores")
+                    logger.warning(f"Errores: {validacion['errores']}")
+                    respuesta_validada = validacion["respuesta_validada"]  # Usar respuesta corregida
+                
+                # Presentar resultado final
+                resultado_estampillas = presentar_resultado_estampillas_generales(respuesta_validada)
+
+                #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
+                resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas.get("estampillas_generales", {})
+
+                # Log informativo - calcular contadores desde las estampillas
+                estampillas_dict = resultado_estampillas.get("estampillas_generales", {}).get("estampillas", {})
+                completas = sum(1 for e in estampillas_dict.values() if e.get("estado") == "preliquidado")
+                incompletas = sum(1 for e in estampillas_dict.values() if e.get("estado") == "preliquidacion_sin_finalizar")
+
+                logger.info(f" Estampillas generales procesadas: {completas} completas, {incompletas} incompletas")
+                
+            except Exception as e:
+                logger.error(f" Error liquidando estampillas generales: {e}")
+                resultado_final["impuestos"]["estampillas_generales"] = {
+                    "procesamiento_exitoso": False,
+                    "error": str(e),
+                    "observaciones_generales": ["Error procesando estampillas generales"]
+                }
+
+        # =================================
+        # COMPLETAR IMPUESTOS QUE NO APLICAN
+        # =================================
+
+        # Agregar respuesta para impuestos que no aplican según código de negocio
+        if not aplica_estampilla and "estampilla_universidad" not in resultado_final["impuestos"]:
+            resultado_final["impuestos"]["estampilla_universidad"] = {
+                "aplica": False,
+                "estado": "No aplica el impuesto",
+                "razon": f"El negocio {nombre_negocio} no aplica este impuesto"
+            }
+            logger.info(f" Estampilla Universidad: No aplica para {nombre_negocio}")
+
+        if not aplica_obra_publica and "contribucion_obra_publica" not in resultado_final["impuestos"]:
+            resultado_final["impuestos"]["contribucion_obra_publica"] = {
+                "aplica": False,
+                "estado": "No aplica el impuesto",
+                "razon": f"El negocio {nombre_negocio} no aplica este impuesto"
+            }
+            logger.info(f" Contribución Obra Pública: No aplica para {nombre_negocio}")
+
+        if not aplica_iva and "iva_reteiva" not in resultado_final["impuestos"]:
+            resultado_final["impuestos"]["iva_reteiva"] = {
+                "aplica": False,
+                "estado": "No aplica el impuesto",
+                "razon": f"El NIT {nit_administrativo} no está configurado para IVA/ReteIVA"
+            }
+            logger.info(f" IVA/ReteIVA: No aplica para NIT {nit_administrativo}")
+
+        #  CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
+        valor_total_impuestos = 0.0
+        
+        # Usar nuevas rutas: resultado_final["impuestos"][nombre_impuesto]
+        if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
+        
+        if "estampilla_universidad" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["estampilla_universidad"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["estampilla_universidad"].get("valor_estampilla", 0)
+        
+        if "contribucion_obra_publica" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["contribucion_obra_publica"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["contribucion_obra_publica"].get("valor_contribucion", 0)
+        
+        if "iva_reteiva" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["iva_reteiva"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["iva_reteiva"].get("valor_reteiva", 0)
+        
+        resultado_final["resumen_total"] = {
+            "valor_total_impuestos": valor_total_impuestos,
+            "impuestos_liquidados": [imp for imp in impuestos_a_procesar if imp.lower().replace("_", "") in [k.lower().replace("_", "") for k in resultado_final["impuestos"].keys()]],
+            "procesamiento_exitoso": True
+        }
+        
+        logger.info(f" Total impuestos calculados: ${valor_total_impuestos:,.2f}")
+
         # =================================
         # PASO 6: CONSOLIDACIÓN Y GUARDADO FINAL
         # =================================
@@ -1975,7 +1721,6 @@ async def diagnostico_completo():
                     config_status["deteccion_automatica"] = {
                         "status": "OK",
                         "impuestos_detectados": deteccion_auto['impuestos_aplicables'],
-                        "procesamiento_paralelo": deteccion_auto['procesamiento_paralelo'],
                         "mensaje": f"Detección automática funcionando: {len(deteccion_auto['impuestos_aplicables'])} impuestos detectados"
                     }
                 except Exception as e:

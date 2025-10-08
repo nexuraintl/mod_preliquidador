@@ -882,7 +882,7 @@ datos_negocio = resultado.get('data') if resultado.get('success') else None
 - 🏢 **Contribución a Obra Pública 5%** - Tarifa fija para contratos de obra
 - 💰 **IVA y ReteIVA** - Identificación de IVA y cálculo de retención
 - 🆕 **6 Estampillas Generales** - Identificación de estampillas (Procultura, Bienestar, Adulto Mayor, Universidad Pedagógica, Francisco José de Caldas, Prodeporte)
-- ⚡ **Procesamiento Paralelo** - Múltiples impuestos simultáneamente
+- ⚡ **Procesamiento Paralelo Obligatorio** - Todos los NITs aplican múltiples impuestos simultáneamente (v3.2.2+)
 
 ### 🧠 **Inteligencia Artificial**
 - **Google Gemini AI** para análisis de documentos

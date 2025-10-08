@@ -561,25 +561,27 @@ def obtener_constantes_articulo_383() -> Dict[str, Any]:
 # CONFIGURACIÓN IMPUESTOS ESPECIALES INTEGRADOS
 # ===============================
 
-# IMPORTANTE: Desde 2025, estampilla pro universidad nacional y contribución 
-# a obra pública aplican para los MISMOS NITs administrativos
+# IMPORTANTE: Desde 2025, estampilla pro universidad nacional y contribución
+# a obra pública aplican para los MISMOS códigos de negocio
 
-# NITs válidos para AMBOS impuestos (estampilla + obra pública)
-NITS_ESTAMPILLA_UNIVERSIDAD = {
-    "8001781488": "Fiduciaria Colombiana de Comercio Exterior S.A",
-    "830.054.060-5": "Fideicomisos Sociedad Fiduciaria Fiducoldex",
-    "900.649.119-9": "Fondo Nacional del Turismo Fontur de la fiduciaria"
+# Códigos de negocio válidos para AMBOS impuestos (estampilla + obra pública)
+# Estos códigos identifican a los negocios que aplican estos dos impuestos
+CODIGOS_NEGOCIO_ESTAMPILLA = {
+    69164: "PATRIMONIO AUTONOMO INNPULSA COLOMBIA",
+    69166: "PATRIMONIO AUTONOMO COLOMBIA PRODUCTIVA",
+    99664: "PATRIMONIO AUTÓNOMO FONDO MUJER EMPRENDE"
 }
 
 # Alias para compatibilidad hacia atrás - MISMO contenido
-NITS_CONTRIBUCION_OBRA_PUBLICA = NITS_ESTAMPILLA_UNIVERSIDAD.copy()
+CODIGOS_NEGOCIO_OBRA_PUBLICA = CODIGOS_NEGOCIO_ESTAMPILLA.copy()
 
-# Terceros que administran recursos públicos (COMPARTIDO para ambos impuestos)
+# DEPRECATED: Mantener por compatibilidad legacy (NO USAR en nuevo código)
+NITS_ESTAMPILLA_UNIVERSIDAD = {}
+NITS_CONTRIBUCION_OBRA_PUBLICA = {}
 TERCEROS_RECURSOS_PUBLICOS = {
     "PATRIMONIO AUTONOMO INNPULSA COLOMBIA": True,
     "PATRIMONIO AUTONOMO COLOMBIA PRODUCTIVA": True,
     "PATRIMONIO AUTÓNOMO FONDO MUJER EMPRENDE": True
-    # 💡 Expandible: Agregar más terceros aquí en el futuro
 }
 
 # Objetos de contrato que aplican para estampilla universidad
@@ -633,9 +635,38 @@ RANGOS_ESTAMPILLA_UNIVERSIDAD = [
 # FUNCIONES ESTAMPILLA UNIVERSIDAD
 # ===============================
 
+def codigo_negocio_aplica_estampilla_universidad(codigo_negocio: int) -> bool:
+    """
+    Verifica si un código de negocio aplica para estampilla pro universidad nacional.
+
+    SRP: Solo valida si el código está en la lista de negocios válidos
+
+    Args:
+        codigo_negocio: Código único del negocio
+
+    Returns:
+        bool: True si el código aplica para estampilla universidad
+    """
+    return codigo_negocio in CODIGOS_NEGOCIO_ESTAMPILLA
+
+def codigo_negocio_aplica_obra_publica(codigo_negocio: int) -> bool:
+    """
+    Verifica si un código de negocio aplica para contribución a obra pública.
+
+    SRP: Solo valida si el código está en la lista de negocios válidos
+
+    Args:
+        codigo_negocio: Código único del negocio
+
+    Returns:
+        bool: True si el código aplica para contribución a obra pública
+    """
+    return codigo_negocio in CODIGOS_NEGOCIO_OBRA_PUBLICA
+
+# DEPRECATED: Mantener por compatibilidad legacy
 def nit_aplica_estampilla_universidad(nit: str) -> bool:
-    """Verifica si un NIT aplica para estampilla pro universidad nacional"""
-    return nit in NITS_ESTAMPILLA_UNIVERSIDAD
+    """DEPRECATED: Usar codigo_negocio_aplica_estampilla_universidad en su lugar"""
+    return False  # Ya no se valida por NIT
 
 def es_tercero_recursos_publicos(nombre_tercero: str) -> bool:
     """Verifica si un tercero administra recursos públicos"""
@@ -666,9 +697,16 @@ def obtener_tarifa_estampilla_universidad(valor_contrato_pesos: float) -> Dict[s
     }
 
 def obtener_configuracion_estampilla_universidad() -> Dict[str, Any]:
-    """Obtiene toda la configuración de estampilla para uso en prompts"""
+    """
+    Obtiene toda la configuración de estampilla para uso en prompts.
+
+    SRP: Solo retorna configuración consolidada
+
+    Returns:
+        Dict con configuración completa de estampilla universidad
+    """
     return {
-        "nits_validos": NITS_ESTAMPILLA_UNIVERSIDAD,
+        "codigos_negocio_validos": CODIGOS_NEGOCIO_ESTAMPILLA,
         "terceros_recursos_publicos": list(TERCEROS_RECURSOS_PUBLICOS.keys()),
         "objetos_contrato": OBJETOS_CONTRATO_ESTAMPILLA,
         "rangos_uvt": RANGOS_ESTAMPILLA_UNIVERSIDAD,
@@ -679,9 +717,10 @@ def obtener_configuracion_estampilla_universidad() -> Dict[str, Any]:
 # FUNCIONES CONTRIBUCIÓN A OBRA PÚBLICA
 # ===============================
 
+# DEPRECATED: Mantener por compatibilidad legacy
 def nit_aplica_contribucion_obra_publica(nit: str) -> bool:
-    """Verifica si un NIT aplica para contribución a obra pública del 5%"""
-    return nit in NITS_CONTRIBUCION_OBRA_PUBLICA
+    """DEPRECATED: Usar codigo_negocio_aplica_obra_publica en su lugar"""
+    return False  # Ya no se valida por NIT
 
 def calcular_contribucion_obra_publica(valor_factura_sin_iva: float, porcentaje_participacion: float = 100.0) -> float:
     """Calcula la contribución a obra pública del 5%
@@ -698,9 +737,16 @@ def calcular_contribucion_obra_publica(valor_factura_sin_iva: float, porcentaje_
     return valor_factura_sin_iva * tarifa_fija * participacion_decimal
 
 def obtener_configuracion_obra_publica() -> Dict[str, Any]:
-    """Obtiene toda la configuración de obra pública para uso en prompts"""
+    """
+    Obtiene toda la configuración de obra pública para uso en prompts.
+
+    SRP: Solo retorna configuración consolidada
+
+    Returns:
+        Dict con configuración completa de contribución a obra pública
+    """
     return {
-        "nits_validos": NITS_CONTRIBUCION_OBRA_PUBLICA,
+        "codigos_negocio_validos": CODIGOS_NEGOCIO_OBRA_PUBLICA,
         "terceros_recursos_publicos": list(TERCEROS_RECURSOS_PUBLICOS.keys()),
         "objetos_contrato": OBJETOS_CONTRATO_OBRA_PUBLICA,
         "tarifa_fija": 0.05,  # 5%
@@ -711,20 +757,26 @@ def obtener_configuracion_obra_publica() -> Dict[str, Any]:
 # FUNCIÓN INTEGRADA DE DETECCIÓN AUTOMÁTICA
 # ===============================
 
-def detectar_impuestos_aplicables(nit: str) -> Dict[str, Any]:
-    """Detecta automáticamente qué impuestos aplican según el NIT
-    
+def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio: str = None) -> Dict[str, Any]:
+    """
+    Detecta automáticamente qué impuestos aplican según el código de negocio.
+
+    SRP: Solo detecta y estructura información de impuestos aplicables
+
     Args:
-        nit: NIT administrativo
-        
+        codigo_negocio: Código único del negocio
+        nombre_negocio: Nombre del negocio (opcional, para logging)
+
     Returns:
         Dict con información de qué impuestos aplican
     """
-    aplica_estampilla = nit_aplica_estampilla_universidad(nit)
-    aplica_obra_publica = nit_aplica_contribucion_obra_publica(nit)
-    
+    aplica_estampilla = codigo_negocio_aplica_estampilla_universidad(codigo_negocio)
+    aplica_obra_publica = codigo_negocio_aplica_obra_publica(codigo_negocio)
+    nombre_registrado = CODIGOS_NEGOCIO_ESTAMPILLA.get(codigo_negocio, nombre_negocio or "Desconocido")
+
     return {
-        "nit": nit,
+        "codigo_negocio": codigo_negocio,
+        "nombre_negocio": nombre_registrado,
         "aplica_estampilla_universidad": aplica_estampilla,
         "aplica_contribucion_obra_publica": aplica_obra_publica,
         "impuestos_aplicables": [
@@ -734,8 +786,21 @@ def detectar_impuestos_aplicables(nit: str) -> Dict[str, Any]:
             ] if aplica
         ],
         "procesamiento_paralelo": aplica_estampilla and aplica_obra_publica,
-        "nombre_entidad_estampilla": NITS_ESTAMPILLA_UNIVERSIDAD.get(nit),
-        "nombre_entidad_obra_publica": NITS_CONTRIBUCION_OBRA_PUBLICA.get(nit)
+        "nombre_entidad_estampilla": nombre_registrado if aplica_estampilla else None,
+        "nombre_entidad_obra_publica": nombre_registrado if aplica_obra_publica else None
+    }
+
+# DEPRECATED: Mantener por compatibilidad legacy
+def detectar_impuestos_aplicables(nit: str) -> Dict[str, Any]:
+    """DEPRECATED: Usar detectar_impuestos_aplicables_por_codigo en su lugar"""
+    return {
+        "nit": nit,
+        "aplica_estampilla_universidad": False,
+        "aplica_contribucion_obra_publica": False,
+        "impuestos_aplicables": [],
+        "procesamiento_paralelo": False,
+        "nombre_entidad_estampilla": None,
+        "nombre_entidad_obra_publica": None
     }
 
 def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:

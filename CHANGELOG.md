@@ -1,5 +1,253 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.0.0] - 2025-10-07
+
+### 🏗️ **REFACTORING ARQUITECTÓNICO MAYOR - SEPARACIÓN IA vs VALIDACIONES MANUALES**
+
+#### **🔧 CORRECCIÓN ESTADOS - Distinción NO_APLICA vs NO_IDENTIFICADO**
+
+**PROBLEMA IDENTIFICADO**: Los estados finales no distinguían correctamente entre:
+- Objeto identificado pero no elegible (`NO_APLICA`)
+- Objeto no pudo ser identificado (`NO_IDENTIFICADO`)
+
+**SOLUCIÓN IMPLEMENTADA**:
+- ✅ **NO_APLICA** → Estado: `"No aplica el impuesto"` + Log INFO
+  - Ejemplo: "Servicios de operador logístico" → Identificado pero no es obra/interventoría
+- ✅ **NO_IDENTIFICADO** → Estado: `"Preliquidacion sin finalizar"` + Log WARNING + mensajes_error
+  - Ejemplo: No se encontró descripción del objeto en documentos
+- ✅ **Otros casos desconocidos** → Estado: `"Preliquidacion sin finalizar"` (por seguridad)
+
+**FUNCIONES ACTUALIZADAS**:
+- `_liquidar_obra_publica_manual()`: Manejo diferenciado de estados
+- `_liquidar_estampilla_manual()`: Manejo diferenciado de estados
+- Logging apropiado: INFO para NO_APLICA, WARNING para NO_IDENTIFICADO
+
+#### **NUEVA ARQUITECTURA v3.0: GEMINI (EXTRACCIÓN) + PYTHON (VALIDACIONES)**
+
+**PRINCIPIO FUNDAMENTAL**: Separación clara de responsabilidades entre IA y código Python
+
+##### **🧠 RESPONSABILIDADES DE GEMINI (SOLO EXTRACCIÓN)**
+- ✅ **SOLO IDENTIFICA Y EXTRAE**: Datos de documentos sin procesamiento
+- ✅ **Extraer objeto del contrato**: Descripción textual exacta del objeto/concepto
+- ✅ **Extraer valores monetarios**:
+  - `factura_sin_iva`: Valor de factura sin IVA
+  - `contrato_total`: Valor total del contrato (SIN adiciones)
+  - `adiciones`: Valor total de adiciones/otrosís
+- ✅ **Clasificar tipo de contrato**: CONTRATO_OBRA | INTERVENTORIA | SERVICIOS_CONEXOS | NO_APLICA | NO_IDENTIFICADO
+- ❌ **NO CALCULA impuestos**
+- ❌ **NO DETERMINA** si aplican impuestos
+- ❌ **NO HACE** validaciones de lógica de negocio
+
+##### **🐍 RESPONSABILIDADES DE PYTHON (VALIDACIONES Y CÁLCULOS)**
+
+**CONTRIBUCIÓN A OBRA PÚBLICA 5%**:
+1. ✅ Validar que objeto fue identificado y clasificado
+2. ✅ Validar que `tipo_contrato == CONTRATO_OBRA` (solo este tipo aplica)
+3. ✅ Validar que `valor_factura_sin_iva > 0`
+4. ✅ **Calcular**: `contribucion = valor_factura_sin_iva * 0.05`
+5. ✅ Asignar estados: "Preliquidado" | "No aplica el impuesto" | "Preliquidacion sin finalizar"
+
+**ESTAMPILLA PRO UNIVERSIDAD NACIONAL**:
+1. ✅ Validar que objeto fue identificado y clasificado
+2. ✅ Validar que `tipo_contrato` en [CONTRATO_OBRA, INTERVENTORIA, SERVICIOS_CONEXOS]
+3. ✅ **Validar** que `contrato_total > 0` (SIN adiciones) → Si no, estado "Preliquidacion sin finalizar"
+4. ✅ **Sumar**: `valor_contrato_final = contrato_total + adiciones`
+5. ✅ **Calcular UVT**: `valor_uvt = valor_contrato_final / UVT_2025`
+6. ✅ **Buscar rango UVT** en tabla `RANGOS_ESTAMPILLA_UNIVERSIDAD`
+7. ✅ **Calcular**: `estampilla = valor_factura_sin_iva * tarifa_rango`
+8. ✅ Asignar estados: "Preliquidado" | "No aplica el impuesto" | "Preliquidacion sin finalizar"
+
+#### **📦 CAMBIOS EN LIQUIDADOR_ESTAMPILLA.PY**
+
+##### **FUNCIONES NUEVAS (VALIDACIONES MANUALES v3.0)**
+- ✅ **`_validar_objeto_contrato_identificado()`**: Valida que Gemini identificó y clasificó el objeto
+  - SRP: Solo valida clasificación del objeto
+  - Retorna: `(es_valido, tipo_contrato, mensaje_error)`
+
+- ✅ **`_validar_valor_factura_sin_iva()`**: Valida que valor de factura > 0
+  - SRP: Solo valida valor de factura
+  - Retorna: `(es_valido, valor, mensaje_error)`
+
+- ✅ **`_validar_valor_contrato_total()`**: Valida que valor del contrato > 0 (sin adiciones)
+  - SRP: Solo valida valor del contrato base
+  - Retorna: `(es_valido, valor, mensaje_error)`
+
+- ✅ **`_calcular_contrato_mas_adiciones()`**: Suma contrato_total + adiciones
+  - SRP: Solo suma valores
+  - DRY: Evita repetir esta lógica en múltiples lugares
+
+- ✅ **`_liquidar_obra_publica_manual()`**: Liquida Obra Pública con validaciones Python
+  - SRP: Solo liquida obra pública
+  - Implementa TODAS las validaciones manuales
+  - Retorna formato JSON solicitado
+
+- ✅ **`_liquidar_estampilla_manual()`**: Liquida Estampilla Universidad con validaciones Python
+  - SRP: Solo liquida estampilla universidad
+  - Implementa TODAS las validaciones manuales incluyendo verificación `contrato_total > 0`
+  - Retorna formato JSON solicitado
+
+##### **FUNCIONES REFACTORIZADAS**
+- ✅ **`liquidar_integrado()`**: COMPLETAMENTE REESCRITA
+  - Procesa nueva estructura JSON de Gemini:
+    ```json
+    {
+      "extraccion": {
+        "objeto_contrato": {...},
+        "valores": {
+          "factura_sin_iva": X,
+          "contrato_total": Y,
+          "adiciones": Z
+        }
+      },
+      "clasificacion": {
+        "tipo_contrato": "CONTRATO_OBRA|...",
+        ...
+      }
+    }
+    ```
+  - Llama funciones de validación manual para cada impuesto
+  - Mantiene estructura de respuesta consistente
+
+##### **FUNCIONES ELIMINADAS**
+- ❌ **Eliminada lógica antigua** que procesaba estructura JSON diferente de Gemini
+- ❌ **Eliminado código** que mezclaba extracción de Gemini con validaciones Python
+- ❌ **Eliminadas dependencias** de modelos Pydantic complejos (TerceroContrato, ObjetoContratoIdentificado, AnalisisContrato)
+
+#### **📊 FORMATO DE RESPUESTA JSON (ACTUALIZADO)**
+
+**CONTRIBUCIÓN A OBRA PÚBLICA**:
+```json
+{
+  "aplica": true,
+  "estado": "Preliquidado",
+  "valor_contribucion": 1860000.0,
+  "tarifa_aplicada": 0.05,
+  "valor_factura_sin_iva": 37200000.0,
+  "mensajes_error": []
+}
+```
+
+**Cuando NO aplica**:
+```json
+{
+  "aplica": false,
+  "estado": "No aplica el impuesto",
+  "razon": "Solo contratos de obra aplican contribución. Tipo detectado: INTERVENTORIA"
+}
+```
+
+**ESTAMPILLA UNIVERSIDAD NACIONAL**:
+```json
+{
+  "aplica": true,
+  "estado": "Preliquidado",
+  "valor_estampilla": 186000.0,
+  "tarifa_aplicada": 0.005,
+  "rango_uvt": "0-20000 UVT (0.5%)",
+  "valor_contrato_pesos": 37200000.0,
+  "valor_contrato_uvt": 790.45,
+  "mensajes_error": []
+}
+```
+
+**Cuando NO aplica**:
+```json
+{
+  "aplica": false,
+  "estado": "No aplica el impuesto",
+  "razon": "Tipo de contrato 'NO_APLICA' no aplica para estampilla"
+}
+```
+
+**Cuando falta información**:
+```json
+{
+  "aplica": false,
+  "estado": "Preliquidacion sin finalizar",
+  "razon": "Valor total del contrato no identificado o es cero",
+  "mensajes_error": ["Valor total del contrato no identificado o es cero"]
+}
+```
+
+#### **🎯 PRINCIPIOS SOLID Y DRY APLICADOS**
+
+##### **SRP (Single Responsibility Principle)**
+- ✅ Cada función tiene UNA responsabilidad clara
+- ✅ `_validar_objeto_contrato_identificado()`: Solo valida clasificación
+- ✅ `_validar_valor_factura_sin_iva()`: Solo valida valor factura
+- ✅ `_liquidar_obra_publica_manual()`: Solo liquida obra pública
+- ✅ `_liquidar_estampilla_manual()`: Solo liquida estampilla
+
+##### **DRY (Don't Repeat Yourself)**
+- ✅ `_calcular_contrato_mas_adiciones()`: Reutilizada en múltiples lugares
+- ✅ `_validar_objeto_contrato_identificado()`: Compartida entre obra pública y estampilla
+- ✅ `_validar_valor_factura_sin_iva()`: Compartida entre obra pública y estampilla
+- ✅ Evita duplicación de lógica de validación de estados
+
+##### **OCP (Open/Closed Principle)**
+- ✅ Fácil agregar nuevos impuestos sin modificar código existente
+- ✅ Solo crear nueva función `_liquidar_nuevo_impuesto_manual()`
+- ✅ Integrar en `liquidar_integrado()` sin modificar validaciones existentes
+
+#### **📝 PROMPT ACTUALIZADO**
+
+**Archivo**: `prompt_clasificador.py` - `PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO`
+
+**Cambios en instrucciones a Gemini**:
+- ✅ **PROHIBIDO**: Calcular impuestos
+- ✅ **PROHIBIDO**: Determinar si aplican impuestos
+- ✅ **PROHIBIDO**: Inventar información no presente en documentos
+- ✅ **OBLIGATORIO**: Copiar textualmente descripciones encontradas
+- ✅ **OBLIGATORIO**: Usar 0 cuando no encuentre un valor
+- ✅ **OBLIGATORIO**: Usar "no_identificado" cuando no encuentre descripción
+- ✅ **OBLIGATORIO**: Clasificar ÚNICAMENTE basándose en palabras clave exactas
+
+#### **⚡ BENEFICIOS DEL REFACTOR**
+
+1. **Reducción de alucinaciones IA**: Gemini solo extrae, no inventa cálculos
+2. **Mayor precisión**: Validaciones Python garantizan correctitud matemática
+3. **Trazabilidad**: Cada validación tiene logging claro
+4. **Mantenibilidad**: Código Python más fácil de mantener que prompts complejos
+5. **Testing**: Validaciones Python son fácilmente testeables
+6. **Escalabilidad**: Fácil agregar nuevas validaciones sin modificar prompt
+7. **Separación de responsabilidades**: IA para extracción, Python para lógica de negocio
+
+#### **🔄 COMPATIBILIDAD**
+
+- ✅ **Mantiene** misma interfaz pública `liquidar_integrado()`
+- ✅ **Mantiene** estructura de respuesta JSON final
+- ✅ **Compatible** con flujo de procesamiento paralelo en `main.py`
+- ⚠️ **REQUIERE** actualización de prompt en Clasificador (ya realizada manualmente)
+
+#### **📁 ARCHIVOS MODIFICADOS**
+- `Liquidador/liquidador_estampilla.py`: Refactor completo con validaciones manuales
+- `Clasificador/clasificador.py`:
+  - Función `analizar_estampilla()` actualizada para retornar JSON simple
+  - Eliminado procesamiento de estructura antigua
+  - Ahora retorna directamente: `{extraccion: {...}, clasificacion: {...}}`
+- `Clasificador/prompt_clasificador.py`: Prompt actualizado (realizado manualmente por usuario)
+
+---
+
+## [3.2.2] - 2025-10-05
+
+### 🔧 **REFACTORING - ELIMINACIÓN DE PROCESAMIENTO INDIVIDUAL**
+- **SIMPLIFICADO**: Eliminado código de procesamiento individual (todos los NITs aplican múltiples impuestos)
+  - ✅ **Eliminada variable**: `procesamiento_paralelo` ya no es necesaria (siempre True)
+  - ✅ **Eliminado bloque completo**: ~300 líneas de código de procesamiento individual
+  - ✅ **Simplificada estructura**:
+    - PASO 4: PROCESAMIENTO PARALELO (antes "PASO 4A")
+    - PASO 5: LIQUIDACIÓN DE IMPUESTOS (antes "PASO 5A")
+  - ✅ **Actualizados logs**: Reflejan que el procesamiento es siempre paralelo
+  - ✅ **Limpiados JSONs**: Removido campo `procesamiento_paralelo` de respuestas
+  - 🔹 **Justificación**: Todos los NITs en `config.py` aplican mínimo 2 impuestos (RETENCION_FUENTE + RETENCION_ICA)
+  - 🔹 **Archivos afectados**:
+    - `main.py`: Eliminación completa de rama `else` de procesamiento individual
+    - Líneas eliminadas: 1302-1576 (procesamiento individual completo)
+  - 🎯 **Beneficios**: Código más limpio, mantenible y fácil de entender
+
+---
+
 ## [3.2.1] - 2025-10-01
 
 ### 🐛 **CORRECCIÓN CRÍTICA - PASO DE PARÁMETROS**
