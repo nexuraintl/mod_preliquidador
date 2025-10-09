@@ -10,111 +10,198 @@ from typing import Dict, List
 
 
 
-def PROMPT_CLASIFICACION(textos_preprocesados: Dict[str, str], nombres_archivos_directos: List[str]) -> str:
+def PROMPT_CLASIFICACION(textos_preprocesados: Dict[str, str], nombres_archivos_directos: List[str], proveedor: str = None) -> str:
     """
-    Genera el prompt HÍBRIDO optimizado para clasificar documentos fiscales colombianos.
-    Versión mejorada con ingeniería de prompts para prevenir halucinaciones.
+    Genera el prompt optimizado para clasificar documentos fiscales colombianos.
+    Versión mejorada con prevención de alucinaciones y criterios más claros.
+
+    Args:
+        textos_preprocesados: Diccionario con textos preprocesados
+        nombres_archivos_directos: Lista de nombres de archivos directos
+        proveedor: Nombre del proveedor que emite la factura (v3.0)
     """
-    
+
     todos_los_archivos = nombres_archivos_directos + list(textos_preprocesados.keys())
     total_archivos = len(todos_los_archivos)
-    
+
+    # Contexto de proveedor para mejor identificación
+    contexto_proveedor = ""
+    if proveedor:
+        contexto_proveedor = f"""
+═══════════════════════════════════════════════════════════════════════
+INFORMACIÓN DEL PROVEEDOR (CONTEXTO DE VALIDACIÓN)
+═══════════════════════════════════════════════════════════════════════
+
+**PROVEEDOR ESPERADO:** {proveedor}
+
+INSTRUCCIONES DE VALIDACIÓN CONTRA RUT:
+• Verifica que el nombre/razón social en la FACTURA coincida con el RUT
+• Verifica que el NIT en la FACTURA coincida con el NIT del RUT
+• Si encuentras discrepancias entre FACTURA y RUT, repórtalas explícitamente
+• Si el proveedor es un CONSORCIO o UNIÓN TEMPORAL:
+  - Verifica que el nombre del consorcio en FACTURA coincida con RUT
+  - Identifica los miembros/integrantes del consorcio
+  - Verifica los porcentajes de participación si están disponibles
+  - Reporta si falta información de algún consorciado
+
+VALIDACIÓN DE COHERENCIA:
+1. Nombre en FACTURA vs Nombre en RUT → deben coincidir
+2. NIT en FACTURA vs NIT en RUT → deben coincidir
+3. Si es consorcio: nombre del consorcio debe aparecer en ambos documentos
+4. Si hay inconsistencias, márcalas en "indicadores_consorcio" o crea campo de observaciones
+
+"""
+
     return f"""
-Eres un experto en documentos fiscales colombianos. Tu tarea es clasificar EXACTAMENTE {total_archivos} documento(s).
+ROL: Eres un CLASIFICADOR LITERAL de documentos fiscales colombianos.
+Tu función es ÚNICAMENTE identificar y clasificar basándote en lo que está ESCRITO TEXTUALMENTE.
+{contexto_proveedor}
 
- **REGLAS CRÍTICAS PARA EVITAR ERRORES:**
-- SOLO usa información EXPLÍCITAMENTE PRESENTE en los documentos
-- NO inventes, supongas o deduzcas información que no esté escrita
-- Si no encuentras evidencia clara, marca como false
-- Sé LITERAL con la información que extraes
+ REGLA FUNDAMENTAL ANTI-ALUCINACIÓN:
+• PROHIBIDO deducir, interpretar o suponer información
+• SOLO usa texto que puedas CITAR LITERALMENTE del documento
+• Si no encuentras evidencia textual explícita → marca como false
+• NO uses contexto implícito, SOLO texto explícito
 
- **CATEGORÍAS DE CLASIFICACIÓN (usa EXACTAMENTE estas):**
-1. **FACTURA**: Documento con información de facturación, valores, impuestos, datos del proveedor
-2. **RUT**: Registro Único Tributario con información fiscal del tercero
-3. **COTIZACION**: Propuesta comercial o presupuesto
-4. **ANEXO**: Cualquier otro documento de soporte general
-5. **ANEXO CONCEPTO DE CONTRATO**: Documento que contiene SOLO información del contrato (objeto, términos)
+═══════════════════════════════════════════════════════════════════════
+PASO 1: CLASIFICACIÓN DE DOCUMENTOS
+═══════════════════════════════════════════════════════════════════════
 
- **CASOS ESPECIALES DE CLASIFICACIÓN:**
-- "SOPORTE EN ADQUISICIONES EFECTUADAS A NO OBLIGADOS A FACTURAR" = **FACTURA**
-- Si UN SOLO documento contiene múltiple información (factura + RUT + anexos integrados) = **FACTURA**
-- Si un documento combina factura con otros elementos, clasifícalo como **FACTURA**
+Debes clasificar EXACTAMENTE {total_archivos} documento(s) en UNA de estas categorías:
 
- **DETECCIÓN DE FACTURACIÓN EXTRANJERA:**
-**FUENTE OBLIGATORIA: SOLO LA FACTURA**
-Solo marca como true si en LA FACTURA encuentras EXPLÍCITAMENTE:
-- Dirección del proveedor fuera de Colombia (país, ciudad extranjera)
-- Monedas extranjeras (USD, EUR, GBP, etc.)
-- Identificación fiscal extranjera (no NIT colombiano)
-- Texto explícito: "no residente", "no domiciliado en Colombia", "empresa extranjera"
-- Factura emitida desde el exterior
+1. **FACTURA** - Identificar si contiene:
+   ✓ Número de factura o documento equivalente
+   ✓ Fecha de emisión/venta
+   ✓ Valores monetarios (subtotal, total, impuestos)
+   ✓ Datos del vendedor/proveedor y comprador
+   ✓ Descripción de bienes o servicios vendidos
+   
+   SE PUEDE CLASIFICAR COMO FACTURA TAMBIÉN:
+   • "SOPORTE EN ADQUISICIONES EFECTUADAS A NO OBLIGADOS A FACTURAR"
+   • "CUENTA DE COBRO"
+   • "DOCUMENTO EQUIVALENTE"
+   • Cualquier documento con estructura de venta/cobro
 
- NO uses información de otros documentos para determinar facturación extranjera
+2. **RUT** - Registro Único Tributario que contiene:
+   ✓ Número de identificación tributaria (NIT)
+   ✓ Razón social
+   ✓ Responsabilidades tributarias
+   ✓ Actividades económicas CIIU
 
- **DETECCIÓN DE CONSORCIOS:**
-**FUENTE OBLIGATORIA: SOLO EL RUT O LA FACTURA**
-Solo marca como true si encuentras EXPLÍCITAMENTE en el RUT o FACTURA:
-- La palabra "CONSORCIO" en el nombre del proveedor
-- Texto que diga "consorciados", "miembros del consorcio", "integrantes"
-- Porcentajes de participación entre empresas (ej: "Empresa A 60%, Empresa B 40%")
-- Múltiples NITs/empresas en formato de asociación temporal o unión
+4. **ANEXO_CONTRATO** - Documento que contiene ESPECÍFICAMENTE:
+   ✓ Objeto del contrato
+   ✓ Obligaciones contractuales
+   ✓ Términos y condiciones del contrato
 
- NO uses cotizaciones, anexos u otros documentos para detectar consorcios
- NO deduzcas consorcio por contexto o referencias indirectas
+5. **ANEXO** - Cualquier otro documento de soporte
 
- **IDENTIFICACIÓN DE CONTENIDO DOCUMENTAL:**
+REGLA ESPECIAL: Si un documento combina múltiple información → clasifícalo por su función PRINCIPAL
+Si hay solo UN DOCUMENTO con múltiples funciones → clasifícalo como FACTURA
 
-Los siguientes campos identifican si la INFORMACIÓN está PRESENTE, no si hay archivos separados:
+═══════════════════════════════════════════════════════════════════════
+PASO 2: IDENTIFICACIÓN DE CONTENIDO (FACTURA Y RUT)
+═══════════════════════════════════════════════════════════════════════
 
-**factura_identificada**: Marca `true` si:
-- Encuentras información de facturación en CUALQUIER documento
-- Existe un documento clasificado como FACTURA
-- Detectas valores, impuestos, datos de venta (incluso dentro de un documento combinado)
+**factura_identificada = true** si en CUALQUIER documento encuentras:
+• Estructura de facturación (valores + conceptos + totales)
+• Información de venta/cobro formal
+• NO importa si está en un archivo separado o integrado
 
-**rut_identificado**: Marca `true` si:
-- Encuentras el Registro Único Tributario en CUALQUIER documento  
-- Existe un documento clasificado como RUT
-- Detectas información fiscal del tercero (incluso dentro de un documento combinado)
+**rut_identificado = true** si en CUALQUIER documento encuentras:
+• El Registro Único Tributario completo
+• Información de responsabilidades tributarias
+• NO importa si está en un archivo separado o integrado
 
- **Ejemplos de identificación:**
-- Documento único con factura + RUT integrados → ambos `true`
-- Factura.pdf separada + RUT.pdf separado → ambos `true`
-- Solo factura sin RUT → factura_identificada: `true`, rut_identificado: `false`
-- Cotización + Anexos (sin factura ni RUT) → ambos `false`
+═══════════════════════════════════════════════════════════════════════
+PASO 3: DETECCIÓN DE CONSORCIO
+═══════════════════════════════════════════════════════════════════════
 
- **DOCUMENTOS A CLASIFICAR:**
+ BUSCAR ÚNICAMENTE EN: **FACTURA** o **RUT**
+ NO buscar en: ANEXO_CONTRATO, anexos
 
- **ARCHIVOS DIRECTOS (adjuntos que puedes ver):**
+**es_consorcio = true** SOLO SI encuentras TEXTUALMENTE:
+• La palabra "CONSORCIO" en el nombre/razón social
+• La palabra "UNIÓN TEMPORAL" en el nombre/razón social
+• Texto explícito: "consorciados", "miembros del consorcio"
+• Porcentajes de participación: "Empresa A: 60%, Empresa B: 40%"
+
+Si no encuentras estas palabras EXACTAS → es_consorcio = false
+
+═══════════════════════════════════════════════════════════════════════
+PASO 4: DETERMINACIÓN DE FUENTE DE INGRESO (NACIONAL vs EXTRANJERA)
+═══════════════════════════════════════════════════════════════════════
+
+ DOCUMENTOS A REVISAR: TODOS los documentos listados
+
+Para determinar si es **FUENTE EXTRANJERA**, responde estas preguntas basándote SOLO en texto explícito:
+
+1. **¿El servicio tiene uso o beneficio económico en Colombia?**
+   Buscar texto similar a:
+   • "servicio prestado en Colombia"
+   • "para uso en territorio colombiano"
+   • "beneficiario en Colombia"
+
+2. **¿La actividad se ejecutó total o parcialmente en Colombia?**
+   Buscar texto similar a:
+   • "ejecutado en Colombia"
+   • "realizado en [ciudad colombiana]"
+   • "prestación del servicio en Colombia"
+
+3. **¿Es asistencia técnica/consultoría usada en Colombia?**
+   Buscar texto similar a:
+   • "asistencia técnica para operaciones en Colombia"
+   • "consultoría implementada en Colombia"
+   • "know-how aplicado en territorio nacional"
+
+4. **¿El bien vendido está ubicado en Colombia?**
+   Buscar texto similar a:
+   • "entrega en Colombia"
+   • "bien ubicado en [dirección colombiana]"
+   • "instalación en Colombia"
+
+IMPORTANTE : Si no encuentras evidencia textual clara para alguna de las preguntas anteriores → responde null
+
+
+═══════════════════════════════════════════════════════════════════════
+DOCUMENTOS A ANALIZAR
+═══════════════════════════════════════════════════════════════════════
+
+**ARCHIVOS DIRECTOS:**
 {_formatear_archivos_directos(nombres_archivos_directos)}
 
- **TEXTOS PREPROCESADOS (Excel/Email/Word ya extraídos):**
+**TEXTOS PREPROCESADOS:**
 {_formatear_textos_preprocesados(textos_preprocesados)}
 
- **INSTRUCCIONES FINALES:**
-1. Clasifica CADA documento en UNA sola categoría
-2. Para facturación extranjera: SOLO información de la FACTURA
-3. Para consorcio: SOLO información del RUT o FACTURA
-4. Identifica PRESENCIA de información (factura/RUT) sin importar si está en archivos separados o combinados
-5. Si no hay evidencia clara y explícita: marca como false
-6. No inventes razones o indicadores que no veas explícitamente
+═══════════════════════════════════════════════════════════════════════
+FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO)
+═══════════════════════════════════════════════════════════════════════
 
-**RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO (sin texto adicional, sin explicaciones):**
 {{
     "clasificacion": {{
-        "nombre_archivo_1": "CATEGORIA_EXACTA",
-        "nombre_archivo_2": "CATEGORIA_EXACTA"
+        "nombre_archivo_1": "FACTURA|RUT|COTIZACION|ANEXO_CONTRATO|ANEXO",
+        "nombre_archivo_2": "FACTURA|RUT|COTIZACION|ANEXO_CONTRATO|ANEXO"
     }},
     "factura_identificada": true/false,
     "rut_identificado": true/false,
-    "es_facturacion_extranjera": true/false,
-    "indicadores_extranjera": ["cita textual del documento", "otra cita textual"],
     "es_consorcio": true/false,
-    "indicadores_consorcio": ["cita textual del RUT o FACTURA", "otra cita textual"]
+    "indicadores_consorcio": ["cita textual exacta del RUT o FACTURA"],
+    "analisis_fuente_ingreso": {{
+        "servicio_uso_colombia": true/false/null,
+        "evidencias_uso_encontradas": ["cita textual"],
+        "ejecutado_en_colombia": true/false/null,
+        "evidencias_ejecucion_encontradas": ["cita textual"],
+        "asistencia_tecnica_colombia": true/false/null,
+        "evidencias_asistencia_encontradas": ["cita textual"],
+        "bien_ubicado_colombia": true/false/null,
+        "evidencias_bien_encontradas": ["cita textual"]
+    }},
 }}
 
- RECORDATORIO FINAL: 
-- Los indicadores deben ser CITAS TEXTUALES, no interpretaciones
-- factura_identificada y rut_identificado indican PRESENCIA de información, no cantidad de archivos
+ RECORDATORIOS FINALES:
+• NO interpretes - SOLO extrae lo que está escrito
+• Las evidencias deben ser CITAS TEXTUALES copiadas del documento
+• Si no hay información clara, usa false o ( null para los items de analisis fuente ingreso)
+• Clasifica TODOS los documentos listados
 """
 def _formatear_archivos_directos(nombres_archivos_directos: List[str]) -> str:
     """
@@ -179,12 +266,12 @@ def _generar_seccion_archivos_directos(nombres_archivos_directos: List[str]) -> 
     
     return texto.strip()
 
-def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: str, 
+def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: str,
                             cotizaciones_texto: str, anexo_contrato: str, conceptos_dict: dict,
-                            nombres_archivos_directos: List[str] = None) -> str:
+                            nombres_archivos_directos: List[str] = None, proveedor: str = None) -> str:
     """
     Genera el prompt para analizar factura y extraer información de retención.
-    
+
     Args:
         factura_texto: Texto extraído de la factura principal
         rut_texto: Texto del RUT (si está disponible)
@@ -192,13 +279,42 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
         cotizaciones_texto: Texto de cotizaciones
         anexo_contrato: Texto del anexo de concepto de contrato
         conceptos_dict: Diccionario de conceptos con tarifas y bases mínimas
-        
+        nombres_archivos_directos: Lista de nombres de archivos directos
+        proveedor: Nombre del proveedor que emite la factura (v3.0)
+
     Returns:
         str: Prompt formateado para enviar a Gemini
     """
-    
-    
-    
+
+    # Contexto de proveedor para validación
+    contexto_proveedor = ""
+    if proveedor:
+        contexto_proveedor = f"""
+═══════════════════════════════════════════════════════════════════
+ INFORMACIÓN DEL PROVEEDOR (VALIDACIÓN OBLIGATORIA)
+═══════════════════════════════════════════════════════════════════
+
+**PROVEEDOR ESPERADO:** {proveedor}
+
+ VALIDACIONES OBLIGATORIAS CONTRA RUT:
+
+1. VALIDACIÓN DE IDENTIDAD:
+   - Verifica que el nombre/razón social en FACTURA coincida con el nombre en RUT
+   - Verifica que el NIT en FACTURA coincida con el NIT en RUT
+   - Si hay discrepancias, repórtalas en "observaciones"
+
+2. VALIDACIÓN DE COHERENCIA:
+   - El proveedor esperado debe corresponder con los datos de FACTURA y RUT
+   - Si el nombre del proveedor no coincide, reporta la discrepancia
+   - Verifica que todos los documentos se refieran al mismo tercero
+
+3. REPORTE DE INCONSISTENCIAS:
+   - Si nombre en FACTURA ≠ nombre en RUT → agregar a observaciones
+   - Si NIT en FACTURA ≠ NIT en RUT → agregar a observaciones
+   - Si proveedor esperado no coincide con documentos → agregar a observaciones
+
+"""
+
     return f"""
 Eres un sistema de análisis tributario colombiano para FIDUCIARIA FIDUCOLDEX.
 Tu función es IDENTIFICAR con PRECISIÓN conceptos de retención en la fuente y naturaleza del tercero.
@@ -206,6 +322,7 @@ Tu función es IDENTIFICAR con PRECISIÓN conceptos de retención en la fuente y
  REGLA FUNDAMENTAL: SOLO usa información EXPLÍCITAMENTE presente en los documentos.
  NUNCA inventes, asumas o deduzcas información no visible.
  Si no encuentras un dato, usa NULL o el valor por defecto especificado.
+{contexto_proveedor}
 
 ═══════════════════════════════════════════════════════════════════
  CONCEPTOS VÁLIDOS DE RETENCIÓN (USA SOLO ESTOS):
@@ -580,12 +697,12 @@ BUSCAR: "AFC" O "ahorro para fomento" O "cuenta AFC"
 
  RESPONDE ÚNICAMENTE CON EL JSON. SIN EXPLICACIONES ADICIONALES.
 """
-def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: str, 
+def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: str,
                               cotizaciones_texto: str, anexo_contrato: str, conceptos_dict: dict,
-                              nombres_archivos_directos: List[str] = None) -> str:
+                              nombres_archivos_directos: List[str] = None, proveedor: str = None) -> str:
     """
     Genera el prompt optimizado para analizar consorcios.
-    
+
     Args:
         factura_texto: Texto extraído de la factura principal
         rut_texto: Texto del RUT (si está disponible)
@@ -593,12 +710,55 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
         cotizaciones_texto: Texto de cotizaciones
         anexo_contrato: Texto del anexo de concepto de contrato
         conceptos_dict: Diccionario de conceptos con tarifas y bases mínimas
-        
+        nombres_archivos_directos: Lista de nombres de archivos directos
+        proveedor: Nombre del consorcio/unión temporal (v3.0)
+
     Returns:
         str: Prompt formateado para enviar a Gemini
     """
-    
-    
+
+    # Contexto de proveedor para validación de consorcio
+    contexto_proveedor = ""
+    if proveedor:
+        contexto_proveedor = f"""
+═══════════════════════════════════════════════════════════════════
+ INFORMACIÓN DEL CONSORCIO/UNIÓN TEMPORAL (VALIDACIÓN OBLIGATORIA)
+═══════════════════════════════════════════════════════════════════
+
+**CONSORCIO/UNIÓN TEMPORAL ESPERADO:** {proveedor}
+
+ VALIDACIONES OBLIGATORIAS PARA CONSORCIOS:
+
+1. VALIDACIÓN DE IDENTIDAD DEL CONSORCIO:
+   - Verifica que el nombre del consorcio en FACTURA coincida con el esperado: "{proveedor}"
+   - Verifica que el nombre del consorcio en RUT coincida con FACTURA
+   - Si hay discrepancias, repórtalas en "observaciones"
+
+2. VALIDACIÓN DE CONSORCIADOS/INTEGRANTES:
+   - Identifica TODOS los consorciados listados en documentos
+   - Verifica que cada consorciado tenga: NIT, nombre, porcentaje participación
+   - Busca RUT individual de cada consorciado en los anexos
+   - Si faltan RUTs individuales, repórtalo en "observaciones"
+
+3. VALIDACIÓN CONTRA RUT DEL CONSORCIO:
+   - Verifica que el NIT del consorcio en FACTURA coincida con RUT
+   - Verifica que los consorciados listados en RUT coincidan con los de FACTURA
+   - Si hay diferencias en porcentajes de participación, repórtalas
+
+4. VALIDACIÓN DE COHERENCIA:
+   - El nombre del consorcio esperado debe aparecer en FACTURA y RUT
+   - Los consorciados deben estar claramente identificados
+   - La suma de porcentajes de participación debe ser 100% (o reportar si no lo es)
+
+5. REPORTE DE INCONSISTENCIAS:
+   - Si nombre consorcio en FACTURA ≠ nombre esperado → agregar a observaciones
+   - Si nombre consorcio en FACTURA ≠ nombre en RUT → agregar a observaciones
+   - Si faltan RUTs de consorciados → agregar a observaciones
+   - Si suma de porcentajes ≠ 100% → agregar a observaciones
+   - Si NIT del consorcio no coincide entre documentos → agregar a observaciones
+
+"""
+
     return f"""
 Eres un sistema de análisis tributario colombiano para FIDUCIARIA FIDUCOLDEX.
 Tu función es IDENTIFICAR con PRECISIÓN conceptos de retención en la fuente, naturaleza del tercero para CONSORCIOS y UNIONES TEMPORALES individualmente.
@@ -606,6 +766,7 @@ Tu función es IDENTIFICAR con PRECISIÓN conceptos de retención en la fuente, 
  REGLA FUNDAMENTAL: SOLO usa información EXPLÍCITAMENTE presente en los documentos.
  NUNCA inventes, asumas o deduzcas información no visible.
  Si no encuentras un dato, usa NULL o el valor por defecto especificado.
+{contexto_proveedor}
 
 ═══════════════════════════════════════════════════════════════════
  CONCEPTOS VÁLIDOS DE RETENCIÓN (USA SOLO ESTOS):
@@ -1079,13 +1240,14 @@ BUSCAR: "AFC" O "ahorro para fomento" O "cuenta AFC"
 ⚠️ Incluye un objeto por cada consorciado analizado.
 ⚠️ Mantén el orden de los consorciados según fueron proporcionados.
 """
-def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexos_texto: str, 
-                                       cotizaciones_texto: str, anexo_contrato: str, 
-                                       conceptos_extranjeros_dict: dict, paises_convenio: list, 
-                                       preguntas_fuente: list, nombres_archivos_directos: List[str] = None) -> str:
+def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexos_texto: str,
+                                       cotizaciones_texto: str, anexo_contrato: str,
+                                       conceptos_extranjeros_dict: dict, paises_convenio: list,
+                                       preguntas_fuente: list, nombres_archivos_directos: List[str] = None,
+                                       proveedor: str = None) -> str:
     """
     Genera el prompt para analizar factura extranjera y determinar retenciones.
-    
+
     Args:
         factura_texto: Texto extraído de la factura principal
         rut_texto: Texto del RUT (si está disponible)
@@ -1095,13 +1257,50 @@ def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexo
         conceptos_extranjeros_dict: Diccionario de conceptos extranjeros con tarifas
         paises_convenio: Lista de países con convenio de doble tributación
         preguntas_fuente: Lista de preguntas para determinar fuente nacional
-        
+        nombres_archivos_directos: Lista de nombres de archivos directos
+        proveedor: Nombre del proveedor extranjero (v3.0)
+
     Returns:
         str: Prompt formateado para enviar a Gemini
     """
-    
+
+    # Contexto de proveedor para validación
+    contexto_proveedor = ""
+    if proveedor:
+        contexto_proveedor = f"""
+═══════════════════════════════════════════════════════════════════
+ INFORMACIÓN DEL PROVEEDOR EXTRANJERO (VALIDACIÓN OBLIGATORIA)
+═══════════════════════════════════════════════════════════════════
+
+**PROVEEDOR ESPERADO:** {proveedor}
+
+ VALIDACIONES OBLIGATORIAS PARA PROVEEDOR EXTRANJERO:
+
+1. VALIDACIÓN DE IDENTIDAD:
+   - Verifica que el nombre del proveedor en FACTURA coincida con el esperado
+   - Si hay RUT extranjero disponible, verifica coherencia de datos
+   - Si hay discrepancias, repórtalas en "observaciones"
+
+2. VALIDACIÓN DE PAÍS DE ORIGEN:
+   - Verifica el país de domicilio del proveedor en la FACTURA
+   - Cruza con información del RUT si está disponible
+   - Confirma si el país tiene convenio de doble tributación
+
+3. VALIDACIÓN DE COHERENCIA:
+   - El proveedor esperado debe corresponder con los datos de FACTURA
+   - Verifica que todos los documentos se refieran al mismo tercero extranjero
+   - Reporta si hay inconsistencias en nombres, país o datos tributarios
+
+4. REPORTE DE INCONSISTENCIAS:
+   - Si nombre en FACTURA ≠ proveedor esperado → agregar a observaciones
+   - Si país en FACTURA ≠ país en RUT → agregar a observaciones
+   - Si faltan datos críticos del proveedor → agregar a observaciones
+
+"""
+
     return f"""
     Eres un experto contador colombiano especializado en retención en la fuente para PAGOS AL EXTERIOR.
+{contexto_proveedor}
     
     CONCEPTOS DE RETEFUENTE PARA PAGOS AL EXTERIOR (con tarifas normal y convenio):
     {json.dumps(conceptos_extranjeros_dict, indent=2, ensure_ascii=False)}
@@ -1216,13 +1415,14 @@ def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexo
     }}
     """
 
-def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, anexos_texto: str, 
-                                         cotizaciones_texto: str, anexo_contrato: str, 
-                                         conceptos_extranjeros_dict: dict, paises_convenio: list, 
-                                         preguntas_fuente: list, nombres_archivos_directos: List[str] = None ) -> str:
+def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, anexos_texto: str,
+                                         cotizaciones_texto: str, anexo_contrato: str,
+                                         conceptos_extranjeros_dict: dict, paises_convenio: list,
+                                         preguntas_fuente: list, nombres_archivos_directos: List[str] = None,
+                                         proveedor: str = None) -> str:
     """
     Genera el prompt optimizado para analizar consorcios con facturación extranjera.
-    
+
     Args:
         factura_texto: Texto extraído de la factura principal
         rut_texto: Texto del RUT (si está disponible)
@@ -1232,17 +1432,64 @@ def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, ane
         conceptos_extranjeros_dict: Diccionario de conceptos extranjeros con tarifas
         paises_convenio: Lista de países con convenio de doble tributación
         preguntas_fuente: Lista de preguntas para determinar fuente nacional
-        
+        nombres_archivos_directos: Lista de nombres de archivos directos
+        proveedor: Nombre del consorcio extranjero (v3.0)
+
     Returns:
         str: Prompt formateado para enviar a Gemini
     """
-    
+
     # Limitar conceptos para reducir tokens
     conceptos_limitados = dict(list(conceptos_extranjeros_dict.items())[:5])
-    
+
+    # Contexto de proveedor para validación de consorcio extranjero
+    contexto_proveedor = ""
+    if proveedor:
+        contexto_proveedor = f"""
+    ═══════════════════════════════════════════════════════════════════
+     INFORMACIÓN DEL CONSORCIO EXTRANJERO (VALIDACIÓN OBLIGATORIA)
+    ═══════════════════════════════════════════════════════════════════
+
+    **CONSORCIO EXTRANJERO ESPERADO:** {proveedor}
+
+     VALIDACIONES OBLIGATORIAS PARA CONSORCIOS EXTRANJEROS:
+
+    1. VALIDACIÓN DE IDENTIDAD DEL CONSORCIO:
+       - Verifica que el nombre del consorcio en FACTURA coincida con: "{proveedor}"
+       - Verifica el país de domicilio del consorcio
+       - Si hay RUT disponible, verifica coherencia de datos
+       - Reporta discrepancias en "observaciones"
+
+    2. VALIDACIÓN DE CONSORCIADOS/INTEGRANTES:
+       - Identifica TODOS los consorciados del consorcio extranjero
+       - Verifica que cada consorciado tenga: identificación, nombre, porcentaje
+       - Busca documentación individual de cada consorciado en anexos
+       - Si faltan documentos individuales, repórtalo en "observaciones"
+
+    3. VALIDACIÓN DE PAÍS Y CONVENIO:
+       - Identifica el país de cada consorciado (pueden ser diferentes)
+       - Verifica si cada país tiene convenio de doble tributación
+       - Reporta si hay consorciados de diferentes países
+       - Valida coherencia entre país en FACTURA y documentos
+
+    4. VALIDACIÓN DE COHERENCIA:
+       - El nombre del consorcio esperado debe aparecer en FACTURA
+       - Los consorciados deben estar claramente identificados
+       - La suma de porcentajes debe ser 100% (o reportar si no lo es)
+       - Verifica que todos los documentos se refieran al mismo consorcio
+
+    5. REPORTE DE INCONSISTENCIAS:
+       - Si nombre consorcio ≠ nombre esperado → agregar a observaciones
+       - Si faltan documentos de consorciados → agregar a observaciones
+       - Si suma de porcentajes ≠ 100% → agregar a observaciones
+       - Si hay consorciados de diferentes países → reportar cada país
+       - Si país no coincide entre documentos → agregar a observaciones
+
+    """
+
     return f"""
     ANALIZA ESTE CONSORCIO CON FACTURACIÓN EXTRANJERA Y CALCULA RETENCIONES POR CONSORCIADO.
-
+{contexto_proveedor}
     ═══════════════════════════════════════════════════════════════════
      REGLA CRÍTICA DE FORMATO DE SALIDA:
     ═══════════════════════════════════════════════════════════════════
@@ -1418,9 +1665,9 @@ NO debes:
 PASO 1 - EXTRAER OBJETO DEL CONTRATO:
 --------------------------------------
 • ORDEN DE BÚSQUEDA: Anexo Contrato → Factura → Anexos → Cotizaciones
-• IDENTIFICACION : Buscar frases que indiquen TEXTUALMENTE el objeto del contrato, No confundas CONCEPTO de la factura con OBJETO del contrato
+• IDENTIFICACION : Buscar TEXTUALMENTE una seccion que mencione OBJETO DEL CONTRATO, No confundas CONCEPTO de la factura con OBJETO del contrato
 • ACCIÓN: Copiar la descripción TEXTUAL EXACTA del objeto del contrato
-• SI NO EXISTE: Asignar valor "no_identificado"
+• SI NO EXISTE LA SECCION TEXTUAL OBJETO DEL CONTRATO EN LOS DOCUMENTOS : Asignar valor "no_identificado"
 • IMPORTANTE: No parafrasear, copiar literalmente
 
 PASO 2 - EXTRAER VALORES MONETARIOS:
@@ -1479,6 +1726,8 @@ Asignar cuando el objeto del contrato no se haya podido extraer de los documento
 4. Interpretar más allá de la clasificación por palabras clave
 5. Decidir sobre aplicación de impuestos
 6. Asignar el concepto de la factura como OBJETO del contrato
+7. Extraer el objeto del contrato de secciones que no mencionen TEXTUALMENTE "OBJETO DEL CONTRATO"
+
 
 ✓ OBLIGATORIO:
 1. Copiar textualmente las descripciones encontradas
@@ -1486,6 +1735,7 @@ Asignar cuando el objeto del contrato no se haya podido extraer de los documento
 3. Usar "no_identificado" cuando no encuentres una descripción
 4. Clasificar ÚNICAMENTE basándote en palabras clave exactas
 5. Incluir la evidencia textual que justifica la clasificación
+6. Extraer el objeto del contrato SOLAMENTE de la seccion que mencione TEXTUALMENTE OBJETO DEL CONTRATO
 
 ### FORMATO DE RESPUESTA - JSON ESTRICTO ###
 ════════════════════════════════════════════

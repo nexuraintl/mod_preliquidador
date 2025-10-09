@@ -183,10 +183,11 @@ class ProcesadorGemini:
         # v3.1.2: Procesador de consorcios removido - Nueva arquitectura SOLID con liquidador_consorcios.py
     
     async def clasificar_documentos(
-        self, 
+        self,
         textos_archivos_o_directos = None,  #  COMPATIBILIDAD TOTAL: Acepta cualquier tipo
         archivos_directos: List[UploadFile] = None,  #  NUEVO: Archivos directos
-        textos_preprocesados: Dict[str, str] = None  #  NUEVO: Textos preprocesados
+        textos_preprocesados: Dict[str, str] = None,  #  NUEVO: Textos preprocesados
+        proveedor: str = None  #  v3.0: Nombre del proveedor para mejor identificacion
     ) -> Tuple[Dict[str, str], bool, bool]:
         """
          FUNCIÓN HÍBRIDA CON COMPATIBILIDAD: Clasificación con archivos directos + textos preprocesados.
@@ -291,9 +292,9 @@ class ProcesadorGemini:
             
             logger.info(f" Archivos directos para Gemini: {nombres_archivos_directos}")
             logger.info(f" Textos preprocesados: {list(textos_preprocesados.keys())}")
-            
-            # PASO 2: Generar prompt híbrido usando función modificada
-            prompt = PROMPT_CLASIFICACION(textos_preprocesados, nombres_archivos_directos)
+
+            # PASO 2: Generar prompt híbrido usando función modificada (v3.0: con proveedor)
+            prompt = PROMPT_CLASIFICACION(textos_preprocesados, nombres_archivos_directos, proveedor)
             
             # PASO 3: Preparar contenido para Gemini (archivos directos + prompt)
             contents = [prompt]
@@ -344,9 +345,9 @@ class ProcesadorGemini:
             clasificacion = resultado.get("clasificacion", resultado)  # Fallback para formato anterior
             # NUEVO v3.1.2: Detectar consorcio directamente del resultado de Gemini
             es_consorcio = resultado.get("es_consorcio", False)
-            
-            # Detectar facturación extranjera
-            es_facturacion_extranjera = resultado.get("es_facturacion_extranjera", False)
+
+            # Detectar facturación extranjera usando validación manual (SRP)
+            es_facturacion_extranjera = self._evaluar_facturacion_extranjera(resultado)
             indicadores_extranjera = resultado.get("indicadores_extranjera", [])
             
             # PASO 6: Guardar respuesta con metadatos del procesamiento híbrido
@@ -554,30 +555,32 @@ class ProcesadorGemini:
 
    
     async def analizar_factura(
-        self, 
-        documentos_clasificados: Dict[str, Dict], 
+        self,
+        documentos_clasificados: Dict[str, Dict],
         es_facturacion_extranjera: bool = False,
         archivos_directos: List[UploadFile] = None,  #  NUEVO: Soporte multimodal
-        cache_archivos: Dict[str, bytes] = None  #  NUEVO: Cache para workers paralelos
+        cache_archivos: Dict[str, bytes] = None,  #  NUEVO: Cache para workers paralelos
+        proveedor: str = None  #  v3.0: Nombre del proveedor para mejor identificación
     ) -> AnalisisFactura:
         """
          ANÁLISIS HÍBRIDO MULTIMODAL: Analizar factura con archivos directos + textos preprocesados.
-        
+
         FUNCIONALIDAD HÍBRIDA CON CACHE:
          Archivos directos (PDFs/imágenes): Enviados nativamente a Gemini
          Textos preprocesados: Documentos ya extraidos localmente
          Cache para workers: Solución a problemas de concurrencia en workers paralelos
          Combinación inteligente: Una sola llamada con contenido mixto
-        
+
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
             es_facturacion_extranjera: Si es facturación extranjera (usa prompts especializados)
             archivos_directos: Lista de archivos para envío directo a Gemini (PDFs/imágenes)
             cache_archivos: Cache de archivos para workers paralelos (evita problemas de concurrencia)
-            
+            proveedor: Nombre del proveedor que emite la factura (v3.0)
+
         Returns:
             AnalisisFactura: Análisis completo de la factura
-            
+
         Raises:
             ValueError: Si no se encuentra factura o hay error en procesamiento
         """
@@ -663,21 +666,23 @@ class ProcesadorGemini:
                     conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
                     paises_convenio = self._obtener_paises_convenio()
                     preguntas_fuente = self._obtener_preguntas_fuente_nacional()
-                    
+
                     prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
-                        factura_texto, rut_texto, anexos_texto, 
-                        cotizaciones_texto, anexo_contrato, 
+                        factura_texto, rut_texto, anexos_texto,
+                        cotizaciones_texto, anexo_contrato,
                         conceptos_extranjeros_dict, paises_convenio, preguntas_fuente,
-                        nombres_archivos_directos  #  NUEVO PARÁMETRO
+                        nombres_archivos_directos,  #  NUEVO PARÁMETRO
+                        proveedor  #  v3.0: Nombre del proveedor
                     )
                 else:
                     logger.info("🇨🇴 Prompt híbrido para facturación nacional")
                     conceptos_dict = self._obtener_conceptos_retefuente()
-                    
+
                     prompt = PROMPT_ANALISIS_FACTURA(
-                        factura_texto, rut_texto, anexos_texto, 
+                        factura_texto, rut_texto, anexos_texto,
                         cotizaciones_texto, anexo_contrato, conceptos_dict,
-                        nombres_archivos_directos  #  NUEVO PARÁMETRO
+                        nombres_archivos_directos,  #  NUEVO PARÁMETRO
+                        proveedor  #  v3.0: Nombre del proveedor
                     )
                 
                 #  LLAMAR A GEMINI HÍBRIDO
@@ -686,25 +691,29 @@ class ProcesadorGemini:
             else:
                 #  FLUJO TRADICIONAL (solo textos preprocesados)
                 logger.info(" Usando análisis TRADICIONAL con solo textos preprocesados")
-                
+
                 if es_facturacion_extranjera:
                     logger.info("Usando prompt especializado para facturación extranjera")
                     conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
                     paises_convenio = self._obtener_paises_convenio()
                     preguntas_fuente = self._obtener_preguntas_fuente_nacional()
-                    
+
                     prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
-                        factura_texto, rut_texto, anexos_texto, 
-                        cotizaciones_texto, anexo_contrato, 
-                        conceptos_extranjeros_dict, paises_convenio, preguntas_fuente
+                        factura_texto, rut_texto, anexos_texto,
+                        cotizaciones_texto, anexo_contrato,
+                        conceptos_extranjeros_dict, paises_convenio, preguntas_fuente,
+                        None,  # nombres_archivos_directos (no hay en modo tradicional)
+                        proveedor  #  v3.0: Nombre del proveedor
                     )
                 else:
                     logger.info("Usando prompt para facturación nacional")
                     conceptos_dict = self._obtener_conceptos_retefuente()
-                    
+
                     prompt = PROMPT_ANALISIS_FACTURA(
-                        factura_texto, rut_texto, anexos_texto, 
-                        cotizaciones_texto, anexo_contrato, conceptos_dict
+                        factura_texto, rut_texto, anexos_texto,
+                        cotizaciones_texto, anexo_contrato, conceptos_dict,
+                        None,  # nombres_archivos_directos (no hay en modo tradicional)
+                        proveedor  #  v3.0: Nombre del proveedor
                     )
                 
                 #  LLAMAR A GEMINI TRADICIONAL
@@ -995,19 +1004,20 @@ class ProcesadorGemini:
             ]
         }
     
-    async def analizar_consorcio(self, documentos_clasificados: Dict[str, Dict], es_facturacion_extranjera: bool = False, archivos_directos : List[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
+    async def analizar_consorcio(self, documentos_clasificados: Dict[str, Dict], es_facturacion_extranjera: bool = False, archivos_directos : List[UploadFile] = None, cache_archivos: Dict[str, bytes] = None, proveedor: str = None) -> Dict[str, Any]:
         """
         Llamada a Gemini especializada para analizar consorcios CON CACHE.
-        
+
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
             es_facturacion_extranjera: Si es facturación extranjera (usa prompts especializados)
             archivos_directos: Lista de archivos directos (para compatibilidad)
             cache_archivos: Cache de archivos para workers paralelos
-            
+            proveedor: Nombre del proveedor/consorcio (v3.0)
+
         Returns:
             Dict[str, Any]: Análisis completo del consorcio en formato compatible
-            
+
         Raises:
             ValueError: Si no se encuentra factura o hay error en procesamiento
         """
@@ -1067,20 +1077,24 @@ class ProcesadorGemini:
                 conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
                 paises_convenio = self._obtener_paises_convenio()
                 preguntas_fuente = self._obtener_preguntas_fuente_nacional()
-                
+
                 prompt = PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(
-                    factura_texto, rut_texto, anexos_texto, 
-                    cotizaciones_texto, anexo_contrato, 
-                    conceptos_extranjeros_dict, paises_convenio, preguntas_fuente, nombres_archivos_directos=nombres_archivos_directos
+                    factura_texto, rut_texto, anexos_texto,
+                    cotizaciones_texto, anexo_contrato,
+                    conceptos_extranjeros_dict, paises_convenio, preguntas_fuente,
+                    nombres_archivos_directos=nombres_archivos_directos,
+                    proveedor=proveedor  #  v3.0: Nombre del consorcio
                 )
             else:
                 # Flujo original para consorcios nacionales
                 logger.info("Usando prompt para consorcio nacional")
                 conceptos_dict = self._obtener_conceptos_retefuente()
-                
+
                 prompt = PROMPT_ANALISIS_CONSORCIO(
-                    factura_texto, rut_texto, anexos_texto, 
-                    cotizaciones_texto, anexo_contrato, conceptos_dict, nombres_archivos_directos=nombres_archivos_directos 
+                    factura_texto, rut_texto, anexos_texto,
+                    cotizaciones_texto, anexo_contrato, conceptos_dict,
+                    nombres_archivos_directos=nombres_archivos_directos,
+                    proveedor=proveedor  #  v3.0: Nombre del consorcio
                 )
             
             # Llamar a Gemini con modelo especial para consorcios
@@ -1804,7 +1818,99 @@ class ProcesadorGemini:
         except Exception as e:
             logger.error(f" Error llamando a Gemini: {e}")
             raise ValueError(f"Error de Gemini: {str(e)}")
-    
+
+    def _evaluar_facturacion_extranjera(self, resultado: Dict[str, Any]) -> bool:
+        """
+        Evalua si es facturacion extranjera basado en analisis_fuente_ingreso.
+
+        SRP: Unica responsabilidad - determinar facturacion extranjera segun reglas de negocio.
+
+        REGLA DE DECISION:
+        - Si TODAS las respuestas son false (con evidencia) -> es_facturacion_extranjera = true
+        - Si ALGUNA respuesta es true -> es_facturacion_extranjera = false
+        - Si alguna respuesta es null (sin info clara) -> es_facturacion_extranjera = false
+
+        Campos evaluados de analisis_fuente_ingreso:
+        - servicio_uso_colombia: Servicio usado en Colombia
+        - ejecutado_en_colombia: Servicio ejecutado en Colombia
+        - asistencia_tecnica_colombia: Asistencia tecnica prestada en Colombia
+        - bien_ubicado_colombia: Bien ubicado fisicamente en Colombia
+
+        Args:
+            resultado: Diccionario con respuesta completa de Gemini
+
+        Returns:
+            bool: True si es facturacion extranjera, False en caso contrario
+
+        Examples:
+            >>> # Caso 1: Todo false (con evidencia) -> Extranjera
+            >>> resultado = {"analisis_fuente_ingreso": {
+            ...     "servicio_uso_colombia": False,
+            ...     "ejecutado_en_colombia": False,
+            ...     "asistencia_tecnica_colombia": False,
+            ...     "bien_ubicado_colombia": False
+            ... }}
+            >>> self._evaluar_facturacion_extranjera(resultado)
+            True
+
+            >>> # Caso 2: Alguno true -> NO extranjera
+            >>> resultado = {"analisis_fuente_ingreso": {
+            ...     "servicio_uso_colombia": True,
+            ...     "ejecutado_en_colombia": False,
+            ...     "asistencia_tecnica_colombia": False,
+            ...     "bien_ubicado_colombia": False
+            ... }}
+            >>> self._evaluar_facturacion_extranjera(resultado)
+            False
+
+            >>> # Caso 3: Alguno null (sin info) -> NO extranjera (conservador)
+            >>> resultado = {"analisis_fuente_ingreso": {
+            ...     "servicio_uso_colombia": None,
+            ...     "ejecutado_en_colombia": False,
+            ...     "asistencia_tecnica_colombia": False,
+            ...     "bien_ubicado_colombia": False
+            ... }}
+            >>> self._evaluar_facturacion_extranjera(resultado)
+            False
+        """
+        # Obtener analisis_fuente_ingreso del resultado de Gemini
+        analisis = resultado.get("analisis_fuente_ingreso", {})
+
+        # Fallback: Si no existe analisis_fuente_ingreso, usar campo legacy (compatibilidad)
+        if not analisis:
+            legacy_value = resultado.get("es_facturacion_extranjera", False)
+            logger.warning(" analisis_fuente_ingreso no encontrado, usando valor legacy")
+            return legacy_value
+
+        # Extraer los 4 criterios de evaluacion
+        servicio_uso = analisis.get("servicio_uso_colombia")
+        ejecutado = analisis.get("ejecutado_en_colombia")
+        asistencia = analisis.get("asistencia_tecnica_colombia")
+        bien_ubicado = analisis.get("bien_ubicado_colombia")
+
+        criterios = [servicio_uso, ejecutado, asistencia, bien_ubicado]
+
+        # REGLA 1: Si ALGUNO es true -> NO es facturacion extranjera
+        if any(criterio is True for criterio in criterios):
+            logger.info(" Facturacion NACIONAL detectada: al menos un criterio es true")
+            return False
+
+        # REGLA 2: Si ALGUNO es null -> NO es facturacion extranjera (enfoque conservador)
+        if any(criterio is None for criterio in criterios):
+            logger.info(" Facturacion NACIONAL por defecto: informacion incompleta (null detectado)")
+            return False
+
+        # REGLA 3: Si TODOS son false -> ES facturacion extranjera
+        if all(criterio is False for criterio in criterios):
+            logger.info(" Facturacion EXTRANJERA confirmada: todos los criterios son false")
+            logger.info(f" Evidencias: servicio_uso={servicio_uso}, ejecutado={ejecutado}, "
+                       f"asistencia={asistencia}, bien_ubicado={bien_ubicado}")
+            return True
+
+        # Fallback: No deberia llegar aqui, pero por seguridad retornar False
+        logger.warning(" Caso no contemplado en evaluacion, retornando False por defecto")
+        return False
+
     def _limpiar_respuesta_json(self, respuesta: str) -> str:
         """
         Limpia la respuesta de Gemini para extraer y corregir JSON.

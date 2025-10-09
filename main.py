@@ -735,10 +735,11 @@ app = FastAPI(
 @app.post("/api/procesar-facturas")
 async def procesar_facturas_integrado(
     archivos: List[UploadFile] = File(...),
-    codigo_del_negocio: int = Form(...)
+    codigo_del_negocio: int = Form(...),
+    proveedor: str = Form(...)
 ) -> JSONResponse:
     """
-     ENDPOINT PRINCIPAL - SISTEMA INTEGRADO v2.0
+     ENDPOINT PRINCIPAL - SISTEMA INTEGRADO v3.0
 
     Procesa facturas y calcula múltiples impuestos en paralelo:
      RETENCIÓN EN LA FUENTE (funcionalidad original)
@@ -748,15 +749,18 @@ async def procesar_facturas_integrado(
      PROCESAMIENTO PARALELO cuando múltiples impuestos aplican
      GUARDADO AUTOMÁTICO de JSONs en Results/
      CONSULTA DE BASE DE DATOS para información del negocio
+     CONTEXTO DEL PROVEEDOR para mejor identificación (v3.0)
 
     Args:
         archivos: Lista de archivos (facturas, RUTs, anexos, contratos)
         codigo_del_negocio: Código del negocio para consultar en base de datos (el NIT administrativo se obtiene de la DB)
+        proveedor: Nombre del proveedor que emite la factura (OBLIGATORIO - mejora identificación de consorcios y retenciones)
 
     Returns:
         JSONResponse: Resultado consolidado de todos los impuestos aplicables
     """
-    logger.info(f" ENDPOINT PRINCIPAL INTEGRADO - Procesando {len(archivos)} archivos para Código negocio: {codigo_del_negocio}")
+    logger.info(f" ENDPOINT PRINCIPAL INTEGRADO v3.0 - Procesando {len(archivos)} archivos")
+    logger.info(f" Código negocio: {codigo_del_negocio} | Proveedor: {proveedor}")
 
     try:
         # =================================
@@ -901,7 +905,8 @@ async def procesar_facturas_integrado(
         
         clasificacion, es_consorcio, es_facturacion_extranjera = await clasificador.clasificar_documentos(
             archivos_directos=archivos_directos,
-            textos_preprocesados=textos_preprocesados
+            textos_preprocesados=textos_preprocesados,
+            proveedor=proveedor
         )
         
         logger.info(f" Documentos clasificados: {len(clasificacion)}")
@@ -962,14 +967,21 @@ async def procesar_facturas_integrado(
         # Tarea 1: Análisis de Retefuente (si aplica)
         if aplica_retencion:
             if es_consorcio:
-                tarea_retefuente = clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera, None,cache_archivos)
+                tarea_retefuente = clasificador.analizar_consorcio(
+                    documentos_clasificados,
+                    es_facturacion_extranjera,
+                    None,
+                    cache_archivos,
+                    proveedor=proveedor
+                )
             else:
                 #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
                 tarea_retefuente = clasificador.analizar_factura(
-                    documentos_clasificados, 
+                    documentos_clasificados,
                     es_facturacion_extranjera,
                     None,
-                    cache_archivos  
+                    cache_archivos,
+                    proveedor=proveedor
                 )
             tareas_analisis.append(("retefuente", tarea_retefuente))
         
