@@ -1205,22 +1205,36 @@ async def procesar_facturas_integrado(
                 if aplica_obra_publica:
                     resultado_final["impuestos"]["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
         
-        # Liquidar IVA y ReteIVA -  NUEVA LIQUIDACIÓN
+        # Liquidar IVA y ReteIVA - ARQUITECTURA SOLID v2.0
         if "iva_reteiva" in resultados_analisis and aplica_iva:
             try:
                 from Liquidador.liquidador_iva import LiquidadorIVA
                 liquidador_iva = LiquidadorIVA()
-                
-                analisis_iva = resultados_analisis["iva_reteiva"]
-                resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
-                
-                #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["iva_reteiva"]
-                from Liquidador.liquidador_iva import convertir_resultado_a_dict
-                resultado_final["impuestos"]["iva_reteiva"] = convertir_resultado_a_dict(resultado_iva_completo)
-                
-                logger.info(f" IVA identificado: ${resultado_iva_completo.valor_iva_identificado:,.2f}")
-                logger.info(f" ReteIVA liquidada: ${resultado_iva_completo.valor_reteiva:,.2f}")
-                
+
+                # Análisis de Gemini (nueva estructura PROMPT_ANALISIS_IVA)
+                analisis_iva_gemini = resultados_analisis["iva_reteiva"]
+
+                # Clasificación inicial (para obtener es_facturacion_extranjera)
+                clasificacion_inicial = {
+                    "es_facturacion_extranjera": es_facturacion_extranjera
+                }
+
+                # Liquidar con nueva arquitectura SOLID (requiere 3 parámetros)
+                resultado_iva_dict = liquidador_iva.liquidar_iva_completo(
+                    analisis_gemini=analisis_iva_gemini,
+                    clasificacion_inicial=clasificacion_inicial,
+                    nit_administrativo=nit_administrativo
+                )
+
+                # El método ahora retorna directamente un diccionario con estructura {"iva_reteiva": {...}}
+                resultado_final["impuestos"]["iva_reteiva"] = resultado_iva_dict.get("iva_reteiva", {})
+
+                # Logs actualizados para usar diccionario
+                valor_iva = resultado_iva_dict.get("iva_reteiva", {}).get("valor_iva_identificado", 0.0)
+                valor_reteiva = resultado_iva_dict.get("iva_reteiva", {}).get("valor_reteiva", 0.0)
+                logger.info(f" IVA identificado: ${valor_iva:,.2f}")
+                logger.info(f" ReteIVA liquidada: ${valor_reteiva:,.2f}")
+
             except Exception as e:
                 logger.error(f" Error liquidando IVA/ReteIVA: {e}")
                 resultado_final["impuestos"]["iva_reteiva"] = {"error": str(e), "aplica": False}
@@ -1251,13 +1265,6 @@ async def procesar_facturas_integrado(
 
                 #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
                 resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas.get("estampillas_generales", {})
-
-                # Log informativo - calcular contadores desde las estampillas
-                estampillas_dict = resultado_estampillas.get("estampillas_generales", {}).get("estampillas", {})
-                completas = sum(1 for e in estampillas_dict.values() if e.get("estado") == "preliquidado")
-                incompletas = sum(1 for e in estampillas_dict.values() if e.get("estado") == "preliquidacion_sin_finalizar")
-
-                logger.info(f" Estampillas generales procesadas: {completas} completas, {incompletas} incompletas")
                 
             except Exception as e:
                 logger.error(f" Error liquidando estampillas generales: {e}")

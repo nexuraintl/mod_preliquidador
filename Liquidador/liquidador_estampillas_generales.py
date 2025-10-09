@@ -54,10 +54,10 @@ class ResumenAnalisisEstampillas(BaseModel):
 class ResultadoEstampillasGenerales(BaseModel):
     """
     Modelo completo para el resultado de estampillas generales.
-    NOTA: resumen_analisis solo se usa internamente, no aparece en JSON final.
+    NOTA: resumen_analisis es opcional, solo para uso interno, no aparece en JSON final.
     """
     estampillas_generales: List[EstampillaGeneral]
-    resumen_analisis: ResumenAnalisisEstampillas  # Solo uso interno
+    resumen_analisis: Optional[ResumenAnalisisEstampillas] = None  # Opcional, solo uso interno
     procesamiento_exitoso: bool = True
     fecha_procesamiento: str = ""
     observaciones_generales: List[str] = []
@@ -93,14 +93,7 @@ def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> D
             validacion["formato_valido"] = False
             validacion["respuesta_validada"]["estampillas_generales"] = _obtener_estampillas_default()
             validacion["datos_corregidos"] = True
-        
-        # resumen_analisis ya no viene en la respuesta de Gemini (se elimina en clasificador.py)
-        # Generar automáticamente desde las estampillas
-        if "resumen_analisis" not in respuesta_gemini:
-            estampillas = validacion["respuesta_validada"]["estampillas_generales"]
-            validacion["respuesta_validada"]["resumen_analisis"] = _generar_resumen_automatico(estampillas)
-            # No es error ni corrección, es comportamiento esperado
-        
+
         # Validar que sean exactamente 6 estampillas
         estampillas = validacion["respuesta_validada"]["estampillas_generales"]
         nombres_esperados = {
@@ -190,7 +183,6 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
     try:
         # Extraer datos principales
         estampillas = respuesta_validada.get("estampillas_generales", [])
-        resumen = respuesta_validada.get("resumen_analisis", {})
 
         # Calcular contadores para logging (sin incluir en resultado final)
         completas = sum(1 for e in estampillas if e.get("estado") == "preliquidado")

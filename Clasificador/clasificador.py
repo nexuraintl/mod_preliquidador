@@ -161,7 +161,7 @@ class ProcesadorGemini:
         
         # Configurar modelo con configuración estándar
         self.modelo = genai.GenerativeModel(
-            'gemini-2.5-flash',
+            'gemini-2.5-flash-preview-09-2025',
             generation_config=genai.types.GenerationConfig(
                 temperature=0.4,
                 max_output_tokens=65536,
@@ -1807,43 +1807,80 @@ class ProcesadorGemini:
     
     def _limpiar_respuesta_json(self, respuesta: str) -> str:
         """
-        Limpia la respuesta de Gemini para extraer solo el JSON.
-        
+        Limpia la respuesta de Gemini para extraer y corregir JSON.
+
+        Correcciones aplicadas:
+        1. Extrae JSON de bloques markdown
+        2. Corrige comillas dobles duplicadas
+        3. Remueve comas antes de } o ]
+        4. Corrige guiones Unicode (– a -)
+
         Args:
             respuesta: Respuesta cruda de Gemini
-            
+
         Returns:
-            str: JSON limpio
-            
+            str: JSON limpio y corregido
+
         Raises:
             ValueError: Si no se puede extraer JSON válido
         """
         try:
-            # Primero, eliminar bloques de código markdown si existen
+            # PASO 1: Eliminar bloques de código markdown si existen
             if '```json' in respuesta:
                 inicio_json = respuesta.find('```json') + 7
                 fin_json = respuesta.find('```', inicio_json)
                 if fin_json != -1:
                     respuesta = respuesta[inicio_json:fin_json].strip()
-            
-            # Buscar el primer { y el último }
+
+            # PASO 2: Buscar el primer { y el último }
             inicio = respuesta.find('{')
             fin = respuesta.rfind('}') + 1
-            
+
             if inicio != -1 and fin != 0:
                 json_limpio = respuesta[inicio:fin]
-                # Verificar que sea JSON válido
+
+                # PASO 3: Correcciones de sintaxis JSON comunes
+                # 3.1: Corregir comillas dobles duplicadas (CHOCÓ"" -> CHOCÓ")
+                import re
+                json_limpio = re.sub(r'""', '"', json_limpio)
+
+                # 3.2: Remover comas antes de cierre de objeto o array
+                json_limpio = re.sub(r',\s*}', '}', json_limpio)  # , } -> }
+                json_limpio = re.sub(r',\s*]', ']', json_limpio)  # , ] -> ]
+
+                # 3.3: Corregir guiones Unicode (– a -)
+                json_limpio = json_limpio.replace('–', '-')
+
+                # PASO 4: Verificar que sea JSON válido
                 json.loads(json_limpio)
+                logger.info(" JSON limpio y validado correctamente")
                 return json_limpio
             else:
                 raise ValueError("No se encontró JSON válido en la respuesta")
-                
-        except json.JSONDecodeError:
-            # Si falla la limpieza, devolver respuesta original
-            logger.warning("No se pudo limpiar JSON, usando respuesta original")
+
+        except json.JSONDecodeError as e:
+            # Intentar correcciones adicionales
+            logger.warning(f"Error de sintaxis JSON: {e}")
+            logger.warning(f"JSON problemático (primeros 500 chars): {json_limpio[:500] if 'json_limpio' in locals() else respuesta[:500]}")
+
+            try:
+                # Intento de corrección agresiva: remover líneas problemáticas
+                if 'json_limpio' in locals():
+                    logger.info(" Intentando corrección agresiva de JSON...")
+                    # Remover saltos de línea y espacios extras
+                    json_limpio_agresivo = ' '.join(json_limpio.split())
+                    json.loads(json_limpio_agresivo)
+                    logger.info(" Corrección agresiva exitosa")
+                    return json_limpio_agresivo
+            except:
+                pass
+
+            # Si todo falla, devolver respuesta original
+            logger.error(" No se pudo corregir el JSON, usando respuesta original")
             return respuesta
+
         except Exception as e:
-            logger.error(f"Error limpiando JSON: {e}")
+            logger.error(f" Error limpiando JSON: {e}")
             return respuesta
 
     def _reparar_json_malformado(self, json_str: str) -> str:
@@ -2342,23 +2379,30 @@ class ProcesadorGemini:
             # Guardar respuesta de análisis en Results
             await self._guardar_respuesta("analisis_iva_reteiva.json", resultado)
             
-            # Validar estructura mínima requerida
-            campos_requeridos = ["analisis_iva", "analisis_fuente_ingreso", "calculo_reteiva", "estado_liquidacion"]
-            for campo in campos_requeridos:
-                if campo not in resultado:
-                    logger.warning(f" Campo '{campo}' no encontrado en respuesta de IVA")
-                    resultado[campo] = self._obtener_campo_iva_default(campo)
-            
-            # Extraer información clave para logging
-            iva_data = resultado.get("analisis_iva", {})
-            estado_data = resultado.get("estado_liquidacion", {})
-            
-            iva_identificado = iva_data.get("iva_identificado", {})
-            valor_iva = iva_identificado.get("valor_iva_total", 0.0)
-            estado = estado_data.get("estado", "No definido")
-            
-            logger.info(f" Análisis IVA completado: Valor IVA=${valor_iva:,.2f}, Estado={estado}")
-            
+            # Validar estructura NUEVA del PROMPT_ANALISIS_IVA (v2.0 - SOLID)
+            campos_requeridos = ["extraccion_rut", "extraccion_factura", "clasificacion_concepto", "validaciones"]
+            campos_faltantes = [campo for campo in campos_requeridos if campo not in resultado]
+
+            if campos_faltantes:
+                logger.warning(f" Campos faltantes en respuesta de IVA: {campos_faltantes}")
+                # Agregar campos por defecto para los faltantes
+                for campo in campos_faltantes:
+                    resultado[campo] = self._obtener_campo_iva_default_v2(campo)
+
+            # Extraer información clave para logging (NUEVA ESTRUCTURA)
+            extraccion_factura = resultado.get("extraccion_factura", {})
+            extraccion_rut = resultado.get("extraccion_rut", {})
+            validaciones = resultado.get("validaciones", {})
+
+            valor_iva = extraccion_factura.get("valor_iva", 0.0)
+            es_responsable_iva = extraccion_rut.get("es_responsable_iva")
+            rut_disponible = validaciones.get("rut_disponible", False)
+
+            logger.info(f" Análisis IVA completado (v2.0 SOLID):")
+            logger.info(f"   - Valor IVA: ${valor_iva:,.2f}")
+            logger.info(f"   - Responsable IVA: {es_responsable_iva}")
+            logger.info(f"   - RUT disponible: {rut_disponible}")
+
             return resultado
             
         except json.JSONDecodeError as e:
@@ -2429,73 +2473,87 @@ class ProcesadorGemini:
         }
         
         return defaults.get(campo, {})
-    
+
+    def _obtener_campo_iva_default_v2(self, campo: str) -> Dict[str, Any]:
+        """
+        Obtiene valores por defecto para campos faltantes en análisis de IVA v2.0 (SOLID).
+
+        Nueva estructura del PROMPT_ANALISIS_IVA refactorizado.
+
+        Args:
+            campo: Nombre del campo faltante
+
+        Returns:
+            Dict con estructura por defecto v2.0
+        """
+        defaults = {
+            "extraccion_rut": {
+                "es_responsable_iva": None,
+                "codigo_encontrado": 0.0,
+                "texto_evidencia": "No disponible"
+            },
+            "extraccion_factura": {
+                "valor_iva": 0.0,
+                "porcentaje_iva": 0,
+                "valor_subtotal_sin_iva": 0.0,
+                "valor_total_con_iva": 0.0,
+                "concepto_facturado": "No identificado"
+            },
+            "clasificacion_concepto": {
+                "categoria": "no_clasificado",
+                "justificacion": "Campo faltante en respuesta de Gemini",
+                "coincidencia_encontrada": ""
+            },
+            "validaciones": {
+                "rut_disponible": False
+            }
+        }
+
+        return defaults.get(campo, {})
+
     def _iva_fallback(self, error_msg: str = "Error procesando IVA") -> Dict[str, Any]:
         """
-        Respuesta de emergencia cuando falla el procesamiento de IVA.
-        
+        Respuesta de emergencia cuando falla el procesamiento de IVA v2.0 (SOLID).
+
+        Retorna estructura compatible con PROMPT_ANALISIS_IVA refactorizado.
+
         Args:
             error_msg: Mensaje de error
-            
+
         Returns:
-            Dict[str, Any]: Respuesta básica de IVA
+            Dict[str, Any]: Respuesta básica de IVA con nueva estructura v2.0
         """
-        logger.warning(f"Usando fallback de IVA: {error_msg}")
-        
+        logger.warning(f"Usando fallback de IVA v2.0 (SOLID): {error_msg}")
+
         return {
-            "analisis_iva": {
-                "iva_identificado": {
-                    "tiene_iva": False,
-                    "valor_iva_total": 0.0,
-                    "porcentaje_iva": 0.0,
-                    "detalle_conceptos_iva": [],
-                    "metodo_identificacion": "error"
-                },
-                "responsabilidad_iva_rut": {
-                    "rut_disponible": False,
-                    "es_responsable_iva": None,
-                    "codigo_encontrado": "error",
-                    "texto_referencia": "Error en procesamiento"
-                },
-                "concepto_facturado": {
-                    "descripcion": "Error en identificación",
-                    "aplica_iva": False,
-                    "razon_exencion_exclusion": error_msg,
-                    "categoria": "error"
-                }
+            "extraccion_rut": {
+                "es_responsable_iva": None,
+                "codigo_encontrado": 0.0,
+                "texto_evidencia": f"Error en procesamiento: {error_msg}"
             },
-            "analisis_fuente_ingreso": {
-                "validaciones_fuente": {
-                    "uso_beneficio_colombia": False,
-                    "ejecutado_en_colombia": False,
-                    "asistencia_tecnica_colombia": False,
-                    "bien_ubicado_colombia": False
-                },
-                "es_fuente_nacional": True,
-                "validacion_iva_extranjero": {
-                    "es_extranjero": False,
-                    "iva_esperado_19": False,
-                    "iva_encontrado": 0.0
-                }
+            "extraccion_factura": {
+                "valor_iva": 0.0,
+                "porcentaje_iva": 0,
+                "valor_subtotal_sin_iva": 0.0,
+                "valor_total_con_iva": 0.0,
+                "concepto_facturado": "Error en identificación"
             },
-            "calculo_reteiva": {
-                "aplica_reteiva": False,
-                "porcentaje_reteiva": "0%",
-                "tarifa_decimal": 0.0,
-                "valor_reteiva_calculado": 0.0,
-                "metodo_calculo": "error"
+            "clasificacion_concepto": {
+                "categoria": "error",
+                "justificacion": f"Error en análisis: {error_msg}",
+                "coincidencia_encontrada": ""
             },
-            "estado_liquidacion": {
-                "estado": "Error en procesamiento",
-                "observaciones": [
-                    f"Error procesando IVA: {error_msg}",
-                    "Por favor revise manualmente los documentos",
-                    "Verifique responsabilidad de IVA en el RUT",
-                    "Valide conceptos facturados y aplicabilidad de IVA"
-                ]
+            "validaciones": {
+                "rut_disponible": False
             },
-            "tipo_procesamiento": "IVA_FALLBACK",
-            "error": error_msg
+            "tipo_procesamiento": "IVA_FALLBACK_v2.0",
+            "error": error_msg,
+            "observaciones": [
+                f"Error procesando IVA: {error_msg}",
+                "Por favor revise manualmente los documentos",
+                "Verifique responsabilidad de IVA en el RUT",
+                "Valide conceptos facturados y aplicabilidad de IVA"
+            ]
         }
     
     # ===============================

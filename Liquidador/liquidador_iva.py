@@ -1,530 +1,829 @@
 """
-LIQUIDADOR IVA Y RETEIVA
-========================
+LIQUIDADOR IVA Y RETEIVA v2.0 - ARQUITECTURA SOLID
+===================================================
 
-Módulo para el cálculo preciso de IVA y ReteIVA según normativa colombiana.
-Funciona en paralelo con otros liquidadores del sistema integrado.
+Módulo refactorizado siguiendo principios SOLID para validación y cálculo
+de IVA y ReteIVA según normativa colombiana.
 
-Funcionalidades:
-- Cálculo de ReteIVA para fuente nacional (15%)
-- Cálculo de ReteIVA para fuente extranjera (100%)
-- Validación de responsabilidad de IVA
-- Manejo de casos especiales (exentos, excluidos, no responsables)
-- Integración con sistema de procesamiento paralelo
+Arquitectura:
+- ValidadorIVA: Validaciones específicas de IVA (SRP)
+- CalculadorIVA: Cálculos de IVA (SRP)
+- ValidadorReteIVA: Validaciones específicas de ReteIVA (SRP)
+- CalculadorReteIVA: Cálculos de ReteIVA (SRP)
+- LiquidadorIVA: Orquestador que coordina validadores y calculadores (DIP)
+
+Responsabilidades separadas:
+- Gemini: Solo extracción e identificación de datos
+- Python: Todas las validaciones y cálculos manuales
 
 Autor: Miguel Angel Jaramillo Durango
+Versión: 2.0.0
 """
 
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime
 
 # Configuración de IVA
 from config import (
     obtener_configuracion_iva,
-    calcular_reteiva,
     obtener_tarifa_reteiva,
-    es_fuente_ingreso_nacional,
     nit_aplica_iva_reteiva
 )
 
 logger = logging.getLogger(__name__)
 
+
+# ===============================
+# DATACLASSES - ESTRUCTURAS DE DATOS
+# ===============================
+
+@dataclass
+class DatosExtraccionIVA:
+    """Datos extraídos de la respuesta de Gemini"""
+    # Extracción RUT
+    rut_disponible: bool
+    es_responsable_iva: Optional[bool]
+    codigo_encontrado: float
+    texto_evidencia: str
+
+    # Extracción factura
+    valor_iva: float
+    porcentaje_iva: int
+    valor_subtotal_sin_iva: float
+    valor_total_con_iva: float
+    concepto_facturado: str
+
+    # Clasificación concepto
+    categoria: str
+    justificacion: str
+    coincidencia_encontrada: str
+
+    # Clasificación inicial (de primera llamada Gemini)
+    es_facturacion_extranjera: bool
+
+
+@dataclass
+class ResultadoValidacionIVA:
+    """Resultado de validaciones de IVA"""
+    es_valido: bool
+    estado: str
+    observaciones: List[str]
+    warnings: List[str]
+    valor_iva_calculado: float
+    porcentaje_iva_calculado: float
+
+
 @dataclass
 class ResultadoLiquidacionIVA:
-    """Resultado estructurado de la liquidación de IVA y ReteIVA"""
-    # Datos de entrada
-    nit_administrativo: str
-    
-    # IVA
+    """Resultado final de la liquidación de IVA y ReteIVA"""
+    aplica: bool
     valor_iva_identificado: float
-    porcentaje_iva: float
-    aplica_iva: bool
-    
-    # ReteIVA
     valor_reteiva: float
+    porcentaje_iva: float
     tarifa_reteiva: float
-    porcentaje_reteiva_texto: str
-    aplica_reteiva: bool
-    
-    # Fuente de ingreso
     es_fuente_nacional: bool
-    metodo_calculo: str
-    
-    # Estado y validaciones
     estado_liquidacion: str
     es_responsable_iva: Optional[bool]
-    observaciones: list
+    observaciones: List[str]
     calculo_exitoso: bool
-    
-    # Metadatos de cálculo
-    timestamp: str
-    version_liquidador: str
 
-class LiquidadorIVA:
+
+# ===============================
+# VALIDADOR IVA - SRP
+# ===============================
+
+class ValidadorIVA:
     """
-    Liquidador especializado para cálculo de IVA y ReteIVA.
-    
-    Calcula retención de IVA según:
-    - Fuente nacional: 15% sobre el valor del IVA
-    - Fuente extranjera: 100% sobre el valor del IVA
-    - Validaciones de responsabilidad y aplicabilidad
-    - Casos especiales y excepciones normativas
+    SRP: Solo responsable de validar condiciones de IVA.
+    No realiza cálculos, solo valida reglas de negocio.
     """
-    
-    VERSION = "1.0.0"
-    
+
     def __init__(self):
-        """Inicializa el liquidador de IVA con configuración actual"""
-        self.config_iva = obtener_configuracion_iva()
-        logger.info(" LiquidadorIVA inicializado correctamente")
-    
-    def liquidar_iva_completo(self, analisis_iva: Dict[str, Any], 
-                             nit_administrativo: str) -> ResultadoLiquidacionIVA:
+        """Inicializa el validador de IVA"""
+        logger.info("ValidadorIVA inicializado")
+
+    def validar_precondiciones(self, datos: DatosExtraccionIVA) -> ResultadoValidacionIVA:
         """
-        Realiza la liquidación completa de IVA y ReteIVA.
-        
+        Valida todas las precondiciones necesarias para aplicar IVA.
+
+        Validaciones en orden:
+        1. RUT disponible
+        2. Responsabilidad IVA identificada
+        3. Valor IVA (directo o calculado)
+        4. Porcentaje IVA (si valor > 0)
+        5. Categoría según responsabilidad
+        6. Fuente extranjera (si aplica)
+
         Args:
-            analisis_iva: Resultado del análisis de IVA de Gemini
-            nit_administrativo: NIT de la entidad administrativa
-            
+            datos: Datos extraídos de Gemini
+
         Returns:
-            ResultadoLiquidacionIVA: Resultado completo de la liquidación
-            
-        Raises:
-            ValueError: Si el NIT no aplica para IVA o datos inválidos
-            Exception: Errores de cálculo
+            ResultadoValidacionIVA: Resultado completo de validaciones
         """
-        logger.info(f" Iniciando liquidación de IVA para NIT: {nit_administrativo}")
-        
-        try:
-            # 1. Validar NIT administrativo
-            if not nit_aplica_iva_reteiva(nit_administrativo):
-                raise ValueError(f"NIT {nit_administrativo} no está configurado para IVA/ReteIVA")
-            
-            # 2. Extraer datos del análisis
-            datos_iva = self._extraer_datos_analisis(analisis_iva)
-            
-            # 3. Validar estado de liquidación
-            estado_valido, mensaje_estado = self._validar_estado_liquidacion(datos_iva)
-            
-            if not estado_valido:
-                return self._crear_resultado_no_aplica(
-                    nit_administrativo=nit_administrativo,
-                    razon=mensaje_estado,
-                    datos_iva=datos_iva
+        observaciones = []
+        warnings = []
+
+        # VALIDACIÓN 1: RUT disponible
+        if not datos.rut_disponible:
+            return ResultadoValidacionIVA(
+                es_valido=False,
+                estado="Preliquidacion sin finalizar",
+                observaciones=["RUT no disponible en documentos adjuntos"],
+                warnings=[],
+                valor_iva_calculado=0.0,
+                porcentaje_iva_calculado=0.0
+            )
+
+        # VALIDACIÓN 2: Responsabilidad IVA identificada
+        if datos.es_responsable_iva is None:
+            return ResultadoValidacionIVA(
+                es_valido=False,
+                estado="Preliquidacion sin finalizar",
+                observaciones=["No se identificó responsabilidad de IVA en el RUT"],
+                warnings=[],
+                valor_iva_calculado=0.0,
+                porcentaje_iva_calculado=0.0
+            )
+
+        # VALIDACIÓN 3: Calcular/validar valor IVA
+        valor_iva_final = self._validar_valor_iva(datos, observaciones)
+
+        # VALIDACIÓN 4: Calcular/validar porcentaje IVA (solo si valor > 0)
+        porcentaje_iva_final = 0.0
+        if valor_iva_final > 0:
+            porcentaje_iva_final = self._validar_porcentaje_iva(
+                datos, valor_iva_final, observaciones
+            )
+
+        # VALIDACIÓN 5: Validar según responsabilidad IVA
+        resultado_responsabilidad = self._validar_segun_responsabilidad(
+            datos, valor_iva_final, observaciones, warnings
+        )
+
+        if not resultado_responsabilidad["es_valido"]:
+            return ResultadoValidacionIVA(
+                es_valido=False,
+                estado=resultado_responsabilidad["estado"],
+                observaciones=observaciones,
+                warnings=warnings,
+                valor_iva_calculado=valor_iva_final,
+                porcentaje_iva_calculado=porcentaje_iva_final
+            )
+
+        # VALIDACIÓN 6: Fuente extranjera
+        resultado_extranjera = self._validar_fuente_extranjera(
+            datos, porcentaje_iva_final, observaciones
+        )
+
+        if not resultado_extranjera["es_valido"]:
+            return ResultadoValidacionIVA(
+                es_valido=False,
+                estado="Preliquidacion sin finalizar",
+                observaciones=observaciones,
+                warnings=warnings,
+                valor_iva_calculado=valor_iva_final,
+                porcentaje_iva_calculado=porcentaje_iva_final
+            )
+
+        # Todas las validaciones pasaron
+        return ResultadoValidacionIVA(
+            es_valido=True,
+            estado="Preliquidado",
+            observaciones=observaciones,
+            warnings=warnings,
+            valor_iva_calculado=valor_iva_final,
+            porcentaje_iva_calculado=porcentaje_iva_final
+        )
+
+    def _validar_valor_iva(self, datos: DatosExtraccionIVA,
+                           observaciones: List[str]) -> float:
+        """
+        Valida y calcula el valor del IVA.
+
+        Manera 1: Directamente de Gemini si valor_iva > 0
+        Manera 2: Si valor_iva <= 0 y valor_subtotal > 0,
+                  calcular: valor_total_con_iva - valor_subtotal_sin_iva
+
+        Args:
+            datos: Datos extraídos
+            observaciones: Lista para agregar observaciones
+
+        Returns:
+            float: Valor del IVA calculado/validado
+        """
+        # Manera 1: Valor directo de Gemini
+        if datos.valor_iva > 0:
+            observaciones.append(f"Valor IVA identificado directamente: ${datos.valor_iva:,.2f}")
+            return datos.valor_iva
+
+        # Manera 2: Calcular desde subtotal y total
+        if datos.valor_iva <= 0 and datos.valor_subtotal_sin_iva > 0:
+            valor_iva_calculado = datos.valor_total_con_iva - datos.valor_subtotal_sin_iva
+            if valor_iva_calculado > 0:
+                observaciones.append(
+                    f"Valor IVA calculado: ${datos.valor_total_con_iva:,.2f} - "
+                    f"${datos.valor_subtotal_sin_iva:,.2f} = ${valor_iva_calculado:,.2f}"
                 )
-            
-            # 4. Calcular ReteIVA
-            resultado_calculo = self._calcular_reteiva_preciso(
-                valor_iva=datos_iva["valor_iva_total"],
-                es_fuente_nacional=datos_iva["es_fuente_nacional"]
-            )
-            
-            # 5. Construir resultado final
-            resultado = self._construir_resultado_exitoso(
-                nit_administrativo=nit_administrativo,
-                datos_iva=datos_iva,
-                resultado_calculo=resultado_calculo
-            )
-            
-            logger.info(f" Liquidación completada: ReteIVA=${resultado.valor_reteiva:,.2f}")
-            return resultado
-            
-        except Exception as e:
-            error_msg = f" Error en liquidación de IVA: {str(e)}"
-            logger.error(error_msg)
-            
-            return self._crear_resultado_error(
-                nit_administrativo=nit_administrativo,
-                mensaje_error=error_msg
-            )
-    
-    def _extraer_datos_analisis(self, analisis_iva: Dict[str, Any]) -> Dict[str, Any]:
+                return valor_iva_calculado
+
+        # No hay IVA
+        observaciones.append("Valor IVA = 0")
+        return 0.0
+
+    def _validar_porcentaje_iva(self, datos: DatosExtraccionIVA,
+                                valor_iva: float,
+                                observaciones: List[str]) -> float:
         """
-        Extrae y valida los datos necesarios del análisis de IVA.
-        
+        Valida y calcula el porcentaje del IVA.
+
+        Manera directa: Si porcentaje_iva > 0 de Gemini
+        Manera calculada: porcentaje = (valor_iva / valor_subtotal_sin_iva) * 100
+
         Args:
-            analisis_iva: Resultado del análisis de Gemini
-            
+            datos: Datos extraídos
+            valor_iva: Valor del IVA ya validado
+            observaciones: Lista para agregar observaciones
+
         Returns:
-            Dict con datos extraídos y validados
-            
-        Raises:
-            ValueError: Si faltan datos críticos
+            float: Porcentaje del IVA (como decimal, ej: 0.19 para 19%)
         """
-        try:
-            # Extraer estructura principal
-            iva_data = analisis_iva.get("analisis_iva", {})
-            fuente_data = analisis_iva.get("analisis_fuente_ingreso", {})
-            reteiva_data = analisis_iva.get("calculo_reteiva", {})
-            estado_data = analisis_iva.get("estado_liquidacion", {})
-            
-            # Datos de IVA
-            iva_identificado = iva_data.get("iva_identificado", {})
-            responsabilidad_iva = iva_data.get("responsabilidad_iva_rut", {})
-            concepto_facturado = iva_data.get("concepto_facturado", {})
-            
-            # Construir datos extraídos
-            datos = {
-                # IVA identificado
-                "tiene_iva": iva_identificado.get("tiene_iva", False),
-                "valor_iva_total": float(iva_identificado.get("valor_iva_total", 0.0)),
-                "porcentaje_iva": float(iva_identificado.get("porcentaje_iva", 0.0)),
-                "detalle_conceptos_iva": iva_identificado.get("detalle_conceptos_iva", []),
-                
-                # Responsabilidad IVA
-                "rut_disponible": responsabilidad_iva.get("rut_disponible", False),
-                "es_responsable_iva": responsabilidad_iva.get("es_responsable_iva"),
-                "codigo_encontrado": responsabilidad_iva.get("codigo_encontrado", "no_encontrado"),
-                
-                # Concepto facturado
-                "concepto_descripcion": concepto_facturado.get("descripcion", "No identificado"),
-                "concepto_aplica_iva": concepto_facturado.get("aplica_iva", True),
-                "categoria_concepto": concepto_facturado.get("categoria", "no_identificado"),
-                
-                # Fuente de ingreso
-                "es_fuente_nacional": fuente_data.get("es_fuente_nacional", True),
-                "validaciones_fuente": fuente_data.get("validaciones_fuente", {}),
-                
-                # ReteIVA
-                "aplica_reteiva": reteiva_data.get("aplica_reteiva", False),
-                "porcentaje_reteiva": reteiva_data.get("porcentaje_reteiva", "0%"),
-                "metodo_calculo": reteiva_data.get("metodo_calculo", "no_definido"),
-                
-                # Estado
-                "estado_liquidacion": estado_data.get("estado", "Error en procesamiento"),
-                "observaciones": estado_data.get("observaciones", [])
-            }
-            
-            logger.info(f" Datos extraídos: IVA=${datos['valor_iva_total']:,.2f}, Estado={datos['estado_liquidacion']}")
-            return datos
-            
-        except Exception as e:
-            error_msg = f"Error extrayendo datos del análisis: {str(e)}"
-            logger.error(f" {error_msg}")
-            raise ValueError(error_msg)
-    
-    def _validar_estado_liquidacion(self, datos_iva: Dict[str, Any]) -> Tuple[bool, str]:
+        # Manera directa de Gemini
+        if datos.porcentaje_iva > 0:
+            porcentaje_decimal = datos.porcentaje_iva / 100.0
+            observaciones.append(
+                f"Porcentaje IVA identificado: {datos.porcentaje_iva}% ({porcentaje_decimal})"
+            )
+            return porcentaje_decimal
+
+        # Manera calculada
+        if valor_iva > 0 and datos.valor_subtotal_sin_iva > 0:
+            porcentaje_calculado = (valor_iva / datos.valor_subtotal_sin_iva)
+            porcentaje_entero = int(round(porcentaje_calculado * 100))
+            observaciones.append(
+                f"Porcentaje IVA calculado: ({valor_iva:,.2f} / "
+                f"{datos.valor_subtotal_sin_iva:,.2f}) * 100 = {porcentaje_entero}% ({porcentaje_calculado:.4f})"
+            )
+            return porcentaje_calculado
+
+        return 0.0
+
+    def _validar_segun_responsabilidad(self, datos: DatosExtraccionIVA,
+                                       valor_iva: float,
+                                       observaciones: List[str],
+                                       warnings: List[str]) -> Dict[str, Any]:
         """
-        Valida si el estado permite proceder con la liquidación.
-        
+        Valida según la responsabilidad de IVA del tercero.
+
+        Casos:
+        - es_responsable_iva == True y valor_iva > 0: Validar categoría "gravado"
+        - es_responsable_iva == True y valor_iva == 0: Validar categoría exenta/excluida
+        - es_responsable_iva == False: Validar valor_iva == 0
+
         Args:
-            datos_iva: Datos extraídos del análisis
-            
+            datos: Datos extraídos
+            valor_iva: Valor del IVA validado
+            observaciones: Lista para observaciones
+            warnings: Lista para warnings
+
         Returns:
-            Tuple[bool, str]: (es_valido, mensaje_explicativo)
+            Dict con es_valido y estado
         """
-        estado = datos_iva["estado_liquidacion"]
-        
-        # Estados que NO permiten liquidación
-        estados_no_validos = [
-            "NO APLICA IVA, EL VALOR DEL IVA = 0",
-            "Preliquidación Sin Finalizar",
-            "Error en procesamiento"
-        ]
-        
-        if estado in estados_no_validos:
-            return False, f"Estado no permite liquidación: {estado}"
-        
-        # Validaciones adicionales
-        if not datos_iva["tiene_iva"]:
-            return False, "No se identificó IVA en la factura"
-        
-        if datos_iva["valor_iva_total"] <= 0:
-            return False, "Valor de IVA debe ser mayor a cero"
-        
-        if datos_iva["es_responsable_iva"] is False:
-            return False, "Tercero no es responsable de IVA según RUT"
-        
-        if not datos_iva["concepto_aplica_iva"]:
-            return False, "Concepto facturado no aplica IVA (exento/excluido)"
-        
-        # Estado válido para liquidación
-        return True, "Estado válido para liquidación"
-    
-    def _calcular_reteiva_preciso(self, valor_iva: float, 
+        # CASO 1: Responsable de IVA con valor IVA > 0
+        if datos.es_responsable_iva and valor_iva > 0:
+            if datos.categoria != "gravado":
+                warnings.append(
+                    f"ADVERTENCIA: Categoría '{datos.categoria}' esperada 'gravado' "
+                    f"para operación con IVA. Proceso continúa."
+                )
+                observaciones.append(
+                    f"Inconsistencia: Categoría '{datos.categoria}' con IVA aplicado"
+                )
+            else:
+                observaciones.append("Categoría 'gravado' validada correctamente")
+
+            return {"es_valido": True, "estado": "Preliquidado"}
+
+        # CASO 2: Responsable de IVA pero sin valor IVA
+        if datos.es_responsable_iva and valor_iva == 0:
+            categorias_validas = ["no_causa_iva", "exento", "excluido"]
+
+            if datos.categoria == "no_clasificado":
+                observaciones.append(
+                    "Inconsistencia: Responsable de IVA sin valor IVA y categoría no clasificada"
+                )
+                return {
+                    "es_valido": False,
+                    "estado": "Preliquidacion sin finalizar"
+                }
+
+            if datos.categoria in categorias_validas:
+                observaciones.append(
+                    f"Categoría '{datos.categoria}' válida para IVA = 0"
+                )
+                observaciones.append(f"Justificación: {datos.justificacion}")
+                if datos.coincidencia_encontrada:
+                    observaciones.append(
+                        f"Coincidencia: {datos.coincidencia_encontrada}"
+                    )
+                return {"es_valido": True, "estado": "No aplica impuesto"}
+
+            # Categoría inesperada
+            warnings.append(
+                f"ADVERTENCIA: Categoría '{datos.categoria}' con IVA = 0"
+            )
+            return {"es_valido": True, "estado": "No aplica impuesto"}
+
+        # CASO 3: NO responsable de IVA
+        if not datos.es_responsable_iva:
+            if valor_iva == 0:
+                observaciones.append("No responsable de IVA y valor IVA = 0 (correcto)")
+                return {"es_valido": True, "estado": "No aplica impuesto"}
+            else:
+                observaciones.append(
+                    f"Inconsistencia: No tiene responsabilidad de IVA pero se está "
+                    f"aplicando IVA (${valor_iva:,.2f})"
+                )
+                return {
+                    "es_valido": False,
+                    "estado": "Preliquidacion sin finalizar"
+                }
+
+        return {"es_valido": True, "estado": "Preliquidado"}
+
+    def _validar_fuente_extranjera(self, datos: DatosExtraccionIVA,
+                                   porcentaje_iva: float,
+                                   observaciones: List[str]) -> Dict[str, Any]:
+        """
+        Valida casos de facturación extranjera.
+
+        Si es_facturacion_extranjera == True:
+        - Porcentaje IVA debe ser 19%
+        - Si no, estado "Preliquidacion sin finalizar"
+        - Si sí, observación positiva
+
+        Args:
+            datos: Datos extraídos
+            porcentaje_iva: Porcentaje validado
+            observaciones: Lista para observaciones
+
+        Returns:
+            Dict con es_valido
+        """
+        if not datos.es_facturacion_extranjera:
+            return {"es_valido": True}
+
+        # Es facturación extranjera
+        porcentaje_entero = int(round(porcentaje_iva * 100))
+
+        if porcentaje_entero != 19:
+            observaciones.append(
+                f"Inconsistencia: Ingreso de fuente extranjera con IVA del "
+                f"{porcentaje_entero}% (esperado 19%)"
+            )
+            return {"es_valido": False}
+
+        # Porcentaje correcto
+        observaciones.append(
+            "IVA teórico correcto (19%) para ingreso de fuente extranjera"
+        )
+        return {"es_valido": True}
+
+
+# ===============================
+# CALCULADOR IVA - SRP
+# ===============================
+
+class CalculadorIVA:
+    """
+    SRP: Solo responsable de realizar cálculos de IVA.
+    No realiza validaciones, solo operaciones matemáticas.
+    """
+
+    def __init__(self):
+        """Inicializa el calculador de IVA"""
+        logger.info("CalculadorIVA inicializado")
+
+    def calcular_iva_preciso(self, valor_base: float,
+                            porcentaje: float) -> Decimal:
+        """
+        Calcula IVA con precisión usando Decimal.
+
+        Args:
+            valor_base: Valor base gravable
+            porcentaje: Porcentaje de IVA (como decimal, ej: 0.19)
+
+        Returns:
+            Decimal: Valor del IVA calculado con precisión
+        """
+        valor_decimal = Decimal(str(valor_base))
+        porcentaje_decimal = Decimal(str(porcentaje))
+
+        valor_iva = valor_decimal * porcentaje_decimal
+
+        return valor_iva.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+# ===============================
+# VALIDADOR RETEIVA - SRP
+# ===============================
+
+class ValidadorReteIVA:
+    """
+    SRP: Solo responsable de validar condiciones para aplicar ReteIVA.
+    """
+
+    def __init__(self):
+        """Inicializa el validador de ReteIVA"""
+        logger.info("ValidadorReteIVA inicializado")
+
+    def debe_aplicar_reteiva(self,
+                            es_responsable_iva: bool,
+                            valor_iva: float,
+                            categoria: str,
+                            estado_iva: str) -> Tuple[bool, str]:
+        """
+        Determina si se debe aplicar ReteIVA según condiciones.
+
+        Condiciones para aplicar ReteIVA:
+        - El tercero/proveedor es responsable de IVA
+        - La operación está gravada con IVA (No exenta, No excluida)
+        - El valor del IVA es mayor a cero (0)
+        - Se aplicó IVA teórico (para fuente extranjera o nacional)
+
+        Args:
+            es_responsable_iva: Responsabilidad del tercero
+            valor_iva: Valor del IVA
+            categoria: Categoría del concepto
+            estado_iva: Estado de la liquidación de IVA
+
+        Returns:
+            Tuple[bool, str]: (debe_aplicar, razon)
+        """
+        # Condición 1: Debe ser responsable de IVA
+        if not es_responsable_iva:
+            return False, "Tercero no es responsable de IVA"
+
+        # Condición 2: Valor IVA debe ser mayor a 0
+        if valor_iva <= 0:
+            return False, "Valor de IVA es cero o negativo"
+
+        # Condición 3: Operación debe estar gravada
+        categorias_no_aplican = ["no_causa_iva", "exento", "excluido"]
+        if categoria in categorias_no_aplican:
+            return False, f"Operación con categoría '{categoria}' no aplica ReteIVA"
+
+        # Condición 4: Estado de IVA debe ser válido
+        if estado_iva in ["Preliquidacion sin finalizar", "No aplica impuesto"]:
+            return False, f"Estado IVA '{estado_iva}' no permite ReteIVA"
+
+        # Todas las condiciones cumplidas
+        return True, "Condiciones para ReteIVA cumplidas"
+
+
+# ===============================
+# CALCULADOR RETEIVA - SRP
+# ===============================
+
+class CalculadorReteIVA:
+    """
+    SRP: Solo responsable de calcular valores de ReteIVA.
+    """
+
+    def __init__(self):
+        """Inicializa el calculador de ReteIVA"""
+        logger.info("CalculadorReteIVA inicializado")
+
+    def calcular_reteiva_preciso(self,
+                                 valor_iva: float,
                                  es_fuente_nacional: bool) -> Dict[str, Any]:
         """
-        Calcula ReteIVA con precisión usando Decimal para evitar errores de redondeo.
-        
+        Calcula ReteIVA con precisión según tipo de fuente.
+
+        Tarifas:
+        - Fuente nacional: 15% sobre el valor del IVA
+        - Fuente extranjera: 100% sobre el valor del IVA
+
         Args:
             valor_iva: Valor del IVA identificado
-            es_fuente_nacional: True si es fuente nacional, False si extranjera
-            
+            es_fuente_nacional: True si es nacional, False si extranjera
+
         Returns:
-            Dict con resultado del cálculo preciso
+            Dict con resultado del cálculo
         """
         try:
             # Usar Decimal para cálculos precisos
             valor_iva_decimal = Decimal(str(valor_iva))
-            
+
             # Obtener tarifa según fuente
-            tarifa_reteiva = obtener_tarifa_reteiva(es_fuente_nacional)
+            if es_fuente_nacional:
+                tarifa_reteiva = 0.15
+                porcentaje_texto = "15%"
+            else:
+                tarifa_reteiva = 1.0
+                porcentaje_texto = "100%"
+
             tarifa_decimal = Decimal(str(tarifa_reteiva))
-            
+
             # Calcular ReteIVA
             valor_reteiva_decimal = valor_iva_decimal * tarifa_decimal
-            
+
             # Redondear a 2 decimales
             valor_reteiva_redondeado = valor_reteiva_decimal.quantize(
                 Decimal('0.01'), rounding=ROUND_HALF_UP
             )
-            
-            # Determinar método y porcentaje texto
-            if es_fuente_nacional:
-                metodo = "fuente_nacional"
-                porcentaje_texto = "15%"
-            else:
-                metodo = "fuente_extranjera"
-                porcentaje_texto = "100%"
-            
+
             resultado = {
                 "valor_reteiva": float(valor_reteiva_redondeado),
                 "tarifa_reteiva": tarifa_reteiva,
-                "porcentaje_reteiva_texto": porcentaje_texto,
-                "metodo_calculo": metodo,
-                "valor_iva_base": valor_iva,
-                "calculo_formula": f"${valor_iva:,.2f} x {porcentaje_texto} = ${float(valor_reteiva_redondeado):,.2f}"
+                "porcentaje_texto": porcentaje_texto,
+                "formula": (
+                    f"${valor_iva:,.2f} x {porcentaje_texto} = "
+                    f"${float(valor_reteiva_redondeado):,.2f}"
+                )
             }
-            
-            logger.info(f" Cálculo ReteIVA: {resultado['calculo_formula']}")
+
+            logger.info(f"Cálculo ReteIVA: {resultado['formula']}")
             return resultado
-            
+
         except Exception as e:
-            error_msg = f"Error en cálculo preciso de ReteIVA: {str(e)}"
-            logger.error(f" {error_msg}")
-            raise ValueError(error_msg)
-    
-    def _construir_resultado_exitoso(self, nit_administrativo: str,
-                                   datos_iva: Dict[str, Any],
-                                   resultado_calculo: Dict[str, Any]) -> ResultadoLiquidacionIVA:
+            logger.error(f"Error calculando ReteIVA: {str(e)}")
+            raise ValueError(f"Error en cálculo de ReteIVA: {str(e)}")
+
+
+# ===============================
+# LIQUIDADOR IVA - ORQUESTADOR (DIP)
+# ===============================
+
+class LiquidadorIVA:
+    """
+    Orquestador principal que coordina validadores y calculadores.
+
+    DIP: Depende de abstracciones (ValidadorIVA, CalculadorIVA, etc.)
+    SRP: Solo coordina el flujo, delega responsabilidades
+    OCP: Extensible para nuevos tipos de validaciones/cálculos
+    """
+
+    VERSION = "2.0.0"
+
+    def __init__(self,
+                 validador_iva: Optional[ValidadorIVA] = None,
+                 calculador_iva: Optional[CalculadorIVA] = None,
+                 validador_reteiva: Optional[ValidadorReteIVA] = None,
+                 calculador_reteiva: Optional[CalculadorReteIVA] = None):
         """
-        Construye el resultado exitoso de la liquidación.
-        
+        Inicializa el liquidador con inyección de dependencias.
+
         Args:
-            nit_administrativo: NIT administrativo
-            datos_iva: Datos del análisis
-            resultado_calculo: Resultado del cálculo
-            
-        Returns:
-            ResultadoLiquidacionIVA: Resultado estructurado
+            validador_iva: Validador de IVA (DIP)
+            calculador_iva: Calculador de IVA (DIP)
+            validador_reteiva: Validador de ReteIVA (DIP)
+            calculador_reteiva: Calculador de ReteIVA (DIP)
         """
-        from datetime import datetime
-        
-        return ResultadoLiquidacionIVA(
-            # Datos de entrada
-            nit_administrativo=nit_administrativo,
-            
-            # IVA
-            valor_iva_identificado=datos_iva["valor_iva_total"],
-            porcentaje_iva=datos_iva["porcentaje_iva"],
-            aplica_iva=True,
-            
-            # ReteIVA
-            valor_reteiva=resultado_calculo["valor_reteiva"],
-            tarifa_reteiva=resultado_calculo["tarifa_reteiva"],
-            porcentaje_reteiva_texto=resultado_calculo["porcentaje_reteiva_texto"],
-            aplica_reteiva=True,
-            
-            # Fuente de ingreso
-            es_fuente_nacional=datos_iva["es_fuente_nacional"],
-            metodo_calculo=resultado_calculo["metodo_calculo"],
-            
-            # Estado y validaciones
-            estado_liquidacion="Preliquidado",
-            es_responsable_iva=datos_iva["es_responsable_iva"],
-            observaciones=[
-                f"IVA identificado: ${datos_iva['valor_iva_total']:,.2f}",
-                f"Fuente: {'Nacional' if datos_iva['es_fuente_nacional'] else 'Extranjera'}",
-                f"Cálculo: {resultado_calculo['calculo_formula']}"
-            ],
-            calculo_exitoso=True,
-            
-            # Metadatos
-            timestamp=datetime.now().isoformat(),
-            version_liquidador=self.VERSION
-        )
-    
-    def _crear_resultado_no_aplica(self, nit_administrativo: str,
-                                  razon: str, datos_iva: Dict[str, Any]) -> ResultadoLiquidacionIVA:
+        # Inyección de dependencias con valores por defecto
+        self.validador_iva = validador_iva or ValidadorIVA()
+        self.calculador_iva = calculador_iva or CalculadorIVA()
+        self.validador_reteiva = validador_reteiva or ValidadorReteIVA()
+        self.calculador_reteiva = calculador_reteiva or CalculadorReteIVA()
+
+        logger.info(f"LiquidadorIVA v{self.VERSION} inicializado con arquitectura SOLID")
+
+    def liquidar_iva_completo(self,
+                             analisis_gemini: Dict[str, Any],
+                             clasificacion_inicial: Dict[str, Any],
+                             nit_administrativo: str) -> Dict[str, Any]:
         """
-        Crea resultado cuando no aplica IVA/ReteIVA.
-        
+        Realiza la liquidación completa de IVA y ReteIVA.
+
+        Flujo:
+        1. Extraer datos de respuesta Gemini
+        2. Validar precondiciones de IVA (ValidadorIVA)
+        3. Si válido, validar condiciones ReteIVA (ValidadorReteIVA)
+        4. Si aplica ReteIVA, calcular (CalculadorReteIVA)
+        5. Construir respuesta final
+
         Args:
-            nit_administrativo: NIT administrativo
-            razon: Razón por la cual no aplica
-            datos_iva: Datos del análisis
-            
+            analisis_gemini: Respuesta del PROMPT_ANALISIS_IVA
+            clasificacion_inicial: Clasificación de primera llamada
+            nit_administrativo: NIT de la entidad
+
         Returns:
-            ResultadoLiquidacionIVA: Resultado de no aplicación
+            Dict con estructura de respuesta final
         """
-        from datetime import datetime
-        
-        return ResultadoLiquidacionIVA(
-            # Datos de entrada
-            nit_administrativo=nit_administrativo,
-            
-            # IVA
-            valor_iva_identificado=datos_iva.get("valor_iva_total", 0.0),
-            porcentaje_iva=datos_iva.get("porcentaje_iva", 0.0),
-            aplica_iva=False,
-            
-            # ReteIVA
-            valor_reteiva=0.0,
-            tarifa_reteiva=0.0,
-            porcentaje_reteiva_texto="0%",
-            aplica_reteiva=False,
-            
-            # Fuente de ingreso
-            es_fuente_nacional=datos_iva.get("es_fuente_nacional", True),
-            metodo_calculo="no_aplica",
-            
-            # Estado y validaciones
-            estado_liquidacion="No aplica",
-            es_responsable_iva=datos_iva.get("es_responsable_iva"),
-            observaciones=[
-                f"Razón: {razon}",
-                f"Estado original: {datos_iva.get('estado_liquidacion', 'No disponible')}"
-            ] + datos_iva.get("observaciones", []),
-            calculo_exitoso=True,  # Exitoso aunque no aplique
-            
-            # Metadatos
-            timestamp=datetime.now().isoformat(),
-            version_liquidador=self.VERSION
-        )
-    
-    def _crear_resultado_error(self, nit_administrativo: str,
-                              mensaje_error: str) -> ResultadoLiquidacionIVA:
-        """
-        Crea resultado de error.
-        
-        Args:
-            nit_administrativo: NIT administrativo
-            mensaje_error: Descripción del error
-            
-        Returns:
-            ResultadoLiquidacionIVA: Resultado de error
-        """
-        from datetime import datetime
-        
-        return ResultadoLiquidacionIVA(
-            # Datos de entrada
-            nit_administrativo=nit_administrativo,
-            
-            # IVA
-            valor_iva_identificado=0.0,
-            porcentaje_iva=0.0,
-            aplica_iva=False,
-            
-            # ReteIVA
-            valor_reteiva=0.0,
-            tarifa_reteiva=0.0,
-            porcentaje_reteiva_texto="0%",
-            aplica_reteiva=False,
-            
-            # Fuente de ingreso
-            es_fuente_nacional=True,
-            metodo_calculo="error",
-            
-            # Estado y validaciones
-            estado_liquidacion="Error en liquidación",
-            es_responsable_iva=None,
-            observaciones=[mensaje_error],
-            calculo_exitoso=False,
-            
-            # Metadatos
-            timestamp=datetime.now().isoformat(),
-            version_liquidador=self.VERSION
-        )
-    
-    def validar_configuracion(self) -> Dict[str, Any]:
-        """
-        Valida la configuración actual del liquidador.
-        
-        Returns:
-            Dict con estado de la configuración
-        """
+        logger.info(f"Iniciando liquidación IVA para NIT: {nit_administrativo}")
+
         try:
-            config = self.config_iva
-            
-            validacion = {
-                "configuracion_valida": True,
-                "nits_configurados": len(config["nits_validos"]),
-                "bienes_no_causan_iva": len(config["bienes_no_causan_iva"]),
-                "bienes_exentos_iva": len(config["bienes_exentos_iva"]),
-                "servicios_excluidos_iva": len(config["servicios_excluidos_iva"]),
-                "tarifas_reteiva": config["config_reteiva"]
-            }
-            
-            # Validar tarifas críticas
-            tarifas = config["config_reteiva"]
-            if tarifas["tarifa_fuente_nacional"] != 0.15:
-                validacion["advertencias"] = ["Tarifa fuente nacional no es 15%"]
-            
-            if tarifas["tarifa_fuente_extranjera"] != 1.0:
-                validacion.setdefault("advertencias", []).append("Tarifa fuente extranjera no es 100%")
-            
-            logger.info(" Configuración de liquidador IVA validada")
-            return validacion
-            
+            # PASO 1: Extraer datos de Gemini
+            datos_extraccion = self._extraer_datos_gemini(
+                analisis_gemini, clasificacion_inicial
+            )
+
+            # PASO 2: Validar IVA
+            resultado_validacion = self.validador_iva.validar_precondiciones(
+                datos_extraccion
+            )
+
+            # Registrar warnings si existen
+            for warning in resultado_validacion.warnings:
+                logger.warning(warning)
+
+            # Si validación falla, retornar resultado sin ReteIVA
+            if not resultado_validacion.es_valido:
+                return self._crear_respuesta_no_aplica(
+                    datos_extraccion,
+                    resultado_validacion
+                )
+
+            # PASO 3: Determinar fuente de ingreso
+            es_fuente_nacional = not datos_extraccion.es_facturacion_extranjera
+
+            # PASO 4: Validar si aplica ReteIVA
+            debe_aplicar, razon_reteiva = self.validador_reteiva.debe_aplicar_reteiva(
+                es_responsable_iva=datos_extraccion.es_responsable_iva,
+                valor_iva=resultado_validacion.valor_iva_calculado,
+                categoria=datos_extraccion.categoria,
+                estado_iva=resultado_validacion.estado
+            )
+
+            if not debe_aplicar:
+                logger.info(f"ReteIVA no aplica: {razon_reteiva}")
+                return self._crear_respuesta_sin_reteiva(
+                    datos_extraccion,
+                    resultado_validacion,
+                    es_fuente_nacional,
+                    razon_reteiva
+                )
+
+            # PASO 5: Calcular ReteIVA
+            resultado_reteiva = self.calculador_reteiva.calcular_reteiva_preciso(
+                valor_iva=resultado_validacion.valor_iva_calculado,
+                es_fuente_nacional=es_fuente_nacional
+            )
+
+            # PASO 6: Construir respuesta exitosa
+            return self._crear_respuesta_exitosa(
+                datos_extraccion,
+                resultado_validacion,
+                resultado_reteiva,
+                es_fuente_nacional
+            )
+
         except Exception as e:
-            logger.error(f" Error validando configuración: {str(e)}")
-            return {
-                "configuracion_valida": False,
-                "error": str(e)
+            error_msg = f"Error en liquidación de IVA: {str(e)}"
+            logger.error(error_msg)
+            return self._crear_respuesta_error(error_msg)
+
+    def _extraer_datos_gemini(self,
+                             analisis_gemini: Dict[str, Any],
+                             clasificacion_inicial: Dict[str, Any]) -> DatosExtraccionIVA:
+        """
+        Extrae datos de la respuesta de Gemini al formato DatosExtraccionIVA.
+
+        Args:
+            analisis_gemini: Respuesta PROMPT_ANALISIS_IVA
+            clasificacion_inicial: Clasificación inicial
+
+        Returns:
+            DatosExtraccionIVA: Datos estructurados
+        """
+        # Extraer secciones
+        extraccion_rut = analisis_gemini.get("extraccion_rut", {})
+        extraccion_factura = analisis_gemini.get("extraccion_factura", {})
+        clasificacion_concepto = analisis_gemini.get("clasificacion_concepto", {})
+        validaciones = analisis_gemini.get("validaciones", {})
+
+        # Extraer si es facturación extranjera de la clasificación inicial
+        es_facturacion_extranjera = clasificacion_inicial.get(
+            "es_facturacion_extranjera", False
+        )
+
+        datos = DatosExtraccionIVA(
+            # RUT
+            rut_disponible=validaciones.get("rut_disponible", False),
+            es_responsable_iva=extraccion_rut.get("es_responsable_iva"),
+            codigo_encontrado=float(extraccion_rut.get("codigo_encontrado", 0.0)),
+            texto_evidencia=extraccion_rut.get("texto_evidencia", ""),
+
+            # Factura
+            valor_iva=float(extraccion_factura.get("valor_iva", 0.0)),
+            porcentaje_iva=int(extraccion_factura.get("porcentaje_iva", 0)),
+            valor_subtotal_sin_iva=float(extraccion_factura.get("valor_subtotal_sin_iva", 0.0)),
+            valor_total_con_iva=float(extraccion_factura.get("valor_total_con_iva", 0.0)),
+            concepto_facturado=extraccion_factura.get("concepto_facturado", ""),
+
+            # Clasificación
+            categoria=clasificacion_concepto.get("categoria", "no_clasificado"),
+            justificacion=clasificacion_concepto.get("justificacion", ""),
+            coincidencia_encontrada=clasificacion_concepto.get("coincidencia_encontrada", ""),
+
+            # Clasificación inicial
+            es_facturacion_extranjera=es_facturacion_extranjera
+        )
+
+        logger.info(f"Datos extraídos - IVA: ${datos.valor_iva:,.2f}, Responsable: {datos.es_responsable_iva}")
+        return datos
+
+    def _crear_respuesta_exitosa(self,
+                                datos: DatosExtraccionIVA,
+                                validacion: ResultadoValidacionIVA,
+                                reteiva: Dict[str, Any],
+                                es_fuente_nacional: bool) -> Dict[str, Any]:
+        """
+        Crea la respuesta exitosa final.
+
+        Args:
+            datos: Datos de extracción
+            validacion: Resultado de validación IVA
+            reteiva: Resultado de cálculo ReteIVA
+            es_fuente_nacional: Tipo de fuente
+
+        Returns:
+            Dict con estructura de respuesta final
+        """
+        return {
+            "iva_reteiva": {
+                "aplica": True,
+                "valor_iva_identificado": validacion.valor_iva_calculado,
+                "valor_reteiva": reteiva["valor_reteiva"],
+                "porcentaje_iva": validacion.porcentaje_iva_calculado,
+                "tarifa_reteiva": reteiva["tarifa_reteiva"],
+                "es_fuente_nacional": es_fuente_nacional,
+                "estado_liquidacion": validacion.estado,
+                "es_responsable_iva": datos.es_responsable_iva,
+                "observaciones": validacion.observaciones + [
+                    f"Cálculo ReteIVA: {reteiva['formula']}"
+                ],
+                "calculo_exitoso": True
             }
-
-# ===============================
-# FUNCIONES DE UTILIDAD
-# ===============================
-
-def convertir_resultado_a_dict(resultado: ResultadoLiquidacionIVA) -> Dict[str, Any]:
-    """
-    Convierte el resultado a diccionario para integración con sistema paralelo.
-    
-    Args:
-        resultado: Resultado de liquidación
-        
-    Returns:
-        Dict serializable para JSON
-    """
-    return {
-        "aplica": resultado.aplica_reteiva,
-        "valor_iva_identificado": resultado.valor_iva_identificado,
-        "valor_reteiva": resultado.valor_reteiva,
-        "porcentaje_iva": resultado.porcentaje_iva,
-        "tarifa_reteiva": resultado.tarifa_reteiva,
-        "porcentaje_reteiva_texto": resultado.porcentaje_reteiva_texto,
-        "es_fuente_nacional": resultado.es_fuente_nacional,
-        "metodo_calculo": resultado.metodo_calculo,
-        "estado_liquidacion": resultado.estado_liquidacion,
-        "es_responsable_iva": resultado.es_responsable_iva,
-        "observaciones": resultado.observaciones,
-        "calculo_exitoso": resultado.calculo_exitoso
-    }
-
-def crear_resumen_iva_paralelo(resultado: ResultadoLiquidacionIVA) -> Dict[str, Any]:
-    """
-    Crea resumen para integración con procesamiento paralelo.
-    
-    Args:
-        resultado: Resultado de liquidación
-        
-    Returns:
-        Dict con resumen para sistema paralelo
-    """
-    return {
-        "iva_reteiva": {
-            "aplica": resultado.aplica_reteiva,
-            "valor_iva": resultado.valor_iva_identificado,
-            "valor_reteiva": resultado.valor_reteiva,
-            "porcentaje_reteiva": resultado.porcentaje_reteiva_texto,
-            "fuente_ingreso": "nacional" if resultado.es_fuente_nacional else "extranjera",
-            "estado": resultado.estado_liquidacion
         }
-    }
+
+    def _crear_respuesta_sin_reteiva(self,
+                                     datos: DatosExtraccionIVA,
+                                     validacion: ResultadoValidacionIVA,
+                                     es_fuente_nacional: bool,
+                                     razon: str) -> Dict[str, Any]:
+        """
+        Crea respuesta cuando hay IVA pero no aplica ReteIVA.
+        """
+        return {
+            "iva_reteiva": {
+                "aplica": False,
+                "valor_iva_identificado": validacion.valor_iva_calculado,
+                "valor_reteiva": 0.0,
+                "porcentaje_iva": validacion.porcentaje_iva_calculado,
+                "tarifa_reteiva": 0.0,
+                "es_fuente_nacional": es_fuente_nacional,
+                "estado_liquidacion": validacion.estado,
+                "es_responsable_iva": datos.es_responsable_iva,
+                "observaciones": validacion.observaciones + [
+                    f"ReteIVA no aplica: {razon}"
+                ],
+                "calculo_exitoso": True
+            }
+        }
+
+    def _crear_respuesta_no_aplica(self,
+                                   datos: DatosExtraccionIVA,
+                                   validacion: ResultadoValidacionIVA) -> Dict[str, Any]:
+        """
+        Crea respuesta cuando no aplica IVA ni ReteIVA.
+        """
+        return {
+            "iva_reteiva": {
+                "aplica": False,
+                "valor_iva_identificado": validacion.valor_iva_calculado,
+                "valor_reteiva": 0.0,
+                "porcentaje_iva": validacion.porcentaje_iva_calculado,
+                "tarifa_reteiva": 0.0,
+                "es_fuente_nacional": not datos.es_facturacion_extranjera,
+                "estado_liquidacion": validacion.estado,
+                "es_responsable_iva": datos.es_responsable_iva,
+                "observaciones": validacion.observaciones,
+                "calculo_exitoso": False if validacion.estado == "Preliquidacion sin finalizar" else True
+            }
+        }
+
+    def _crear_respuesta_error(self, mensaje_error: str) -> Dict[str, Any]:
+        """
+        Crea respuesta de error.
+        """
+        return {
+            "iva_reteiva": {
+                "aplica": False,
+                "valor_iva_identificado": 0.0,
+                "valor_reteiva": 0.0,
+                "porcentaje_iva": 0.0,
+                "tarifa_reteiva": 0.0,
+                "es_fuente_nacional": True,
+                "estado_liquidacion": "Error en liquidación",
+                "es_responsable_iva": None,
+                "observaciones": [mensaje_error],
+                "calculo_exitoso": False
+            }
+        }
+
 
 # ===============================
 # EJEMPLO DE USO
@@ -532,62 +831,63 @@ def crear_resumen_iva_paralelo(resultado: ResultadoLiquidacionIVA) -> Dict[str, 
 
 if __name__ == "__main__":
     """
-    Ejemplo de uso del LiquidadorIVA.
+    Ejemplo de uso del LiquidadorIVA v2.0 con arquitectura SOLID.
     """
-    # Simular análisis de IVA de Gemini
-    analisis_ejemplo = {
-        "analisis_iva": {
-            "iva_identificado": {
-                "tiene_iva": True,
-                "valor_iva_total": 1900000.0,
-                "porcentaje_iva": 19.0,
-                "detalle_conceptos_iva": [
-                    {"concepto": "Servicios", "valor_iva": 1900000.0, "porcentaje": 19.0}
-                ]
-            },
-            "responsabilidad_iva_rut": {
-                "rut_disponible": True,
-                "es_responsable_iva": True,
-                "codigo_encontrado": "48"
-            },
-            "concepto_facturado": {
-                "descripcion": "Servicios de consultoría",
-                "aplica_iva": True,
-                "categoria": "gravado"
-            }
+    # Configurar logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s - %(message)s'
+    )
+
+    # Simular respuesta de Gemini
+    analisis_gemini_ejemplo = {
+        "extraccion_rut": {
+            "es_responsable_iva": True,
+            "codigo_encontrado": 48,
+            "texto_evidencia": "RESPONSABILIDADES: 48 - Responsable de IVA"
         },
-        "analisis_fuente_ingreso": {
-            "es_fuente_nacional": True,
-            "validaciones_fuente": {
-                "uso_beneficio_colombia": True,
-                "ejecutado_en_colombia": True,
-                "asistencia_tecnica_colombia": False,
-                "bien_ubicado_colombia": True
-            }
+        "extraccion_factura": {
+            "valor_iva": 26023887.7,
+            "porcentaje_iva": 19,
+            "valor_subtotal_sin_iva": 136967304.0,
+            "valor_total_con_iva": 162991191.7,
+            "concepto_facturado": "Servicios de consultoría tecnológica"
         },
-        "calculo_reteiva": {
-            "aplica_reteiva": True,
-            "porcentaje_reteiva": "15%",
-            "metodo_calculo": "fuente_nacional"
+        "clasificacion_concepto": {
+            "categoria": "gravado",
+            "justificacion": "La factura tiene IVA aplicado",
+            "coincidencia_encontrada": ""
         },
-        "estado_liquidacion": {
-            "estado": "Preliquidado",
-            "observaciones": ["IVA identificado correctamente"]
+        "validaciones": {
+            "rut_disponible": True
         }
     }
-    
-    # Crear liquidador
+
+    clasificacion_inicial_ejemplo = {
+        "es_facturacion_extranjera": False
+    }
+
+    # Crear liquidador con inyección de dependencias
     liquidador = LiquidadorIVA()
-    
+
     # Realizar liquidación
     resultado = liquidador.liquidar_iva_completo(
-        analisis_iva=analisis_ejemplo,
+        analisis_gemini=analisis_gemini_ejemplo,
+        clasificacion_inicial=clasificacion_inicial_ejemplo,
         nit_administrativo="800.178.148-8"
     )
-    
+
     # Mostrar resultado
-    print(f" Liquidación completada:")
-    print(f"   - Estado: {resultado.estado_liquidacion}")
-    print(f"   - IVA identificado: ${resultado.valor_iva_identificado:,.2f}")
-    print(f"   - ReteIVA ({resultado.porcentaje_reteiva_texto}): ${resultado.valor_reteiva:,.2f}")
-    print(f"   - Fuente: {'Nacional' if resultado.es_fuente_nacional else 'Extranjera'}")
+    print("\n" + "="*60)
+    print("RESULTADO LIQUIDACIÓN IVA Y RETEIVA")
+    print("="*60)
+    print(f"Aplica: {resultado['iva_reteiva']['aplica']}")
+    print(f"Valor IVA: ${resultado['iva_reteiva']['valor_iva_identificado']:,.2f}")
+    print(f"Valor ReteIVA: ${resultado['iva_reteiva']['valor_reteiva']:,.2f}")
+    print(f"Porcentaje IVA: {resultado['iva_reteiva']['porcentaje_iva']:.2%}")
+    print(f"Tarifa ReteIVA: {resultado['iva_reteiva']['tarifa_reteiva']:.2%}")
+    print(f"Estado: {resultado['iva_reteiva']['estado_liquidacion']}")
+    print(f"\nObservaciones:")
+    for obs in resultado['iva_reteiva']['observaciones']:
+        print(f"  - {obs}")
+    print("="*60)

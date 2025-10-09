@@ -240,11 +240,11 @@ OBJETO DEL CONTRATO:
  PASO 1: VERIFICACIÓN DEL RUT
 ├─ Si RUT existe → Continuar al PASO 2
 └─ Si RUT NO existe → DETENER análisis con:
-   {{
+   
      "aplica_retencion": false,
      "estado": "Preliquidacion sin finalizar",
      "observaciones": ["RUT no disponible en documentos adjuntos"]
-   }}
+     (Los demás campos pueden ser null o 0.0 según corresponda)
 
  PASO 2: EXTRACCIÓN DE DATOS DEL RUT (SOLO del documento RUT)
 Buscar TEXTUALMENTE en el RUT:
@@ -634,14 +634,25 @@ OBJETO DEL CONTRATO:
 {anexo_contrato if anexo_contrato else "[NO PROPORCIONADO]"}
 
 ═══════════════════════════════════════════════════════════════════
+ REGLA CRÍTICA DE FORMATO DE SALIDA:
+═══════════════════════════════════════════════════════════════════
+
+ IMPORTANTE: Debes retornar SIEMPRE UN SOLO JSON de salida.
+   - Incluso si hay múltiples documentos de diferentes proveedores
+   - Analiza el documento principal (factura/orden de pago)
+   - Si hay información contradictoria entre documentos, repórtala en "observaciones"
+   - NO generes un array de JSONs con múltiples objetos
+   - SOLO retorna UN objeto JSON único
+
+═══════════════════════════════════════════════════════════════════
  PROTOCOLO DE ANÁLISIS ESTRICTO:
 ═══════════════════════════════════════════════════════════════════
 
  PASO 1: IDENTIFICACIÓN DEL TIPO DE ENTIDAD
 Buscar en RUT y documentos:
-├─ Si encuentras "CONSORCIO" → es_consorcio: true 
+├─ Si encuentras "CONSORCIO" → es_consorcio: true
 ├─ Si encuentras "UNIÓN TEMPORAL" o "UNION TEMPORAL" → es_consorcio: true
-├─ Si encuentras "CONSORCIO" o "UNIÓN TEMPORAL" extrae el nombre general del Consorcio/Unión 
+├─ Si encuentras "CONSORCIO" o "UNIÓN TEMPORAL" extrae el nombre general del Consorcio/Unión
 └─ Si NO encuentras ninguno → es_consorcio: false y asignar análisis con los valores en 0.0 o null o ""
 
 ═══════════════════════════════════════════════════════════════════
@@ -1231,14 +1242,25 @@ def PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(factura_texto: str, rut_texto: str, ane
     
     return f"""
     ANALIZA ESTE CONSORCIO CON FACTURACIÓN EXTRANJERA Y CALCULA RETENCIONES POR CONSORCIADO.
-    
+
+    ═══════════════════════════════════════════════════════════════════
+     REGLA CRÍTICA DE FORMATO DE SALIDA:
+    ═══════════════════════════════════════════════════════════════════
+
+    ⚠️ IMPORTANTE: Debes retornar SIEMPRE UN SOLO JSON de salida.
+       - Incluso si hay múltiples documentos de diferentes proveedores
+       - Analiza el documento principal (factura/orden de pago)
+       - Si hay información contradictoria entre documentos, repórtala en "observaciones"
+       - NO generes un array de JSONs con múltiples objetos
+       - SOLO retorna UN objeto JSON único
+
     CONCEPTOS RETEFUENTE EXTRANJEROS (usa NOMBRE EXACTO):
     {json.dumps(conceptos_limitados, indent=1, ensure_ascii=False)}
-    
+
     PAÍSES CON CONVENIO: {paises_convenio}
-    
+
     DOCUMENTOS DISPONIBLES:
-    
+
     {_generar_seccion_archivos_directos(nombres_archivos_directos)} 
     
     FACTURA:
@@ -1496,13 +1518,16 @@ NO incluyas texto antes o después del JSON:
 }}
 """
 # ===============================
-# ✅ NUEVO PROMPT: ANÁLISIS DE IVA Y RETEIVA
+#  NUEVO PROMPT: ANÁLISIS DE IVA Y RETEIVA
 # ===============================
 
+
+
 def PROMPT_ANALISIS_IVA(factura_texto: str, rut_texto: str, anexos_texto: str, 
-                        cotizaciones_texto: str, anexo_contrato: str, nombres_archivos_directos: list[str] = None) -> str:
+                                    cotizaciones_texto: str, anexo_contrato: str, 
+                                    nombres_archivos_directos: list[str] = None) -> str:
     """
-    Genera el prompt para análisis especializado de IVA y ReteIVA.
+    Prompt optimizado para Gemini - Enfocado en extracción y clasificación de IVA.
     
     Args:
         factura_texto: Texto extraído de la factura principal
@@ -1521,31 +1546,12 @@ def PROMPT_ANALISIS_IVA(factura_texto: str, rut_texto: str, anexos_texto: str,
     config_iva = obtener_configuracion_iva()
     
     return f"""
-Eres un experto contador colombiano especializado en IVA y ReteIVA que trabaja para FIDUCIARIA FIDUCOLDEX.
-Tu tarea es analizar documentos para determinar:
+ROL: Eres un EXTRACTOR y CLASIFICADOR de información tributaria especializado en IVA colombiano.
+Tu función es ÚNICAMENTE extraer datos específicos de los documentos como el RUT el cual es el FORMULARIO DE REGISTRO UNICO TRIBUTARIO y clasificar conceptos según las categorías predefinidas.
 
-1.  IDENTIFICACIÓN Y EXTRACCIÓN DEL IVA
-2.  VALIDACIÓN DE RESPONSABILIDAD DE IVA EN EL RUT
-3.  DETERMINACIÓN DE FUENTE DE INGRESO (NACIONAL/EXTRANJERA)
-4.  CÁLCULO DE RETEIVA
-
-CONFIGURACIÓN DE BIENES Y SERVICIOS:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-BIENES QUE NO CAUSAN IVA:
-{json.dumps(config_iva['bienes_no_causan_iva'], indent=2, ensure_ascii=False)}
-
-BIENES EXENTOS DE IVA:
-{json.dumps(config_iva['bienes_exentos_iva'], indent=2, ensure_ascii=False)}
-
-SERVICIOS EXCLUIDOS DE IVA:
-{json.dumps(config_iva['servicios_excluidos_iva'], indent=2, ensure_ascii=False)}
-
-CONFIGURACIÓN RETEIVA:
-{json.dumps(config_iva['config_reteiva'], indent=2, ensure_ascii=False)}
-
-DOCUMENTOS DISPONIBLES:
-━━━━━━━━━━━━━━━━━━━━━━━━
+═══════════════════════════════════════════════════════════════════════
+DOCUMENTOS A ANALIZAR
+═══════════════════════════════════════════════════════════════════════
 
 {_generar_seccion_archivos_directos(nombres_archivos_directos)}
 
@@ -1564,149 +1570,114 @@ COTIZACIONES (PROPUESTAS COMERCIALES):
 ANEXO CONCEPTO CONTRATO (OBJETO DEL CONTRATO):
 {anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
 
-INSTRUCCIONES CRÍTICAS:
-━━━━━━━━━━━━━━━━━━━━━━━━━
+═══════════════════════════════════════════════════════════════════════
+CATEGORÍAS DE CLASIFICACIÓN (SOLO SI NO HAY IVA EN FACTURA)
+═══════════════════════════════════════════════════════════════════════
 
-1.  **IDENTIFICACIÓN DEL IVA EN LA FACTURA**:
-   • Analiza el texto de la factura para identificar si menciona IVA
+BIENES QUE NO CAUSAN IVA:
+{json.dumps(config_iva['bienes_no_causan_iva'], indent=2, ensure_ascii=False)}
+
+BIENES EXENTOS DE IVA:
+{json.dumps(config_iva['bienes_exentos_iva'], indent=2, ensure_ascii=False)}
+
+SERVICIOS EXCLUIDOS DE IVA:
+{json.dumps(config_iva['servicios_excluidos_iva'], indent=2, ensure_ascii=False)}
+
+═══════════════════════════════════════════════════════════════════════
+TAREAS ESPECÍFICAS DE EXTRACCIÓN
+═══════════════════════════════════════════════════════════════════════
+
+1.  CRÍTICO - SOLO DEL RUT (FORMULARIO DE REGISTRO ÚNICO TRIBUTARIO) - EXTRAER:
+
+    INSTRUCCIÓN OBLIGATORIA PARA DOCUMENTOS LARGOS:
+
+   • DEBES escanear COMPLETAMENTE TODO el documento de INICIO a FIN
+   • El RUT puede estar en CUALQUIER página del documento (inicio, medio o final)
+   • NO asumas ubicaciones - REVISA TODAS LAS PÁGINAS sin excepción
+   • Busca indicadores del RUT: "REGISTRO ÚNICO TRIBUTARIO", "RUT", "DIAN", "NIT"
+   • Es OBLIGATORIO revisar el documento COMPLETO
+
+    EXTRACCIÓN ESPECÍFICA una vez encuentres el RUT:
+
+   • Buscar SOLO en la sección "RESPONSABILIDADES, CALIDADES Y ATRIBUTOS"
+   • NO te fijes en pequeñas casillas marcadas, Solo en el texto principal
+   • Identificar texto de responsabilidad:
+     - "48 - Impuesto sobre las ventas - IVA" → es_responsable_iva: true
+     - "49 - No responsable de IVA" → es_responsable_iva: false
+     - "53 - Régimen simple de tributación" → es_responsable_iva: false
+
+    VALIDACIONES DE CASOS ESPECIALES:
+
+   • Si encuentras el RUT pero NO tiene código de responsabilidad IVA:
+     → "es_responsable_iva": null
+     → "codigo_encontrado": 0.0
+     → "texto_evidencia": "RUT encontrado pero sin código de responsabilidad IVA"
+
+   • Si NO encuentras el RUT en ninguna parte del documento:
+     → "rut_disponible": false
+     → "es_responsable_iva": null
+     → "codigo_encontrado": 0.0
+     → "texto_evidencia": "RUT no encontrado después de escanear todo el documento"
+
+2. SOLO DE LA FACTURA - EXTRAER:
+   • Valor del IVA (buscar: "IVA", "I.V.A", "Impuesto")
+   • Porcentaje del IVA (usualmente 19 si 19%, 5 si 5% o 0 si 0%) (extraelo como un numero entero >= 0)
+   • Valor subtotal (factura SIN IVA)
+   • Valor total (factura CON IVA incluido)
+   • Concepto facturado (copiar textualmente la descripción del servicio/bien)
+
+3. CLASIFICACIÓN DEL CONCEPTO:
    
-   • **ESCENARIO 1**: La factura menciona la totalidad del IVA → Extraer porcentaje y valor
-   • **ESCENARIO 2**: La factura menciona IVA de varios conceptos → Sumar todos los IVAs
-   • **ESCENARIO 3**: La factura menciona IVA del 0% o no menciona IVA → Validar exención/exclusión
-
-2. 📝 **VALIDACIÓN DE RESPONSABILIDAD DE IVA EN EL RUT**:
-   • Buscar en "RESPONSABILIDADES, CALIDADES Y ATRIBUTOS"
-   • Código 48: "Impuesto sobre las ventas – IVA" → ES RESPONSABLE DE IVA
-   • Código 49: "No responsable de IVA" → NO ES RESPONSABLE DE IVA
-   • Código 53: "Persona Jurídica No Responsable de IVA" → NO ES RESPONSABLE DE IVA
+   SI LA FACTURA TIENE IVA (valor > 0):
+   → Asignar categoría: "gravado"
    
-   **SI EL TERCERO NO ES RESPONSABLE DE IVA**:
-   • NO SE CALCULA RETEIVA, NI IVA
-   • Especificar: "Según el RUT el tercero NO ES RESPONSABLE DE IVA"
+   SI LA FACTURA NO TIENE IVA (valor = 0 o no menciona IVA):
+   → Comparar el concepto extraído con las listas de categorías proporcionadas
+   → Asignar categoría: "no_causa_iva" | "exento" | "excluido" | "no_clasificado"
    
-   **SI EL RUT NO ESTA DISPONIBLE, O SI NO SE PUEDE IDENTIFICAR LA RESPONSABILIDAD EN EL RUT**:
-    • Revisa los anexos y cotizaciones para identificar si el tercero es responsable de IVA   
-    
-   **SI NO SE PUEDE IDENTIFICAR RESPONSABILIDAD**:
-   • Especificar: "No se identificó la responsabilidad (RUT no disponible/no menciona)"
-   • NO se puede liquidar
+   IMPORTANTE: Si no puedes clasificar con certeza, usa "no_clasificado"
 
-3. 🔍 **VALIDACIÓN DE CONCEPTOS EXENTOS/EXCLUIDOS**:
+═══════════════════════════════════════════════════════════════════════
+FORMATO DE RESPUESTA (JSON ESTRICTO)
+═══════════════════════════════════════════════════════════════════════
 
-   **IMPORTANTE** : LA VALIDACION DE CONCEPTOS SOLO LA REALIZAS SI IDENTIFICAS EN LA FACTURA QUE EL IVA ES DEL 0% O NO MENCIONA IVA
-   
-   SI EL IVA ES DEL 0% O NO MENCIONA IVA:
-   • Identificar el CONCEPTO O BIEN FACTURADO
-   • Validar contra las listas de bienes/servicios exentos/excluidos
-   
-   **SI LUEGO DE VALIDAR EL CONCEPTO NO DEBE APLICAR IVA**:
-   • Mensaje: "NO APLICA IVA, EL VALOR DEL IVA = 0"
-   • Observaciones: Explicar por qué no aplica IVA
-   
-   **SI EL CONCEPTO SÍ DEBE APLICAR IVA** (pero la factura muestra 0%):
-   • Mensaje: "Preliquidación Sin Finalizar"
-   • Observaciones: Explicar por qué SÍ aplica IVA
+Responde ÚNICAMENTE con el siguiente JSON, sin texto adicional:
 
-4. 🌍 **DETERMINACIÓN DE FUENTE DE INGRESO**:
-   Validar si es FUENTE NACIONAL o EXTRANJERA:
-   
-   **PREGUNTAS DE VALIDACIÓN**:
-   • ¿El servicio tiene uso o beneficio económico en Colombia?
-   • ¿La actividad (servicio) se ejecutó total o parcialmente en Colombia?
-   • ¿El servicio corresponde a asistencia técnica, consultoría o know-how usado en Colombia?
-   • ¿El bien vendido o utilizado está ubicado en Colombia?
-   
-   **REGLA**: Si CUALQUIERA es SÍ → FUENTE NACIONAL | Si TODAS son NO → FUENTE EXTRANJERA
-
-5. 📉 **VALIDACIÓN ESPECIAL PARA FACTURACIÓN EXTRANJERA**:
-   • Si es fuente extranjera, el IVA debe ser del 19%
-   • Si aparece IVA diferente al 19% EN LA FACTURA → "Liquidación sin finalizar"
-   • Observaciones: Mencionar la inconsistencia
-
-6. 🎆 **CASO ESPECIAL - INCONSISTENCIA RUT vs FACTURA**:
-   • Si RUT o los ANEXOS dicen "NO responsable de IVA" pero la factura muestra IVA:
-   • Resultado: "Preliquidación sin finalizar"
-   • Observaciones: "En el RUT/ANEXOS se identificó que el tercero no es responsable de IVA según el RUT aunque la factura muestra un IVA"
-
-7.  **CÁLCULO DE RETEIVA**:
-   • **Fuente Nacional**: ReteIVA = Valor IVA x 15%
-   • **Fuente Extranjera**: ReteIVA = Valor IVA x 100%
-   • GEMINI solo debe analizar el porcentaje, el cálculo manual se hace en liquidador_iva.py
-
-ESTADOS POSIBLES:
-━━━━━━━━━━━━━━━━━━
-• **"Preliquidado"** → Todos los requisitos se cumplen
-• **"NO APLICA IVA, EL VALOR DEL IVA = 0"** → Tercero no responsable o concepto exento
-• **"Preliquidación Sin Finalizar"** → Inconsistencias o falta información
-
-RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 {{
-    "analisis_iva": {{
-        "iva_identificado": {{
-            "tiene_iva": true/false,
-            "valor_iva_total": 0.0,
-            "porcentaje_iva": 0.0,
-            "detalle_conceptos_iva": [
-                {{
-                    "concepto": "Nombre del concepto",
-                    "valor_iva": 0.0,
-                    "porcentaje": 0.0
-                }}
-            ],
-            "metodo_identificacion": "total_factura|suma_conceptos|iva_cero|no_mencionado"
-        }},
-        "responsabilidad_iva_rut": {{
-            "rut_disponible": true/false,
-            "es_responsable_iva": true/false/null,
-            "codigo_encontrado": "48|49|53|no_encontrado",
-            "texto_referencia": "Texto del RUT donde se encontró"
-        }},
-        "concepto_facturado": {{
-            "descripcion": "Descripción del concepto/bien facturado",
-            "aplica_iva": true/false,
-            "razon_exencion_exclusion": "Explicación si no aplica IVA",
-            "categoria": "no_causa_iva|exento|excluido|gravado"
-        }}
+    "extraccion_rut": {{
+        "es_responsable_iva": true | false | null,
+        "codigo_encontrado": 48 | 49 | 53 | 0.0,
+        "texto_evidencia": "Texto exacto donde encontraste la información"
     }},
-    "analisis_fuente_ingreso": {{
-        "validaciones_fuente": {{
-            "uso_beneficio_colombia": true/false,
-            "ejecutado_en_colombia": true/false,
-            "asistencia_tecnica_colombia": true/false,
-            "bien_ubicado_colombia": true/false
-        }},
-        "es_fuente_nacional": true/false,
-        "validacion_iva_extranjero": {{
-            "es_extranjero": true/false,
-            "iva_esperado_19": true/false,
-            "iva_encontrado": 0.0
-        }}
+    "extraccion_factura": {{
+        "valor_iva": valor encontrado o 0.0,
+        "porcentaje_iva": valor encontrado o 0,
+        "valor_subtotal_sin_iva": valor encontrado o 0.0,
+        "valor_total_con_iva": valor encontrado o 0.0,
+        "concepto_facturado": "Transcripción textual del concepto/descripción",
     }},
-    "calculo_reteiva": {{
-        "aplica_reteiva": true/false,
-        "porcentaje_reteiva": "15%|100%",
-        "tarifa_decimal": 0.15,
-        "valor_reteiva_calculado": 0.0,
-        "metodo_calculo": "fuente_nacional|fuente_extranjera"
+    "clasificacion_concepto": {{
+        "categoria": "gravado|no_causa_iva|exento|excluido|no_clasificado",
+        "justificacion": "Breve explicación de por qué se asignó esta categoría",
+        "coincidencia_encontrada": "Item específico de las listas que coincide (si aplica)"
     }},
-    "estado_liquidacion": {{
-        "estado": "Preliquidado|NO APLICA IVA, EL VALOR DEL IVA = 0|Preliquidación Sin Finalizar",
-        "observaciones": [
-            "Observación 1",
-            "Observación 2"
-        ]
+    "validaciones": {{
+        "rut_disponible": true/false
     }}
 }}
 
-🔥 CRÍTICO: 
-• Si tercero no responsable de IVA → "NO APLICA IVA, EL VALOR DEL IVA = 0"
-• Si concepto exento/excluido y factura muestra IVA=0 → "NO APLICA IVA, EL VALOR DEL IVA = 0"
-• Si concepto gravado pero factura muestra IVA=0 → "Preliquidación Sin Finalizar"
-• Si es extranjero y IVA ≠ 19% → "Preliquidación Sin Finalizar"
-• Solo proceder con ReteIVA si el IVA fue identificado correctamente
+═══════════════════════════════════════════════════════════════════════
+REGLAS CRÍTICAS
+═══════════════════════════════════════════════════════════════════════
 
-    """
+• NO interpretes ni deduzcas información que no esté explícita
+• Si un dato no está disponible, usa 0.0 para números o "no_identificado" para textos
+• La clasificación SOLO se hace si NO hay IVA en la factura
+• Si hay IVA en la factura, SIEMPRE es categoría "gravado"
+• Extrae EXACTAMENTE lo que aparece en los documentos
+• No calcules valores que no estén explícitos en la factura
 
+"""
 def PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(factura_texto: str, rut_texto: str, anexos_texto: str, 
                                              cotizaciones_texto: str, anexo_contrato: str, nombres_archivos_directos: list[str] = None) -> str:
     """
