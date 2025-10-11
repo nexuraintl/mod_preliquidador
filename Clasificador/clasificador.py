@@ -13,6 +13,7 @@ import os
 import json
 import asyncio
 import logging
+import traceback
 from datetime import datetime
 from typing import Dict, Any, Tuple
 from pathlib import Path
@@ -1286,19 +1287,23 @@ class ProcesadorGemini:
              ValueError: Si hay error en la llamada a Gemini
          """
         try:
+            # Normalizar archivos_directos (puede ser None)
+            if archivos_directos is None:
+                archivos_directos = []
+
             # Timeout extendido para análisis de facturas (más complejo que clasificación)
             timeout_segundos = 280.0  # 4 minutos para análisis detallado
 
             logger.info(f" Análisis híbrido de factura con timeout de {timeout_segundos}s")
             logger.info(f" Contenido: 1 prompt de análisis + {len(archivos_directos)} archivos directos")
-            
+
             # ✅ CREAR CONTENIDO MULTIMODAL CORRECTO PARA ANÁLISIS
             contenido_multimodal = []
-            
+
             # Agregar prompt de análisis (primer elemento)
             contenido_multimodal.append(prompt)
             logger.info(f"Prompt de análisis agregado: {len(prompt):,} caracteres")
-            
+
             # ✅ PROCESAR ARCHIVOS DIRECTOS CON VALIDACIÓN ROBUSTA
             for i, archivo in enumerate(archivos_directos):
                 try:
@@ -1419,7 +1424,11 @@ class ProcesadorGemini:
             raise ValueError(error_msg)
         except Exception as e:
             logger.error(f" Error en análisis híbrido de factura: {e}")
-            logger.error(f" Archivos enviados: {[getattr(archivo, 'filename', 'sin_nombre') for archivo in archivos_directos]}")
+            # Manejar archivos_directos que puede ser None
+            archivos_info = []
+            if archivos_directos:
+                archivos_info = [getattr(archivo, 'filename', 'sin_nombre') for archivo in archivos_directos]
+            logger.error(f" Archivos enviados: {archivos_info}")
             raise ValueError(f"Error híbrido en análisis de factura: {str(e)}")
     
     # ===============================
@@ -2853,10 +2862,10 @@ class ProcesadorGemini:
     def _estampillas_fallback(self, error_msg: str = "Error procesando estampillas") -> Dict[str, Any]:
         """
         Respuesta de emergencia cuando falla el procesamiento de estampillas.
-        
+
         Args:
             error_msg: Mensaje de error
-            
+
         Returns:
             Dict[str, Any]: Respuesta básica de estampillas
         """
@@ -2875,3 +2884,162 @@ class ProcesadorGemini:
                 "Busque menciones de: Procultura, Bienestar, Adulto Mayor, Universidad Pedagógica, Caldas, Prodeporte"
             ]
         }
+
+    async def analizar_tasa_prodeporte(
+        self,
+        documentos_clasificados: Dict[str, Dict],
+        archivos_directos: list[UploadFile] = None,
+        cache_archivos: Dict[str, bytes] = None,
+        observaciones_tp: str = None
+    ) -> Dict[str, Any]:
+        """
+        Analiza documentos para extracción de datos de Tasa Prodeporte usando Gemini AI.
+
+        ARQUITECTURA: Separación IA-Validación
+        - Gemini: SOLO extrae datos (factura, IVA, menciones, municipio)
+        - Python: Realiza todas las validaciones y cálculos (en liquidador_TP.py)
+
+        SRP: Solo coordina el análisis con Gemini para Tasa Prodeporte
+
+        Args:
+            documentos_clasificados: Diccionario de documentos clasificados
+            archivos_directos: Lista de archivos directos para procesamiento multimodal
+            cache_archivos: Cache de archivos para workers paralelos
+            observaciones_tp: Observaciones del usuario (opcional)
+
+        Returns:
+            Dict con análisis de Gemini: {
+                "factura_con_iva": float,
+                "factura_sin_iva": float,
+                "iva": float,
+                "aplica_tasa_prodeporte": bool,
+                "texto_mencion_tasa": str,
+                "municipio_identificado": str,
+                "texto_municipio": str
+            }
+        """
+        logger.info("Analizando Tasa Prodeporte con Gemini AI...")
+
+        # USAR CACHE SI ESTÁ DISPONIBLE (igual que estampillas_generales)
+        archivos_directos = archivos_directos or []
+        if cache_archivos:
+            logger.info(f"Tasa Prodeporte usando cache de archivos: {len(cache_archivos)} archivos")
+            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
+        elif archivos_directos:
+            logger.info(f"Tasa Prodeporte usando archivos directos originales: {len(archivos_directos)} archivos")
+
+        try:
+            # Extraer textos de documentos clasificados
+            factura_texto = ""
+            anexos_texto = ""
+
+            for nombre_archivo, datos_doc in documentos_clasificados.items():
+                categoria = datos_doc.get("categoria", "")
+                texto = datos_doc.get("texto", "")
+
+                if categoria == "FACTURA":
+                    factura_texto += f"\n=== {nombre_archivo} ===\n{texto}\n"
+                    logger.info(f"Factura encontrada para análisis Tasa Prodeporte: {nombre_archivo}")
+                elif categoria in ["ANEXO", "ANEXO_CONTRATO", "ANEXO CONCEPTO CONTRATO"]:
+                    anexos_texto += f"\n=== {nombre_archivo} ===\n{texto}\n"
+
+            # Normalizar textos vacíos
+            factura_texto = factura_texto.strip() if factura_texto else "NO DISPONIBLE"
+            anexos_texto = anexos_texto.strip() if anexos_texto else "NO DISPONIBLE"
+
+            # Obtener nombres de archivos directos (compatible con cache)
+            nombres_archivos_directos = []
+            if archivos_directos:
+                for archivo in archivos_directos:
+                    try:
+                        if hasattr(archivo, 'filename') and archivo.filename:
+                            nombres_archivos_directos.append(archivo.filename)
+                        else:
+                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                    except Exception as e:
+                        logger.warning(f"Error obteniendo nombre de archivo: {e}")
+                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+
+            # Generar prompt especializado
+            from Clasificador.prompt_clasificador import PROMPT_ANALISIS_TASA_PRODEPORTE
+
+            prompt = PROMPT_ANALISIS_TASA_PRODEPORTE(
+                factura_texto=factura_texto,
+                anexos_texto=anexos_texto,
+                observaciones_texto=observaciones_tp if observaciones_tp else "",
+                nombres_archivos_directos=nombres_archivos_directos
+            )
+
+            logger.info(f"Prompt generado para Tasa Prodeporte ({len(prompt)} caracteres)")
+
+            # Llamar a Gemini con soporte multimodal
+            respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos)
+            logger.info(f"Respuesta análisis Tasa Prodeporte: {respuesta[:500]}...")
+
+            # Limpiar respuesta
+            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
+
+            # Parsear JSON
+            analisis_dict = json.loads(respuesta_limpia)
+
+            # Guardar respuesta de análisis en Results
+            await self._guardar_respuesta("analisis_tasa_prodeporte.json", analisis_dict)
+
+            # Validar estructura esperada
+            campos_esperados = [
+                "factura_con_iva", "factura_sin_iva", "iva",
+                "aplica_tasa_prodeporte", "texto_mencion_tasa",
+                "municipio_identificado", "texto_municipio"
+            ]
+
+            campos_faltantes = [campo for campo in campos_esperados if campo not in analisis_dict]
+
+            if campos_faltantes:
+                logger.warning(f"Campos faltantes en análisis Tasa Prodeporte: {campos_faltantes}")
+                # Agregar campos faltantes con valores por defecto
+                for campo in campos_faltantes:
+                    if campo in ["factura_con_iva", "factura_sin_iva", "iva"]:
+                        analisis_dict[campo] = 0.0
+                    elif campo == "aplica_tasa_prodeporte":
+                        analisis_dict[campo] = False
+                    else:
+                        analisis_dict[campo] = ""
+
+            logger.info(f"Análisis Tasa Prodeporte completado:")
+            logger.info(f"- Factura sin IVA: ${analisis_dict.get('factura_sin_iva', 0):,.2f}")
+            logger.info(f"- Aplica Tasa Prodeporte: {analisis_dict.get('aplica_tasa_prodeporte', False)}")
+            logger.info(f"- Municipio identificado: {analisis_dict.get('municipio_identificado', 'N/A')}")
+
+            return analisis_dict
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parseando JSON de Tasa Prodeporte: {e}")
+            logger.error(f"Respuesta recibida: {respuesta_limpia[:500]}...")
+
+            # Retornar estructura por defecto
+            return {
+                "factura_con_iva": 0.0,
+                "factura_sin_iva": 0.0,
+                "iva": 0.0,
+                "aplica_tasa_prodeporte": False,
+                "texto_mencion_tasa": "",
+                "municipio_identificado": "",
+                "texto_municipio": "",
+                "error": f"Error parseando respuesta de Gemini: {str(e)}"
+            }
+
+        except Exception as e:
+            logger.error(f"Error analizando Tasa Prodeporte: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
+            # Retornar estructura por defecto en caso de error
+            return {
+                "factura_con_iva": 0.0,
+                "factura_sin_iva": 0.0,
+                "iva": 0.0,
+                "aplica_tasa_prodeporte": False,
+                "texto_mencion_tasa": "",
+                "municipio_identificado": "",
+                "texto_municipio": "",
+                "error": f"Error técnico: {str(e)}"
+            }

@@ -1129,55 +1129,38 @@ class LiquidadorEstampilla:
         }
 
         try:
-            # Detectar qué impuestos aplican automáticamente por código de negocio
-            aplica_estampilla = codigo_negocio_aplica_estampilla_universidad(codigo_negocio)
-            aplica_obra_publica = codigo_negocio_aplica_obra_publica(codigo_negocio)
+            # NOTA: NO validamos aquí si los impuestos aplican porque main.py ya lo hizo
+            # Si este método se llama es porque main.py ya validó NIT + código de negocio
+            # Solo liquidamos directamente con validaciones manuales Python
 
-            logger.info(f"Estampilla aplica: {aplica_estampilla}")
-            logger.info(f"Obra pública aplica: {aplica_obra_publica}")
+            logger.info("Liquidando ambos impuestos (validación de NIT ya realizada en main.py)")
 
             # LIQUIDAR ESTAMPILLA UNIVERSIDAD con validaciones manuales Python
-            if aplica_estampilla:
-                try:
-                    resultado_integrado["estampilla_universidad"] = self._liquidar_estampilla_manual(
-                        analisis_especiales, codigo_negocio, nombre_negocio
-                    )
-                except Exception as e:
-                    logger.error(f"Error en validaciones manuales estampilla: {e}")
-                    resultado_integrado["estampilla_universidad"] = {
-                        "aplica": False,
-                        "estado": "Error en procesamiento",
-                        "razon": str(e),
-                        "mensajes_error": [f"Error interno: {str(e)}"]
-                    }
-            else:
-                nombre = nombre_negocio or f"Código {codigo_negocio}"
+            try:
+                resultado_integrado["estampilla_universidad"] = self._liquidar_estampilla_manual(
+                    analisis_especiales, codigo_negocio, nombre_negocio
+                )
+            except Exception as e:
+                logger.error(f"Error en validaciones manuales estampilla: {e}")
                 resultado_integrado["estampilla_universidad"] = {
                     "aplica": False,
-                    "estado": "No aplica el impuesto",
-                    "razon": f"El negocio {nombre} no aplica este impuesto"
+                    "estado": "Error en procesamiento",
+                    "razon": str(e),
+                    "mensajes_error": [f"Error interno: {str(e)}"]
                 }
 
             # LIQUIDAR OBRA PÚBLICA con validaciones manuales Python
-            if aplica_obra_publica:
-                try:
-                    resultado_integrado["contribucion_obra_publica"] = self._liquidar_obra_publica_manual(
-                        analisis_especiales, codigo_negocio, nombre_negocio
-                    )
-                except Exception as e:
-                    logger.error(f"Error en validaciones manuales obra pública: {e}")
-                    resultado_integrado["contribucion_obra_publica"] = {
-                        "aplica": False,
-                        "estado": "Error en procesamiento",
-                        "razon": str(e),
-                        "mensajes_error": [f"Error interno: {str(e)}"]
-                    }
-            else:
-                nombre = nombre_negocio or f"Código {codigo_negocio}"
+            try:
+                resultado_integrado["contribucion_obra_publica"] = self._liquidar_obra_publica_manual(
+                    analisis_especiales, codigo_negocio, nombre_negocio
+                )
+            except Exception as e:
+                logger.error(f"Error en validaciones manuales obra pública: {e}")
                 resultado_integrado["contribucion_obra_publica"] = {
                     "aplica": False,
-                    "estado": "No aplica el impuesto",
-                    "razon": f"El negocio {nombre} no aplica este impuesto"
+                    "estado": "Error en procesamiento",
+                    "razon": str(e),
+                    "mensajes_error": [f"Error interno: {str(e)}"]
                 }
 
             # RESUMEN TOTAL

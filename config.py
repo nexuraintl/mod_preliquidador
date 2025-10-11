@@ -575,6 +575,18 @@ CODIGOS_NEGOCIO_ESTAMPILLA = {
 # Alias para compatibilidad hacia atrás - MISMO contenido
 CODIGOS_NEGOCIO_OBRA_PUBLICA = CODIGOS_NEGOCIO_ESTAMPILLA.copy()
 
+# NITs administrativos válidos para Estampilla Universidad y Obra Pública
+# Estos NITs determinan si se deben liquidar estos impuestos
+NITS_ADMINISTRATIVOS_VALIDOS = {
+    "800178148": "Fiduciaria Colombiana de Comercio Exterior S.A. (Fiduciaria y Encargos)",
+    "900649119": "PATRIMONIO AUTONOMO FONTUR",
+    "830054060": "FIDEICOMISOS SOCIEDAD FIDUCIARIA FIDUCOLDEX"
+}
+
+# NITs que requieren validación adicional por código de negocio
+# Estos NITs solo aplican si además el código de negocio está en CODIGOS_NEGOCIO_ESTAMPILLA
+NITS_REQUIEREN_VALIDACION_CODIGO = {"830054060"}
+
 # DEPRECATED: Mantener por compatibilidad legacy (NO USAR en nuevo código)
 NITS_ESTAMPILLA_UNIVERSIDAD = {}
 NITS_CONTRIBUCION_OBRA_PUBLICA = {}
@@ -634,6 +646,76 @@ RANGOS_ESTAMPILLA_UNIVERSIDAD = [
 # ===============================
 # FUNCIONES ESTAMPILLA UNIVERSIDAD
 # ===============================
+
+def validar_nit_administrativo_para_impuestos(nit_administrativo: str, codigo_negocio: int) -> Dict[str, Any]:
+    """
+    Valida si un NIT administrativo aplica para estampilla y obra pública.
+
+    SRP: Solo valida NITs administrativos según reglas de negocio
+
+    Reglas de validación:
+    1. El NIT debe estar en NITS_ADMINISTRATIVOS_VALIDOS
+    2. Si el NIT es 830054060, además debe validar código de negocio
+    3. Los demás NITs (800178148, 900649119) aplican directamente
+
+    Args:
+        nit_administrativo: NIT del administrativo extraído de la base de datos
+        codigo_negocio: Código único del negocio
+
+    Returns:
+        Dict con información de validación:
+        {
+            "nit_valido": bool,
+            "requiere_validacion_codigo": bool,
+            "codigo_valido": bool (si aplica),
+            "razon_no_aplica": str (si no aplica),
+            "nombre_entidad": str
+        }
+    """
+    # Normalizar NIT (remover puntos y guiones)
+    nit_normalizado = nit_administrativo.replace(".", "").replace("-", "").strip()
+
+    # Verificar si el NIT está en la lista de NITs válidos
+    if nit_normalizado not in NITS_ADMINISTRATIVOS_VALIDOS:
+        return {
+            "nit_valido": False,
+            "requiere_validacion_codigo": False,
+            "codigo_valido": False,
+            "razon_no_aplica": f"El NIT {nit_administrativo} no está autorizado para liquidar estos impuestos",
+            "nombre_entidad": None
+        }
+
+    nombre_entidad = NITS_ADMINISTRATIVOS_VALIDOS[nit_normalizado]
+
+    # Si el NIT requiere validación adicional de código de negocio
+    if nit_normalizado in NITS_REQUIEREN_VALIDACION_CODIGO:
+        codigo_valido = codigo_negocio in CODIGOS_NEGOCIO_ESTAMPILLA
+
+        if not codigo_valido:
+            return {
+                "nit_valido": True,
+                "requiere_validacion_codigo": True,
+                "codigo_valido": False,
+                "razon_no_aplica": f"El NIT {nit_administrativo} ({nombre_entidad}) requiere que el código de negocio sea uno de los patrimonios autónomos válidos (69164, 69166, 99664)",
+                "nombre_entidad": nombre_entidad
+            }
+
+        return {
+            "nit_valido": True,
+            "requiere_validacion_codigo": True,
+            "codigo_valido": True,
+            "razon_no_aplica": None,
+            "nombre_entidad": nombre_entidad
+        }
+
+    # NITs que aplican directamente sin validación de código
+    return {
+        "nit_valido": True,
+        "requiere_validacion_codigo": False,
+        "codigo_valido": True,  # No requiere validación, por lo tanto es válido
+        "razon_no_aplica": None,
+        "nombre_entidad": nombre_entidad
+    }
 
 def codigo_negocio_aplica_estampilla_universidad(codigo_negocio: int) -> bool:
     """
@@ -757,37 +839,89 @@ def obtener_configuracion_obra_publica() -> Dict[str, Any]:
 # FUNCIÓN INTEGRADA DE DETECCIÓN AUTOMÁTICA
 # ===============================
 
-def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio: str = None) -> Dict[str, Any]:
+def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio: str = None, nit_administrativo: str = None) -> Dict[str, Any]:
     """
-    Detecta automáticamente qué impuestos aplican según el código de negocio.
+    Detecta automáticamente qué impuestos aplican según el código de negocio y NIT administrativo.
 
     SRP: Solo detecta y estructura información de impuestos aplicables
 
     Args:
         codigo_negocio: Código único del negocio
         nombre_negocio: Nombre del negocio (opcional, para logging)
+        nit_administrativo: NIT del administrativo extraído de la base de datos (opcional)
 
     Returns:
-        Dict con información de qué impuestos aplican
+        Dict con información de qué impuestos aplican, incluyendo validaciones de NIT
+
+    Notas:
+        - Si no se proporciona nit_administrativo, solo valida por código de negocio (compatibilidad)
+        - Si se proporciona nit_administrativo, valida PRIMERO el NIT, DESPUÉS el código
     """
-    aplica_estampilla = codigo_negocio_aplica_estampilla_universidad(codigo_negocio)
-    aplica_obra_publica = codigo_negocio_aplica_obra_publica(codigo_negocio)
     nombre_registrado = CODIGOS_NEGOCIO_ESTAMPILLA.get(codigo_negocio, nombre_negocio or "Desconocido")
 
+    # Si no se proporciona NIT, retornar validación solo por código (compatibilidad legacy)
+    if nit_administrativo is None:
+        # SOLO EN MODO LEGACY: validar por código de negocio
+        aplica_por_codigo_estampilla = codigo_negocio_aplica_estampilla_universidad(codigo_negocio)
+        aplica_por_codigo_obra_publica = codigo_negocio_aplica_obra_publica(codigo_negocio)
+
+        return {
+            "codigo_negocio": codigo_negocio,
+            "nombre_negocio": nombre_registrado,
+            "aplica_estampilla_universidad": aplica_por_codigo_estampilla,
+            "aplica_contribucion_obra_publica": aplica_por_codigo_obra_publica,
+            "impuestos_aplicables": [
+                impuesto for impuesto, aplica in [
+                    ("ESTAMPILLA_UNIVERSIDAD", aplica_por_codigo_estampilla),
+                    ("CONTRIBUCION_OBRA_PUBLICA", aplica_por_codigo_obra_publica)
+                ] if aplica
+            ],
+            "procesamiento_paralelo": aplica_por_codigo_estampilla and aplica_por_codigo_obra_publica,
+            "nombre_entidad_estampilla": nombre_registrado if aplica_por_codigo_estampilla else None,
+            "nombre_entidad_obra_publica": nombre_registrado if aplica_por_codigo_obra_publica else None,
+            "validacion_nit": None,
+            "razon_no_aplica_estampilla": None,
+            "razon_no_aplica_obra_publica": None
+        }
+
+    # VALIDACIÓN POR NIT ADMINISTRATIVO
+    # La función validar_nit_administrativo_para_impuestos() ya hace TODA la validación:
+    # - Para NITs 800178148, 900649119: Solo valida NIT (aplican directamente)
+    # - Para NIT 830054060: Valida NIT + Código internamente
+    validacion_nit = validar_nit_administrativo_para_impuestos(nit_administrativo, codigo_negocio)
+
+    # Si la validación del NIT falló, NO aplicar ningún impuesto
+    if not validacion_nit["codigo_valido"]:
+        # El NIT no es válido O el código no es válido para NIT 830054060
+        return {
+            "codigo_negocio": codigo_negocio,
+            "nombre_negocio": nombre_registrado,
+            "aplica_estampilla_universidad": False,
+            "aplica_contribucion_obra_publica": False,
+            "impuestos_aplicables": [],
+            "procesamiento_paralelo": False,
+            "nombre_entidad_estampilla": None,
+            "nombre_entidad_obra_publica": None,
+            "validacion_nit": validacion_nit,
+            "razon_no_aplica_estampilla": validacion_nit["razon_no_aplica"],
+            "razon_no_aplica_obra_publica": validacion_nit["razon_no_aplica"]
+        }
+
+    # Si llegamos aquí, el NIT es válido (y el código también si era necesario validarlo)
+    # APLICAR AMBOS IMPUESTOS DIRECTAMENTE
+    # No validamos el código otra vez porque ya fue validado dentro de validar_nit_administrativo_para_impuestos()
     return {
         "codigo_negocio": codigo_negocio,
         "nombre_negocio": nombre_registrado,
-        "aplica_estampilla_universidad": aplica_estampilla,
-        "aplica_contribucion_obra_publica": aplica_obra_publica,
-        "impuestos_aplicables": [
-            impuesto for impuesto, aplica in [
-                ("ESTAMPILLA_UNIVERSIDAD", aplica_estampilla),
-                ("CONTRIBUCION_OBRA_PUBLICA", aplica_obra_publica)
-            ] if aplica
-        ],
-        "procesamiento_paralelo": aplica_estampilla and aplica_obra_publica,
-        "nombre_entidad_estampilla": nombre_registrado if aplica_estampilla else None,
-        "nombre_entidad_obra_publica": nombre_registrado if aplica_obra_publica else None
+        "aplica_estampilla_universidad": True,  # Aplica directamente
+        "aplica_contribucion_obra_publica": True,  # Aplica directamente
+        "impuestos_aplicables": ["ESTAMPILLA_UNIVERSIDAD", "CONTRIBUCION_OBRA_PUBLICA"],
+        "procesamiento_paralelo": True,
+        "nombre_entidad_estampilla": nombre_registrado,
+        "nombre_entidad_obra_publica": nombre_registrado,
+        "validacion_nit": validacion_nit,
+        "razon_no_aplica_estampilla": None,
+        "razon_no_aplica_obra_publica": None
     }
 
 # DEPRECATED: Mantener por compatibilidad legacy
@@ -1116,6 +1250,134 @@ CONFIG_RETEIVA = {
     "tarifa_fuente_extranjera": 1.0,   # 100% para fuente extranjera
     "porcentaje_iva_extranjero_esperado": 0.19  # 19% IVA esperado para extranjeros
 }
+
+# ===============================
+# CONFIGURACION TASA PRODEPORTE
+# ===============================
+
+# Diccionario de rubros presupuestales con sus tarifas y centros de costo
+# RUBRO_PRESUPUESTO: Codigo del rubro presupuestal (primeros 2 digitos deben ser 28)
+# TARIFA: Tarifa aplicable (decimal)
+# CENTRO_COSTO: Centro de costo asociado
+# MUNICIPIO_DEPARTAMENTO: Ubicacion geografica
+RUBRO_PRESUPUESTAL = {
+    "280101010185": {
+        "tarifa": 0.025,
+        "centro_costo": 11758,
+        "municipio_departamento": "Risaralda"
+    },
+    "280101010210": {
+        "tarifa": 0.015,
+        "centro_costo": 11783,
+        "municipio_departamento": "El Jardin"
+    },
+    "280101010214": {
+        "tarifa": 0.025,
+        "centro_costo": 11787,
+        "municipio_departamento": "Miranda - Cauca"
+    },
+    "280101010216": {
+        "tarifa": 0.025,
+        "centro_costo": 11789,
+        "municipio_departamento": "Arboletes - Antioquia"
+    },
+    "280101010218": {
+        "tarifa": 0.02,
+        "centro_costo": 11791,
+        "municipio_departamento": "Popayan"
+    },
+    "280101010221": {
+        "tarifa": 0.025,
+        "centro_costo": 11794,
+        "municipio_departamento": "Togui - Boyaca"
+    }
+}
+
+# ===============================
+# FUNCIONES TASA PRODEPORTE
+# ===============================
+
+def rubro_existe_en_presupuesto(rubro: str) -> bool:
+    """
+    Verifica si un rubro presupuestal existe en el diccionario.
+
+    SRP: Solo valida existencia del rubro
+
+    Args:
+        rubro: Codigo del rubro presupuestal
+
+    Returns:
+        bool: True si el rubro existe
+    """
+    return str(rubro) in RUBRO_PRESUPUESTAL
+
+def obtener_datos_rubro(rubro: str) -> Dict[str, Any]:
+    """
+    Obtiene los datos asociados a un rubro presupuestal.
+
+    SRP: Solo retorna datos del rubro
+
+    Args:
+        rubro: Codigo del rubro presupuestal
+
+    Returns:
+        Dict con tarifa, centro_costo y municipio_departamento o None si no existe
+    """
+    rubro_str = str(rubro)
+    if rubro_existe_en_presupuesto(rubro_str):
+        return RUBRO_PRESUPUESTAL[rubro_str]
+    return None
+
+def validar_rubro_presupuestal(rubro: str) -> tuple[bool, str]:
+    """
+    Valida que un rubro presupuestal cumpla con el formato requerido.
+
+    SRP: Solo valida formato y existencia del rubro
+
+    Args:
+        rubro: Codigo del rubro presupuestal
+
+    Returns:
+        tuple: (es_valido, mensaje_error)
+    """
+    rubro_str = str(rubro)
+
+    # Validar que inicie con 28
+    if not rubro_str.startswith("28"):
+        return False, f"Codigo del rubro presupuestal no inicia con 28: {rubro_str}"
+
+    # Validar que exista en el diccionario
+    if not rubro_existe_en_presupuesto(rubro_str):
+        return False, f"Rubro Presupuestal {rubro_str} no esta almacenado en la Base de datos"
+
+    return True, ""
+
+def obtener_configuracion_tasa_prodeporte() -> Dict[str, Any]:
+    """
+    Obtiene toda la configuracion de Tasa Prodeporte para uso en prompts.
+
+    SRP: Solo retorna configuracion consolidada
+
+    Returns:
+        Dict con configuracion completa de Tasa Prodeporte
+    """
+    return {
+        "rubros_validos": RUBRO_PRESUPUESTAL,
+        "total_rubros": len(RUBRO_PRESUPUESTAL),
+        "prefijo_requerido": "28"
+    }
+
+# NITs que aplican Tasa Prodeporte
+NITS_TASA_PRODEPORTE = {
+    "900649119": {
+        "nombre": "PATRIMONIO AUTÓNOMO FONTUR",
+        "aplica_tasa_prodeporte": True
+    }
+}
+
+def nit_aplica_tasa_prodeporte(nit: str) -> bool:
+    """Verifica si un NIT aplica para análisis de Tasa Prodeporte"""
+    return nit in NITS_TASA_PRODEPORTE
 
 # ===============================
 # FUNCIONES IVA Y RETEIVA

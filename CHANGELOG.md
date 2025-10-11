@@ -1,5 +1,443 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [2.12.0 - Filtro NIT Administrativo para Estampilla y Obra Pública] - 2025-10-10
+
+### 🔧 **MEJORA: VALIDACIÓN DOBLE NIT + CÓDIGO DE NEGOCIO**
+
+#### **NUEVA ARQUITECTURA: FILTRO DE NIT ADMINISTRATIVO SIGUIENDO SOLID**
+
+**PRINCIPIO FUNDAMENTAL**: Implementación de validación doble para Estampilla Universidad Nacional y Contribución a Obra Pública siguiendo SRP (Single Responsibility Principle) y DIP (Dependency Inversion Principle).
+
+**⚠️ RESTRICCIÓN DE NIT**: Estos impuestos SOLO aplican para NITs administrativos específicos. El sistema valida primero el NIT y luego el código de negocio.
+
+##### **🏗️ ARQUITECTURA IMPLEMENTADA**
+
+**NUEVAS CONSTANTES EN CONFIG.PY (SIGUIENDO SRP)**:
+
+1. **NITS_ADMINISTRATIVOS_VALIDOS** - `config.py:580`
+   - Diccionario de NITs válidos para estampilla y obra pública
+   - Contiene: 800178148, 900649119, 830054060
+   - SRP: Solo define NITs válidos
+
+2. **NITS_REQUIEREN_VALIDACION_CODIGO** - `config.py:588`
+   - Set de NITs que requieren validación adicional de código
+   - Contiene: 830054060 (Fiducoldex)
+   - SRP: Solo define NITs que requieren doble validación
+
+**NUEVA FUNCIÓN DE VALIDACIÓN (SIGUIENDO SRP)**:
+
+3. **validar_nit_administrativo_para_impuestos()** - `config.py:650`
+   - SRP: Solo valida NITs administrativos según reglas de negocio
+   - No realiza cálculos de impuestos
+   - Responsabilidad: Validar NIT y opcionalmente código de negocio
+
+##### **🔍 LÓGICA DE VALIDACIÓN IMPLEMENTADA**
+
+**REGLAS DE VALIDACIÓN**:
+
+1. **Primer filtro (NIT)**:
+   - Si NIT NO está en NITS_ADMINISTRATIVOS_VALIDOS → No aplica ningún impuesto
+   - Razón: "El NIT {nit} no está autorizado para liquidar estos impuestos"
+
+2. **Segundo filtro (NIT especial 830054060)**:
+   - Si NIT es 830054060 (Fiducoldex) → Validar código de negocio
+   - Código debe ser uno de: 69164, 69166, 99664
+   - Razón si no aplica: "El NIT {nit} (FIDUCOLDEX) requiere código de negocio válido"
+
+3. **NITs que aplican directamente**:
+   - 800178148 (Fiduciaria Colombiana)
+   - 900649119 (FONTUR)
+   - Estos NITs NO requieren validación de código
+
+**FLUJO DE VALIDACIÓN COMPLETA** (SOLO VALIDACIÓN DE NIT):
+```
+VALIDAR NIT ADMINISTRATIVO (ÚNICO PASO)
+┌─────────────────────────────────────────────────────────┐
+│ ¿NIT en NITS_ADMINISTRATIVOS_VALIDOS?                   │
+│   NO → ❌ No aplica ningún impuesto                     │
+│        Razón: NIT no autorizado                         │
+└─────────────────────────────────────────────────────────┘
+        ↓ SÍ
+┌─────────────────────────────────────────────────────────┐
+│ ¿NIT es 830054060 (Fiducoldex)?                         │
+│   NO (800178148 o 900649119):                           │
+│      ✅ APLICAN AMBOS IMPUESTOS DIRECTAMENTE            │
+│         - Estampilla Universidad ✅                      │
+│         - Contribución Obra Pública ✅                   │
+│   SÍ (830054060):                                        │
+│      Validar código adicional:                          │
+│      ¿Código en {69164, 69166, 99664}?                  │
+│        NO → ❌ No aplica ningún impuesto                │
+│             Razón: Código no válido para este NIT       │
+│        SÍ → ✅ APLICAN AMBOS IMPUESTOS DIRECTAMENTE     │
+│                - Estampilla Universidad ✅               │
+│                - Contribución Obra Pública ✅            │
+└─────────────────────────────────────────────────────────┘
+
+⚠️ IMPORTANTE: No hay validación de código adicional.
+   Si el NIT pasa la validación, AMBOS impuestos aplican directamente.
+```
+
+##### **🔄 FUNCIÓN ACTUALIZADA (MANTENIENDO COMPATIBILIDAD)**
+
+4. **detectar_impuestos_aplicables_por_codigo()** - `config.py:842`
+   - Nuevo parámetro opcional: `nit_administrativo: str = None`
+   - Mantiene compatibilidad: Si no se pasa NIT, valida solo por código
+   - **VALIDACIÓN ÚNICA POR NIT**: Solo valida el NIT administrativo
+   - **Si NIT es válido → Ambos impuestos aplican DIRECTAMENTE**
+   - Si NIT no es válido, retorna inmediatamente con razón específica
+   - DIP: Usa validar_nit_administrativo_para_impuestos() (abstracción)
+   - Retorna campos adicionales:
+     - `validacion_nit`: Dict con detalles de validación
+     - `razon_no_aplica_estampilla`: Razón específica si no aplica
+     - `razon_no_aplica_obra_publica`: Razón específica si no aplica
+
+##### **📝 INTEGRACIÓN EN MAIN.PY**
+
+5. **Actualización de llamada** - `main.py:814`
+   - Pasa `nit_administrativo` a detectar_impuestos_aplicables_por_codigo()
+   - Usa razones específicas para mensajes de "no aplica"
+   - Logger registra razones detalladas
+
+**ANTES**:
+```python
+deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(codigo_del_negocio, nombre_negocio)
+razon = f"El negocio {nombre_negocio} no aplica este impuesto"
+```
+
+**DESPUÉS**:
+```python
+deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(
+    codigo_del_negocio,
+    nombre_negocio,
+    nit_administrativo  # Validación doble: NIT + código
+)
+razon = deteccion_impuestos.get("razon_no_aplica_estampilla") or f"El negocio {nombre_negocio} no aplica este impuesto"
+```
+
+##### **✅ BENEFICIOS DE LA ARQUITECTURA SOLID**
+
+- **SRP**: Cada función tiene una responsabilidad única
+- **OCP**: Abierto para extensión (agregar nuevos NITs)
+- **DIP**: Función principal depende de abstracción de validación
+- **Mantenibilidad**: Fácil agregar nuevos NITs o reglas
+- **Testeable**: Cada función se puede testear de forma aislada
+- **Trazabilidad**: Razones específicas para cada validación
+
+##### **📋 CASOS DE USO**
+
+**Caso 1**: NIT 800178148 (Fiduciaria) + Cualquier código
+- ✅ Valida NIT: SÍ (está en NITS_ADMINISTRATIVOS_VALIDOS)
+- ✅ Requiere validación código: NO
+- ✅ **Resultado**: ✅ APLICAN AMBOS IMPUESTOS DIRECTAMENTE
+  - Estampilla Universidad: ✅ Aplica
+  - Contribución Obra Pública: ✅ Aplica
+
+**Caso 2**: NIT 900649119 (FONTUR) + Cualquier código
+- ✅ Valida NIT: SÍ (está en NITS_ADMINISTRATIVOS_VALIDOS)
+- ✅ Requiere validación código: NO
+- ✅ **Resultado**: ✅ APLICAN AMBOS IMPUESTOS DIRECTAMENTE
+  - Estampilla Universidad: ✅ Aplica
+  - Contribución Obra Pública: ✅ Aplica
+
+**Caso 3**: NIT 830054060 (Fiducoldex) + Código 69164
+- ✅ Valida NIT: SÍ (está en NITS_ADMINISTRATIVOS_VALIDOS)
+- ✅ Requiere validación código: SÍ (830054060 requiere doble validación)
+- ✅ Código válido: SÍ (69164 está en {69164, 69166, 99664})
+- ✅ **Resultado**: ✅ APLICAN AMBOS IMPUESTOS DIRECTAMENTE
+  - Estampilla Universidad: ✅ Aplica
+  - Contribución Obra Pública: ✅ Aplica
+
+**Caso 4**: NIT 830054060 (Fiducoldex) + Código 12345
+- ✅ Valida NIT: SÍ (está en NITS_ADMINISTRATIVOS_VALIDOS)
+- ✅ Requiere validación código: SÍ (830054060 requiere doble validación)
+- ❌ Código válido: NO (12345 NO está en {69164, 69166, 99664})
+- ❌ **Resultado**: NO APLICA NINGÚN IMPUESTO
+  - Razón: "El NIT 830054060 (FIDUCOLDEX) requiere que el código de negocio sea uno de los patrimonios autónomos válidos"
+
+**Caso 5**: NIT 999999999 + Cualquier código
+- ❌ Valida NIT: NO (no está en NITS_ADMINISTRATIVOS_VALIDOS)
+- ❌ **Resultado**: NO APLICA NINGÚN IMPUESTO
+  - Razón: "El NIT 999999999 no está autorizado para liquidar estos impuestos"
+
+##### **🎯 COMPATIBILIDAD**
+
+- ✅ Mantiene compatibilidad total con código existente
+- ✅ Parámetro `nit_administrativo` es opcional
+- ✅ Si no se pasa NIT, valida solo por código (comportamiento anterior)
+- ✅ No rompe tests existentes
+
+##### **🐛 CORRECCIÓN CRÍTICA**
+
+6. **Eliminada validación duplicada** - `liquidador_estampilla.py:1132-1164`
+   - ❌ PROBLEMA: El método `liquidar_integrado()` estaba re-validando solo por código
+   - ❌ EFECTO: Anulaba completamente la validación de NIT hecha en main.py
+   - ✅ SOLUCIÓN: Eliminadas líneas 1132-1164 que hacían validación duplicada
+   - ✅ AHORA: El liquidador confía en que main.py ya validó NIT + código
+   - ✅ FLUJO CORRECTO:
+     1. main.py valida NIT usando `detectar_impuestos_aplicables_por_codigo()`
+     2. main.py decide si llama a los liquidadores
+     3. liquidadores liquidan sin re-validar
+
+---
+
+## [2.11.0 - Tasa Prodeporte] - 2025-10-09
+
+### 💰 **NUEVA FUNCIONALIDAD: LIQUIDACIÓN DE TASA PRODEPORTE**
+
+#### **NUEVA ARQUITECTURA: SEPARACIÓN IA-VALIDACIÓN SIGUIENDO SOLID**
+
+**PRINCIPIO FUNDAMENTAL**: Implementación completa de Tasa Prodeporte siguiendo arquitectura de separación de responsabilidades (Gemini extrae, Python valida y calcula)
+
+**⚠️ RESTRICCIÓN DE NIT**: Este impuesto SOLO aplica para NIT 900649119 (PATRIMONIO AUTÓNOMO FONTUR). Si el `nit_administrativo` es diferente, el análisis no se ejecuta y el impuesto no se procesa.
+
+##### **🏗️ ARQUITECTURA IMPLEMENTADA**
+
+**MÓDULOS CREADOS (SIGUIENDO SRP - SINGLE RESPONSIBILITY PRINCIPLE)**:
+
+1. **ClasificadorTasaProdeporte** - `Clasificador/clasificador_TP.py:42`
+   - SRP: Solo maneja extracción de datos con Gemini AI
+   - No realiza cálculos ni validaciones de negocio
+   - Responsabilidad: Identificar datos en documentos (factura, IVA, menciones, municipio)
+
+2. **LiquidadorTasaProdeporte** - `Liquidador/liquidador_TP.py:75`
+   - SRP: Solo coordina liquidación con validaciones manuales Python
+   - DIP: Toda la lógica de negocio en Python, no en Gemini
+   - Implementa flujo de 11 validaciones manuales secuenciales
+
+3. **ProcesadorGemini.analizar_tasa_prodeporte** - `Clasificador/clasificador.py:2879`
+   - SRP: Solo coordina análisis con Gemini para Tasa Prodeporte
+   - Integración con procesamiento paralelo multimodal
+   - Manejo robusto de errores con fallback
+
+##### **🧠 SEPARACIÓN CLARA: GEMINI (EXTRACCIÓN) vs PYTHON (VALIDACIONES)**
+
+**RESPONSABILIDADES DE GEMINI (SOLO EXTRACCIÓN)**:
+```json
+{
+  "factura_con_iva": 0.0,
+  "factura_sin_iva": 0.0,
+  "iva": 0.0,
+  "aplica_tasa_prodeporte": true|false,
+  "texto_mencion_tasa": "...",
+  "municipio_identificado": "...",
+  "texto_municipio": "..."
+}
+```
+
+**RESPONSABILIDADES DE PYTHON (TODAS LAS VALIDACIONES Y CÁLCULOS)**:
+
+**FLUJO DE 11 VALIDACIONES MANUALES**:
+1. ✅ **Validar parámetros completos**: observaciones, genera_presupuesto, rubro, centro_costos, numero_contrato, valor_contrato_municipio
+2. ✅ **Formatear datos**: Normalizar texto (lowercase, remover acentos), convertir tipos
+3. ✅ **Validar aplica_tasa_prodeporte**: Según análisis de Gemini en observaciones
+4. ✅ **Validar factura_sin_iva > 0**: Si no, calcular desde (factura_con_iva - iva)
+5. ✅ **Validar genera_presupuesto == "si"**: Normalizado (lowercase, sin acentos)
+6. ✅ **Validar primeros 2 dígitos rubro == "28"**: Validación de formato
+7. ✅ **Validar rubro existe en diccionario**: Usando RUBRO_PRESUPUESTAL de config.py
+8. ✅ **Extraer tarifa, centro_costo, municipio**: Del diccionario según rubro
+9. ✅ **Validar centro_costos**: Advertencia si no coincide con esperado
+10. ✅ **Calcular porcentaje_convenio, valor_convenio_sin_iva**:
+    - `porcentaje_convenio = valor_contrato_municipio / factura_con_iva`
+    - `valor_convenio_sin_iva = factura_sin_iva * porcentaje_convenio`
+11. ✅ **Calcular valor tasa prodeporte**: `valor_tasa = valor_convenio_sin_iva * tarifa`
+
+##### **📋 CONFIGURACIÓN EN CONFIG.PY**
+
+**NUEVO DICCIONARIO RUBRO_PRESUPUESTAL** - `config.py`:
+```python
+RUBRO_PRESUPUESTAL = {
+    "280101010185": {
+        "tarifa": 0.025,  # 2.5%
+        "centro_costo": 11758,
+        "municipio_departamento": "Risaralda"
+    },
+    "280101010187": {
+        "tarifa": 0.015,  # 1.5%
+        "centro_costo": 11758,
+        "municipio_departamento": "Pereira"
+    },
+    # ... 4 rubros más
+}
+```
+
+**FUNCIONES DE VALIDACIÓN**:
+- `rubro_existe_en_presupuesto(rubro: str) -> bool`
+- `obtener_datos_rubro(rubro: str) -> Dict[str, Any]`
+- `validar_rubro_presupuestal(rubro: str) -> tuple[bool, str]`
+
+##### **🔌 INTEGRACIÓN CON ENDPOINT PRINCIPAL**
+
+**NUEVOS PARÁMETROS OPCIONALES** - `main.py:740-745`:
+```python
+@app.post("/api/procesar-facturas")
+async def procesar_facturas_integrado(
+    archivos: List[UploadFile] = File(...),
+    codigo_del_negocio: int = Form(...),
+    proveedor: str = Form(...),
+    observaciones_tp: Optional[str] = Form(None),
+    genera_presupuesto: Optional[str] = Form(None),
+    rubro: Optional[str] = Form(None),
+    centro_costos: Optional[int] = Form(None),
+    numero_contrato: Optional[str] = Form(None),
+    valor_contrato_municipio: Optional[float] = Form(None)
+)
+```
+
+**PROCESAMIENTO PARALELO** - `main.py:1009-1016`:
+- **FILTRO DE NIT**: Solo se ejecuta para NIT 900649119 (PATRIMONIO AUTÓNOMO FONTUR)
+- Tarea 5: Análisis de Tasa Prodeporte (condicional)
+- Integrado con procesamiento multimodal híbrido
+- Logging claro de activación/omisión según NIT
+
+**LIQUIDACIÓN INTEGRADA** - `main.py:1300-1339`:
+- Liquidación con arquitectura SOLID (separación IA-Validación)
+- Manejo robusto de errores con fallback
+- Integración con resumen total de impuestos
+
+##### **📦 MODELOS PYDANTIC IMPLEMENTADOS**
+
+1. **ParametrosTasaProdeporte** - `Liquidador/liquidador_TP.py:36`
+   - Estructura de parámetros de entrada del endpoint
+   - Todos los campos opcionales (observaciones, genera_presupuesto, rubro, etc.)
+
+2. **ResultadoTasaProdeporte** - `Liquidador/liquidador_TP.py:50`
+   - Estructura de resultado de liquidación
+   - Estados: "Preliquidado", "Preliquidacion sin finalizar", "No aplica el impuesto"
+   - Campos: valor_imp, tarifa, valor_convenio_sin_iva, porcentaje_convenio, etc.
+
+3. **AnalisisTasaProdeporte** - `Clasificador/clasificador_TP.py:23`
+   - Estructura del análisis de Gemini
+   - Campos extraídos: factura_con_iva, factura_sin_iva, iva, aplica_tasa_prodeporte, municipio, etc.
+
+##### **🎯 ESTRUCTURA DE RESPUESTA FINAL**
+
+```json
+{
+  "impuestos": {
+    "tasa_prodeporte": {
+      "estado": "Preliquidado",
+      "aplica": true,
+      "valor_imp": 125000.0,
+      "tarifa": 0.025,
+      "valor_convenio_sin_iva": 5000000.0,
+      "porcentaje_convenio": 0.8,
+      "valor_contrato_municipio": 5600000.0,
+      "factura_sin_iva": 6250000.0,
+      "factura_con_iva": 7000000.0,
+      "municipio_dept": "Risaralda",
+      "numero_contrato": "CT-2025-001",
+      "observaciones": "Calculo exitoso",
+      "fecha_calculo": "2025-10-09 10:30:45"
+    }
+  }
+}
+```
+
+##### **🛠️ ARCHIVOS MODIFICADOS**
+
+1. **config.py**
+   - ✅ Agregado diccionario RUBRO_PRESUPUESTAL (6 rubros)
+   - ✅ Funciones de validación de rubros
+   - ✅ Función obtener_configuracion_tasa_prodeporte()
+
+2. **main.py**
+   - ✅ Líneas 740-745: Agregados 6 parámetros opcionales al endpoint
+   - ✅ Línea 1011: Tarea paralela de análisis Tasa Prodeporte
+   - ✅ Líneas 1300-1339: Liquidación de Tasa Prodeporte
+   - ✅ Líneas 1386-1387: Integración con total de impuestos
+
+3. **Clasificador/prompt_clasificador.py**
+   - ✅ Líneas 2126-2209: Función PROMPT_ANALISIS_TASA_PRODEPORTE
+   - ✅ Prompt con separación IA-Validación clara
+   - ✅ Instrucciones para extracción literal de textos
+
+4. **Clasificador/clasificador.py**
+   - ✅ Líneas 2879-3021: Método async analizar_tasa_prodeporte
+   - ✅ Integración con procesamiento multimodal
+   - ✅ Validación de estructura JSON de respuesta
+   - ✅ Manejo robusto de errores con fallback
+
+##### **🆕 ARCHIVOS CREADOS**
+
+1. **Clasificador/clasificador_TP.py** (230 líneas)
+   - ClasificadorTasaProdeporte con Gemini integration
+   - AnalisisTasaProdeporte Pydantic model
+   - Método analizar_documentos() async
+   - Validación de coherencia de datos extraídos
+
+2. **Liquidador/liquidador_TP.py** (320 líneas)
+   - LiquidadorTasaProdeporte con 11 validaciones manuales
+   - ParametrosTasaProdeporte y ResultadoTasaProdeporte models
+   - Normalización de texto (lowercase, sin acentos)
+   - Cálculos matemáticos precisos según normativa
+
+##### **🎨 CARACTERÍSTICAS IMPLEMENTADAS**
+
+1. **Normalización de Texto** - `liquidador_TP.py:87`
+   - Lowercase + remoción de acentos usando unicodedata
+   - Comparación insensible a mayúsculas/acentos
+   - Útil para validar "genera_presupuesto" == "si"
+
+2. **Validación de Completitud** - `liquidador_TP.py:113`
+   - Verifica que TODOS los parámetros opcionales estén presentes
+   - Retorna lista de campos faltantes
+   - Estado "No aplica el impuesto" si faltan campos
+
+3. **Validación de Rubro Presupuestal**
+   - Inicio con "28" obligatorio
+   - Existencia en diccionario RUBRO_PRESUPUESTAL
+   - Extracción de tarifa, centro_costo, municipio
+
+4. **Cálculos Automáticos**
+   - Porcentaje convenio: valor_contrato_municipio / factura_con_iva
+   - Valor convenio sin IVA: factura_sin_iva * porcentaje_convenio
+   - Valor tasa prodeporte: valor_convenio_sin_iva * tarifa
+
+5. **Advertencias Inteligentes**
+   - Incongruencia si centro_costos recibido ≠ esperado
+   - No bloquea liquidación, solo advierte
+
+##### **🔍 VALIDACIONES IMPLEMENTADAS**
+
+**Estados Posibles**:
+- ✅ **"Preliquidado"**: Todas las validaciones pasaron, impuesto calculado
+- ⚠️ **"Preliquidacion sin finalizar"**: Falta información o datos inconsistentes
+- ❌ **"No aplica el impuesto"**: Condiciones no cumplen para aplicar tasa
+
+**Motivos de "No aplica"**:
+- Campos faltantes (observaciones, rubro, contrato, etc.)
+- No se menciona "tasa prodeporte" en observaciones
+- genera_presupuesto ≠ "si"
+- Rubro no inicia con "28"
+- Rubro no existe en diccionario
+
+**Motivos de "Sin finalizar"**:
+- Factura sin IVA no identificada (≤ 0)
+- Error técnico en procesamiento
+
+##### **📝 LOGGING DETALLADO**
+
+```
+INFO: Procesando Tasa Prodeporte - Contrato: CT-2025-001
+INFO: Rubro 280101010185 - Tarifa: 2.5%, Municipio: Risaralda
+INFO: Porcentaje convenio: 80.00%
+INFO: Valor convenio sin IVA: $5,000,000.00
+INFO: Tasa Prodeporte calculada: $125,000.00 (2.5%)
+INFO: Tasa Prodeporte liquidada exitosamente: $125,000.00
+```
+
+##### **🚀 IMPACTO**
+
+- ✅ Nuevo impuesto integrado al sistema de preliquidación
+- ✅ Procesamiento paralelo con otros impuestos (retefuente, IVA, estampillas)
+- ✅ Arquitectura SOLID con separación clara de responsabilidades
+- ✅ Validaciones manuales garantizan precisión absoluta
+- ✅ Manejo robusto de errores y casos edge
+- ✅ Extensible para agregar más rubros presupuestales
+
+---
+
 ## [2.0.2 - Mejora Prompt RUT] - 2025-10-08
 
 ### 🔍 **MEJORA CRÍTICA: DETECCIÓN DE RUT EN DOCUMENTOS LARGOS**

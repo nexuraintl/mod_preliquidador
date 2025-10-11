@@ -933,22 +933,78 @@ graph TD
     A[📋 Documentos Clasificados] --> B{¿Qué impuestos aplican?}
     B -->|Solo Retefuente| C[🧠 Análisis Retefuente]
     B -->|Múltiples| D[⚡ Procesamiento Paralelo]
-    
+
     D --> E[🧠 Análisis Retefuente]
     D --> F[🧠 Análisis Estampilla]
     D --> G[🧠 Análisis IVA]
     D --> H[🧠 Análisis Estampillas Generales]
-    
+    D --> N[🧠 Análisis Tasa Prodeporte]
+
     E --> I[💰 Liquidación Retefuente]
     F --> J[💰 Liquidación Estampilla]
     G --> K[💰 Liquidación IVA]
-    
+    N --> O[💰 Liquidación Tasa Prodeporte]
+
     C --> L[📊 Resultado Individual]
     I --> M[📊 Resultado Consolidado]
     J --> M
     K --> M
     H --> M
+    O --> M
 ```
+
+**Impuestos Implementados:**
+1. 💼 **Retención en la Fuente**: 43 conceptos según normativa DIAN
+2. 🎓 **Estampilla Pro Universidad Nacional**: Cálculo según tabla UVT
+3. 🏗️ **Contribución a Obra Pública 5%**: Tarifa fija para contratos
+4. 📋 **IVA y ReteIVA**: Análisis especializado con validaciones manuales
+5. 📌 **6 Estampillas Generales**: Identificación automática (Procultura, Bienestar, etc.)
+6. ⚽ **Tasa Prodeporte**: Validación por rubro presupuestal con 11 pasos de validación ✨ **NUEVO v2.11.0**
+
+#### **⚽ Tasa Prodeporte - NUEVO v2.11.0**
+
+**⚠️ RESTRICCIÓN DE NIT**: Este impuesto SOLO aplica para NIT **900649119** (PATRIMONIO AUTÓNOMO FONTUR). Para otros NITs, el análisis no se ejecuta.
+
+**Arquitectura: Separación IA-Validación**
+- **Gemini AI**: Extrae valores de factura, IVA, menciones de "tasa prodeporte" en observaciones, municipio
+- **Python**: Realiza 11 validaciones secuenciales y cálculos según normativa
+
+**Parámetros Adicionales del Endpoint:**
+```python
+observaciones_tp: str          # Observaciones del usuario (debe mencionar "tasa prodeporte")
+genera_presupuesto: str       # "si" o "no" (normalizado)
+rubro: str                    # Código rubro presupuestal (debe iniciar con "28")
+centro_costos: int            # Centro de costos del contrato
+numero_contrato: str          # Número del contrato
+valor_contrato_municipio: float  # Valor del contrato con municipio
+```
+
+**Flujo de Validación (11 pasos):**
+1. ✅ Validar todos los parámetros estén presentes
+2. ✅ Normalizar texto (lowercase, sin acentos)
+3. ✅ Verificar mención de "tasa prodeporte" en observaciones (Gemini)
+4. ✅ Validar factura_sin_iva > 0 (calcular si es necesario)
+5. ✅ Verificar genera_presupuesto == "si"
+6. ✅ Validar rubro inicie con "28"
+7. ✅ Verificar rubro existe en diccionario RUBRO_PRESUPUESTAL
+8. ✅ Extraer tarifa (1.5%-2.5%), centro_costo, municipio del diccionario
+9. ✅ Advertir si centro_costos no coincide con esperado
+10. ✅ Calcular porcentaje_convenio y valor_convenio_sin_iva
+11. ✅ Calcular valor_tasa_prodeporte = valor_convenio_sin_iva * tarifa
+
+**Configuración en config.py:**
+```python
+RUBRO_PRESUPUESTAL = {
+    "280101010185": {"tarifa": 0.025, "centro_costo": 11758, "municipio_departamento": "Risaralda"},
+    "280101010187": {"tarifa": 0.015, "centro_costo": 11758, "municipio_departamento": "Pereira"},
+    # ... 4 rubros más
+}
+```
+
+**Estados Posibles:**
+- ✅ **"Preliquidado"**: Todas las validaciones pasaron, impuesto calculado
+- ⚠️ **"Preliquidacion sin finalizar"**: Falta información o datos inconsistentes
+- ❌ **"No aplica el impuesto"**: Condiciones no cumplen para aplicar tasa
 
 ### 🌍 **3. Facturación Internacional - CORREGIDO v2.1.1**
 
@@ -1777,7 +1833,7 @@ curl -X POST "http://localhost:8080/api/procesar-facturas" \
 NITS_PRUEBA = {
     "800.178.148-8": "Fiduciaria Colombiana - Solo Retefuente",
     "830.054.060-5": "FIDUCOLDEX - Todos los impuestos",
-    "900.649.119-9": "FONTUR - Retefuente + IVA"
+    "900.649.119-9": "FONTUR - Retefuente + IVA + Tasa Prodeporte"
 }
 ```
 

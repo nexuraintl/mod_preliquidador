@@ -35,7 +35,7 @@ INFORMACIÓN DEL PROVEEDOR (CONTEXTO DE VALIDACIÓN)
 **PROVEEDOR ESPERADO:** {proveedor}
 
 INSTRUCCIONES DE VALIDACIÓN CONTRA RUT:
-• Verifica que el nombre/razón social en la FACTURA coincida con el RUT
+• Verifica que el nombre/razón social del proveedor en la FACTURA coincida con el RUT
 • Verifica que el NIT en la FACTURA coincida con el NIT del RUT
 • Si encuentras discrepancias entre FACTURA y RUT, repórtalas explícitamente
 • Si el proveedor es un CONSORCIO o UNIÓN TEMPORAL:
@@ -62,6 +62,7 @@ Tu función es ÚNICAMENTE identificar y clasificar basándote en lo que está E
 • SOLO usa texto que puedas CITAR LITERALMENTE del documento
 • Si no encuentras evidencia textual explícita → marca como false
 • NO uses contexto implícito, SOLO texto explícito
+• NO clasifiques pagina por página, clasifica el documento completo
 
 ═══════════════════════════════════════════════════════════════════════
 PASO 1: CLASIFICACIÓN DE DOCUMENTOS
@@ -120,7 +121,7 @@ PASO 3: DETECCIÓN DE CONSORCIO
  NO buscar en: ANEXO_CONTRATO, anexos
 
 **es_consorcio = true** SOLO SI encuentras TEXTUALMENTE:
-• La palabra "CONSORCIO" en el nombre/razón social
+• La palabra "CONSORCIO" en el nombre/razón social del proveedor
 • La palabra "UNIÓN TEMPORAL" en el nombre/razón social
 • Texto explícito: "consorciados", "miembros del consorcio"
 • Porcentajes de participación: "Empresa A: 60%, Empresa B: 40%"
@@ -299,19 +300,10 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
  VALIDACIONES OBLIGATORIAS CONTRA RUT:
 
 1. VALIDACIÓN DE IDENTIDAD:
-   - Verifica que el nombre/razón social en FACTURA coincida con el nombre en RUT
+   - Verifica que el nombre/razón social del proveedor en FACTURA coincida con el nombre en RUT
    - Verifica que el NIT en FACTURA coincida con el NIT en RUT
    - Si hay discrepancias, repórtalas en "observaciones"
 
-2. VALIDACIÓN DE COHERENCIA:
-   - El proveedor esperado debe corresponder con los datos de FACTURA y RUT
-   - Si el nombre del proveedor no coincide, reporta la discrepancia
-   - Verifica que todos los documentos se refieran al mismo tercero
-
-3. REPORTE DE INCONSISTENCIAS:
-   - Si nombre en FACTURA ≠ nombre en RUT → agregar a observaciones
-   - Si NIT en FACTURA ≠ NIT en RUT → agregar a observaciones
-   - Si proveedor esperado no coincide con documentos → agregar a observaciones
 
 """
 
@@ -735,26 +727,18 @@ def PROMPT_ANALISIS_CONSORCIO(factura_texto: str, rut_texto: str, anexos_texto: 
    - Si hay discrepancias, repórtalas en "observaciones"
 
 2. VALIDACIÓN DE CONSORCIADOS/INTEGRANTES:
-   - Identifica TODOS los consorciados listados en documentos
-   - Verifica que cada consorciado tenga: NIT, nombre, porcentaje participación
    - Busca RUT individual de cada consorciado en los anexos
-   - Si faltan RUTs individuales, repórtalo en "observaciones"
 
 3. VALIDACIÓN CONTRA RUT DEL CONSORCIO:
    - Verifica que el NIT del consorcio en FACTURA coincida con RUT
-   - Verifica que los consorciados listados en RUT coincidan con los de FACTURA
-   - Si hay diferencias en porcentajes de participación, repórtalas
 
 4. VALIDACIÓN DE COHERENCIA:
    - El nombre del consorcio esperado debe aparecer en FACTURA y RUT
    - Los consorciados deben estar claramente identificados
-   - La suma de porcentajes de participación debe ser 100% (o reportar si no lo es)
 
 5. REPORTE DE INCONSISTENCIAS:
    - Si nombre consorcio en FACTURA ≠ nombre esperado → agregar a observaciones
    - Si nombre consorcio en FACTURA ≠ nombre en RUT → agregar a observaciones
-   - Si faltan RUTs de consorciados → agregar a observaciones
-   - Si suma de porcentajes ≠ 100% → agregar a observaciones
    - Si NIT del consorcio no coincide entre documentos → agregar a observaciones
 
 """
@@ -2137,6 +2121,93 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 • Especificar claramente dónde se encontró cada información
 • NO INVENTAR VALORES, SOLO UTILIZAR LA INFORMACIÓN PRESENTE EN LOS DOCUMENTOS
     """
+
+
+def PROMPT_ANALISIS_TASA_PRODEPORTE(factura_texto: str, anexos_texto: str, observaciones_texto: str = "", nombres_archivos_directos: list[str] = None) -> str:
+    """
+    Prompt para extracción de datos de Tasa Prodeporte.
+
+    Gemini SOLO extrae datos, NO calcula ni valida.
+    Python realiza todas las validaciones y cálculos.
+
+    Args:
+        factura_texto: Texto extraído de la factura
+        anexos_texto: Texto de anexos adicionales
+        observaciones_texto: Observaciones del usuario
+        nombres_archivos_directos: Lista de nombres de archivos directos
+
+    Returns:
+        str: Prompt formateado para Gemini
+    """
+    return f"""
+ANALISIS DE TASA PRODEPORTE - SOLO EXTRACCION DE DATOS
+
+Tu responsabilidad es UNICAMENTE extraer informacion de los documentos.
+NO debes calcular ningun impuesto, solo identificar datos.
+
+═══════════════════════════════════════════════════════════════════════
+DOCUMENTOS A ANALIZAR
+═══════════════════════════════════════════════════════════════════════
+
+{_generar_seccion_archivos_directos(nombres_archivos_directos)}
+
+FACTURA:
+{factura_texto}
+
+OBSERVACIONES DEL USUARIO:
+{observaciones_texto if observaciones_texto else "NO DISPONIBLES"}
+
+ANEXOS:
+{anexos_texto if anexos_texto else "NO DISPONIBLES"}
+
+═══════════════════════════════════════════════════════════════════════
+TAREAS DE EXTRACCION
+═══════════════════════════════════════════════════════════════════════
+
+1. VALORES DE FACTURA (extraer de la factura):
+   - factura_con_iva: Valor total con IVA incluido
+   - factura_sin_iva: Valor total sin IVA (subtotal)
+   - iva: Valor del IVA
+
+
+
+2. MENCION DE TASA PRODEPORTE (analizar SOLO las observaciones):
+   - aplica_tasa_prodeporte: true si encuentras mencion de " validar tasa prodeporte",
+     "aplicar tasa prodeporte", "revisar tasa pro deporte" o similares que indiquen la aplicacion de la tasa prodeporte. 
+   - aplica_tasa_prodeporte: False si no  encuentras mencion de tasa prodeporte o si encuentras " no aplicar tasa prodeporte" o similares que indiquen que NO se debe aplicar.
+   - texto_mencion_tasa: Copia textualmente el fragmento donde identificaste la   mencion de si aplica o no aplica .
+     Debe ser el texto LITERAL de las observaciones. Si no encuentras mencion, string vacio "".
+
+3. MUNICIPIO/DEPARTAMENTO (analizar SOLO las observaciones):
+   - municipio_identificado: Nombre del municipio o departamento mencionado
+   - texto_municipio: Copia textualmente el fragmento donde identificaste el municipio.
+     Debe ser el texto LITERAL de las observaciones. Si no encuentras, string vacio "".
+
+═══════════════════════════════════════════════════════════════════════
+FORMATO DE RESPUESTA JSON
+═══════════════════════════════════════════════════════════════════════
+
+{{
+    "factura_con_iva": 0.0,
+    "factura_sin_iva": 0.0,
+    "iva": 0.0,
+    "aplica_tasa_prodeporte": false,
+    "texto_mencion_tasa": "",
+    "municipio_identificado": "",
+    "texto_municipio": ""
+}}
+
+═══════════════════════════════════════════════════════════════════════
+REGLAS IMPORTANTES
+═══════════════════════════════════════════════════════════════════════
+
+• Si NO encuentras un valor, usa 0.0 para numeros y "" para textos
+• Los textos copiados deben ser LITERALES, sin interpretacion
+• NO inventes informacion que no este en los documentos
+• Si un campo no aplica o no lo encuentras, dejalo vacio o en 0
+• Para valores monetarios, extrae solo numeros (sin simbolos $ ni comas)
+    """
+
 
 if __name__ == '__main__':
     

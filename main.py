@@ -94,6 +94,7 @@ from config import (
     codigo_negocio_aplica_estampilla_universidad,
     codigo_negocio_aplica_obra_publica,
     nit_aplica_iva_reteiva,  #  NUEVA IMPORTACIÓN IVA
+    nit_aplica_tasa_prodeporte,  #  NUEVA IMPORTACIÓN TASA PRODEPORTE
     detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
 
 )
@@ -736,7 +737,13 @@ app = FastAPI(
 async def procesar_facturas_integrado(
     archivos: List[UploadFile] = File(...),
     codigo_del_negocio: int = Form(...),
-    proveedor: str = Form(...)
+    proveedor: str = Form(...),
+    observaciones_tp: Optional[str] = Form(None),
+    genera_presupuesto: Optional[str] = Form(None),
+    rubro: Optional[str] = Form(None),
+    centro_costos: Optional[int] = Form(None),
+    numero_contrato: Optional[str] = Form(None),
+    valor_contrato_municipio: Optional[float] = Form(None)
 ) -> JSONResponse:
     """
      ENDPOINT PRINCIPAL - SISTEMA INTEGRADO v3.0
@@ -802,13 +809,18 @@ async def procesar_facturas_integrado(
         logger.info(f" NIT válido: {nombre_entidad}")
         logger.info(f"Impuestos configurados: {impuestos_aplicables}")
 
-        # Detectar automáticamente qué impuestos aplican usando código de negocio
+        # Detectar automáticamente qué impuestos aplican usando código de negocio y NIT administrativo
         nombre_negocio = datos_negocio.get('negocio', 'Desconocido')
-        deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(codigo_del_negocio, nombre_negocio)
+        deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(
+            codigo_del_negocio,
+            nombre_negocio,
+            nit_administrativo  # Validación doble: NIT + código de negocio
+        )
         aplica_retencion = "RETENCION_FUENTE" in impuestos_aplicables
         aplica_estampilla = deteccion_impuestos["aplica_estampilla_universidad"]
         aplica_obra_publica = deteccion_impuestos["aplica_contribucion_obra_publica"]
         aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # VALIDACIÓN IVA
+        aplica_tasa_prodeporte = nit_aplica_tasa_prodeporte(nit_administrativo)  # VALIDACIÓN TASA PRODEPORTE
 
         logger.info(f" Código de negocio: {codigo_del_negocio} - {nombre_negocio}")
         logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}")
@@ -999,7 +1011,13 @@ async def procesar_facturas_integrado(
         # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
         tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
         tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
-        
+
+        # Tarea 5: Análisis de Tasa Prodeporte - NUEVA FUNCIONALIDAD
+        if aplica_tasa_prodeporte:
+            tarea_tasa_prodeporte = clasificador.analizar_tasa_prodeporte(documentos_clasificados, None, cache_archivos, observaciones_tp)
+            tareas_analisis.append(("tasa_prodeporte", tarea_tasa_prodeporte))
+            logger.info(f"✓ Tasa Prodeporte: Análisis activado para NIT {nit_administrativo}")
+
         # Ejecutar todas las tareas en paralelo
         logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
         
@@ -1286,26 +1304,69 @@ async def procesar_facturas_integrado(
                     "observaciones_generales": ["Error procesando estampillas generales"]
                 }
 
+        # Liquidar Tasa Prodeporte - NUEVA FUNCIONALIDAD
+        if "tasa_prodeporte" in resultados_analisis:
+            try:
+                from Liquidador.liquidador_TP import LiquidadorTasaProdeporte
+                from Liquidador.liquidador_TP import ParametrosTasaProdeporte
+
+                liquidador_tp = LiquidadorTasaProdeporte()
+
+                # Análisis de Gemini (extracción de datos)
+                analisis_tp_gemini = resultados_analisis["tasa_prodeporte"]
+
+                # Crear parámetros con los datos del endpoint
+                parametros_tp = ParametrosTasaProdeporte(
+                    observaciones=observaciones_tp,
+                    genera_presupuesto=genera_presupuesto,
+                    rubro=rubro,
+                    centro_costos=centro_costos,
+                    numero_contrato=numero_contrato,
+                    valor_contrato_municipio=valor_contrato_municipio
+                )
+
+                # Liquidar con arquitectura SOLID (separación IA-Validación)
+                resultado_tp = liquidador_tp.liquidar(parametros_tp, analisis_tp_gemini)
+
+                # Convertir Pydantic a dict
+                resultado_final["impuestos"]["tasa_prodeporte"] = resultado_tp.dict()
+
+                # Log según resultado
+                if resultado_tp.aplica:
+                    logger.info(f" Tasa Prodeporte liquidada: ${resultado_tp.valor_imp:,.2f} (Tarifa: {resultado_tp.tarifa*100}%)")
+                else:
+                    logger.info(f" Tasa Prodeporte: {resultado_tp.estado}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando Tasa Prodeporte: {e}")
+                resultado_final["impuestos"]["tasa_prodeporte"] = {
+                    "error": str(e),
+                    "aplica": False,
+                    "estado": "Preliquidacion sin finalizar"
+                }
+
         # =================================
         # COMPLETAR IMPUESTOS QUE NO APLICAN
         # =================================
 
         # Agregar respuesta para impuestos que no aplican según código de negocio
         if not aplica_estampilla and "estampilla_universidad" not in resultado_final["impuestos"]:
+            razon_estampilla = deteccion_impuestos.get("razon_no_aplica_estampilla") or f"El negocio {nombre_negocio} no aplica este impuesto"
             resultado_final["impuestos"]["estampilla_universidad"] = {
                 "aplica": False,
                 "estado": "No aplica el impuesto",
-                "razon": f"El negocio {nombre_negocio} no aplica este impuesto"
+                "razon": razon_estampilla
             }
-            logger.info(f" Estampilla Universidad: No aplica para {nombre_negocio}")
+            logger.info(f" Estampilla Universidad: No aplica - {razon_estampilla}")
 
         if not aplica_obra_publica and "contribucion_obra_publica" not in resultado_final["impuestos"]:
+            razon_obra_publica = deteccion_impuestos.get("razon_no_aplica_obra_publica") or f"El negocio {nombre_negocio} no aplica este impuesto"
             resultado_final["impuestos"]["contribucion_obra_publica"] = {
                 "aplica": False,
                 "estado": "No aplica el impuesto",
-                "razon": f"El negocio {nombre_negocio} no aplica este impuesto"
+                "razon": razon_obra_publica
             }
-            logger.info(f" Contribución Obra Pública: No aplica para {nombre_negocio}")
+            logger.info(f" Contribución Obra Pública: No aplica - {razon_obra_publica}")
 
         if not aplica_iva and "iva_reteiva" not in resultado_final["impuestos"]:
             resultado_final["impuestos"]["iva_reteiva"] = {
@@ -1314,6 +1375,24 @@ async def procesar_facturas_integrado(
                 "razon": f"El NIT {nit_administrativo} no está configurado para IVA/ReteIVA"
             }
             logger.info(f" IVA/ReteIVA: No aplica para NIT {nit_administrativo}")
+
+        if not aplica_tasa_prodeporte and "tasa_prodeporte" not in resultado_final["impuestos"]:
+            resultado_final["impuestos"]["tasa_prodeporte"] = {
+                "estado": "No aplica el impuesto",
+                "aplica": False,
+                "valor_imp": 0.0,
+                "tarifa": 0.0,
+                "valor_convenio_sin_iva": 0.0,
+                "porcentaje_convenio": 0.0,
+                "valor_contrato_municipio": 0.0,
+                "factura_sin_iva": 0.0,
+                "factura_con_iva": 0.0,
+                "municipio_dept": "",
+                "numero_contrato": "",
+                "observaciones": f"Tasa Prodeporte solo aplica para PATRIMONIO AUTONOMO FONTUR (NIT 900649119). NIT actual: {nit_administrativo}",
+                "fecha_calculo": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            logger.info(f" Tasa Prodeporte: No aplica para NIT {nit_administrativo} (solo FONTUR 900649119)")
 
         #  CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
         valor_total_impuestos = 0.0
@@ -1330,7 +1409,10 @@ async def procesar_facturas_integrado(
         
         if "iva_reteiva" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["iva_reteiva"], dict):
             valor_total_impuestos += resultado_final["impuestos"]["iva_reteiva"].get("valor_reteiva", 0)
-        
+
+        if "tasa_prodeporte" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["tasa_prodeporte"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["tasa_prodeporte"].get("valor_imp", 0)
+
         resultado_final["resumen_total"] = {
             "valor_total_impuestos": valor_total_impuestos,
             "impuestos_liquidados": [imp for imp in impuestos_a_procesar if imp.lower().replace("_", "") in [k.lower().replace("_", "") for k in resultado_final["impuestos"].keys()]],
