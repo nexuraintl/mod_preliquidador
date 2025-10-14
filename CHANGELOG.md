@@ -1,5 +1,550 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.0.3 - Validación Duplicados en Tarifas ICA] - 2025-10-13
+
+### 🆕 **NUEVA FUNCIONALIDAD: DETECCIÓN DE TARIFAS DUPLICADAS**
+
+#### **VALIDACIÓN AUTOMÁTICA DE INTEGRIDAD EN BASE DE DATOS**
+
+**DESCRIPCIÓN**: Implementación de validación automática para detectar registros duplicados en la tabla de tarifas ICA, garantizando transparencia y trazabilidad en los cálculos.
+
+##### **✅ NUEVA FUNCIONALIDAD**
+
+**DETECCIÓN DE DUPLICADOS**:
+- Sistema detecta automáticamente si una actividad tiene múltiples registros en la BD
+- Genera observación de advertencia detallada con información del duplicado
+- Utiliza siempre el primer registro para el cálculo (comportamiento consistente)
+- Registra en logs para auditoría y depuración
+
+**OBSERVACIONES GENERADAS**:
+```
+⚠️ ADVERTENCIA: La actividad '[NOMBRE]' (código [CÓDIGO])
+en ubicación [UBICACIÓN] está DUPLICADA en la base de datos
+([N] registros encontrados).
+Se utilizó el primer registro para el cálculo (tarifa: [TARIFA]%)
+```
+
+##### **🏗️ ARQUITECTURA (SOLID)**
+
+**CAMBIOS EN LIQUIDADOR/LIQUIDADOR_ICA.PY**:
+
+1. **`_obtener_tarifa_bd()` - Línea 239**:
+   - ✅ Retorno modificado: `Dict[str, Any]` con `{"tarifa": float, "observacion": str | None}`
+   - ✅ Nueva validación: Detecta `len(response.data) > 1`
+   - ✅ Genera observación detallada con información del duplicado
+   - ✅ Logging de advertencia para auditoría
+
+2. **`_liquidar_actividad_facturada()` - Línea 149**:
+   - ✅ Acumula observaciones en `actividad_liquidada["observaciones"]`
+   - ✅ Extrae tarifa y observación del dict retornado
+   - ✅ Propaga observaciones al resultado final
+
+3. **`liquidar_ica()` - Línea 110**:
+   - ✅ Extrae observaciones de cada actividad liquidada
+   - ✅ Las agrega al array `resultado["observaciones"]`
+   - ✅ Mantiene estructura de respuesta limpia (sin observaciones internas)
+
+##### **📊 CASOS DE USO**
+
+**CASO 1: Registro único (normal)**:
+- Retorna tarifa sin observaciones
+- Flujo estándar sin modificaciones
+
+**CASO 2: Registro duplicado**:
+- Retorna tarifa del primer registro
+- Genera observación de advertencia
+- Se incluye en el resultado final JSON
+- Usuario visualiza la advertencia en la respuesta
+
+**CASO 3: Sin registros**:
+- Retorna `{"tarifa": None, "observacion": None}`
+- Se omite el cálculo para esa actividad
+
+##### **🎯 BENEFICIOS**
+
+- ✅ **Transparencia**: Usuario informado de inconsistencias en BD
+- ✅ **Trazabilidad**: Logs detallados para auditoría
+- ✅ **Consistencia**: Comportamiento predecible (siempre primer registro)
+- ✅ **Depuración**: Facilita identificar y corregir duplicados en BD
+- ✅ **SOLID**: Separación de responsabilidades mantenida
+
+---
+
+## [3.0.2 - Cambio Nombre Tabla ACTIVIDADES IK] - 2025-10-13
+
+### 🔧 **CORRECCIÓN: ACTUALIZACIÓN NOMBRE DE TABLA EN BASE DE DATOS**
+
+#### **CAMBIO DE NOMENCLATURA**
+
+**DESCRIPCIÓN**: Actualización del nombre de la tabla de actividades económicas de "ACTIVIDADES ICA" a "ACTIVIDADES IK" en todas las consultas a la base de datos.
+
+##### **🗄️ CAMBIOS EN BASE DE DATOS**
+
+**TABLA RENOMBRADA**:
+- ❌ **ANTES**: `ACTIVIDADES ICA`
+- ✅ **AHORA**: `ACTIVIDADES IK`
+
+**MOTIVACIÓN**:
+- Cambio realizado en la base de datos Supabase
+- Actualización de nomenclatura para consistencia organizacional
+- Sin cambios en estructura o contenido de la tabla
+
+##### **🔧 ARCHIVOS ACTUALIZADOS**
+
+**1. Clasificador/clasificador_ica.py**:
+- ✅ Línea 675: Comentario actualizado `# Consultar tabla ACTIVIDADES IK`
+- ✅ Línea 677: Consulta SQL actualizada `.table("ACTIVIDADES IK")`
+- ✅ Línea 713: Mensaje de error actualizado `Error consultando ACTIVIDADES IK`
+
+**2. Liquidador/liquidador_ica.py**:
+- ✅ Línea 260: Comentario actualizado `# Consultar tabla ACTIVIDADES IK con ambos códigos`
+- ✅ Línea 262: Consulta SQL actualizada `.table("ACTIVIDADES IK")`
+
+**3. CHANGELOG.md**:
+- ✅ Línea 199: Documentación actualizada en v3.0.0
+- ✅ Línea 228: Referencia a tabla actualizada en sección "TABLAS DE BASE DE DATOS"
+- ✅ Línea 268: Flujo de procesamiento actualizado
+
+##### **📊 ESTRUCTURA DE LA TABLA (SIN CAMBIOS)**
+
+La tabla mantiene exactamente la misma estructura:
+```
+Columnas:
+- CODIGO_UBICACION: int
+- NOMBRE_UBICACION: varchar
+- CODIGO_DE_LA_ACTIVIDAD: int
+- DESCRIPCION_DE_LA_ACTIVIDAD: varchar
+- PORCENTAJE_ICA: float
+- TIPO_DE_ACTIVIDAD: varchar
+```
+
+##### **✅ IMPACTO**
+
+- ✅ **Compatibilidad**: Sistema ahora consulta correctamente la tabla renombrada
+- ✅ **Sin breaking changes**: Funcionalidad mantiene el mismo comportamiento
+- ✅ **Documentación actualizada**: CHANGELOG refleja nuevo nombre en todas las referencias
+- ✅ **Sin errores**: Todas las consultas funcionan correctamente con nuevo nombre
+
+##### **🔍 VALIDACIÓN**
+
+**Consultas actualizadas**:
+1. `_obtener_actividades_por_ubicacion()` en `clasificador_ica.py`
+2. `_obtener_tarifa_bd()` en `liquidador_ica.py`
+
+**Archivos que referencian la tabla**:
+- 2 archivos de código Python actualizados
+- 1 archivo de documentación (CHANGELOG.md) actualizado
+- Total: 5 líneas de código modificadas
+
+---
+
+## [3.0.1 - Guardado Automático Respuestas Gemini ICA] - 2025-10-13
+
+### 🆕 **NUEVA FUNCIONALIDAD: GUARDADO DE RESPUESTAS GEMINI PARA ICA**
+
+#### **AUDITORÍA Y TRAZABILIDAD COMPLETA**
+
+**DESCRIPCIÓN**: Sistema de guardado automático de respuestas de Gemini para análisis ICA, permitiendo auditoría completa y debugging avanzado de las dos llamadas a IA.
+
+##### **🎯 MOTIVACIÓN**
+
+- **Auditoría**: Permite revisar exactamente qué identificó Gemini en cada análisis
+- **Debugging**: Facilita identificación de errores en prompts o respuestas de IA
+- **Trazabilidad**: Registro histórico completo de decisiones de IA por NIT
+- **Validación**: Comparación entre respuestas raw y parseadas para detectar errores de parsing
+
+##### **📁 ESTRUCTURA DE ARCHIVOS GUARDADOS**
+
+**Ubicación**: `Results/[FECHA]/ICA_Respuestas_Gemini/[NIT]/`
+
+**Archivos por análisis**:
+1. **Primera llamada (Ubicaciones)**:
+   - `ica_ubicaciones_[TIMESTAMP]_raw.txt` - Respuesta raw completa de Gemini
+   - `ica_ubicaciones_[TIMESTAMP]_parsed.json` - JSON parseado y validado
+
+2. **Segunda llamada (Actividades)**:
+   - `ica_actividades_[TIMESTAMP]_raw.txt` - Respuesta raw completa de Gemini
+   - `ica_actividades_[TIMESTAMP]_parsed.json` - JSON parseado y validado
+
+**Formato timestamp**: `HH-MM-SS-mmm` (19-02-53-052)
+
+##### **🔧 IMPLEMENTACIÓN TÉCNICA**
+
+**NUEVO MÉTODO**: `_guardar_respuesta_gemini()` - `Clasificador/clasificador_ica.py:175-225`
+- ✅ **SRP**: Solo responsable de guardar respuestas en disco
+- ✅ **Creación automática de carpetas**: Usa `Path.mkdir(parents=True, exist_ok=True)`
+- ✅ **Formato timestamp**: Precisión de milisegundos para evitar colisiones
+- ✅ **Manejo de errores robusto**: No falla el proceso principal si guardado falla
+- ✅ **Logging detallado**: Registra éxitos y errores de guardado
+- ✅ **Formato de nombre**: `ica_{tipo_llamada}_{timestamp}_{raw|parsed}.{txt|json}`
+
+**Parámetros**:
+```python
+def _guardar_respuesta_gemini(
+    self,
+    respuesta_texto: str,           # Respuesta raw de Gemini
+    data_parseada: Dict[str, Any],  # JSON parseado
+    tipo_llamada: str,              # "ubicaciones" o "actividades"
+    nit_administrativo: str         # NIT para organizar archivos
+) -> None
+```
+
+##### **🔄 INTEGRACIÓN EN FLUJO ICA**
+
+**Método actualizado**: `_identificar_ubicaciones_gemini()` - `clasificador_ica.py:228-335`
+- ✅ Nueva signatura con parámetro `nit_administrativo`
+- ✅ Llamada automática a `_guardar_respuesta_gemini()` después de análisis exitoso
+- ✅ Guarda tanto respuesta raw como JSON parseado
+- ✅ No interrumpe flujo principal si guardado falla
+
+**Método actualizado**: `_relacionar_actividades_gemini()` - `clasificador_ica.py:738-856`
+- ✅ Nueva signatura con parámetro `nit_administrativo`
+- ✅ Llamada automática a `_guardar_respuesta_gemini()` después de análisis exitoso
+- ✅ Mismo patrón de guardado que ubicaciones
+- ✅ Manejo de errores consistente
+
+**Método actualizado**: `analizar_ica()` - `clasificador_ica.py:88-173`
+- ✅ Pasa `nit_administrativo` a ambas llamadas de Gemini
+- ✅ Orquesta guardado automático en ambas fases del análisis
+
+##### **📊 EJEMPLO DE USO**
+
+**Análisis ICA para NIT 830054060**:
+```
+Results/
+  2025-10-13/
+    ICA_Respuestas_Gemini/
+      830054060/
+        ica_ubicaciones_19-02-53-052_raw.txt
+        ica_ubicaciones_19-02-53-052_parsed.json
+        ica_actividades_19-02-54-123_raw.txt
+        ica_actividades_19-02-54-123_parsed.json
+```
+
+##### **🔍 CONTENIDO DE ARCHIVOS**
+
+**Archivo RAW** (`*_raw.txt`):
+```
+```json
+{
+  "ubicaciones_identificadas": [
+    {
+      "nombre_ubicacion": "BOGOTÁ D.C.",
+      "codigo_ubicacion": 11001,
+      ...
+```
+
+**Archivo PARSED** (`*_parsed.json`):
+```json
+{
+  "ubicaciones_identificadas": [
+    {
+      "nombre_ubicacion": "BOGOTÁ D.C.",
+      "codigo_ubicacion": 11001,
+      "porcentaje_ejecucion": 100.0,
+      "texto_identificador": "..."
+    }
+  ]
+}
+```
+
+##### **✅ BENEFICIOS**
+
+1. **Auditoría completa**: Registro histórico de todas las decisiones de IA
+2. **Debugging facilitado**: Identificación rápida de problemas en prompts o parsing
+3. **Validación cruzada**: Comparar raw vs parsed para detectar errores
+4. **Trazabilidad por NIT**: Organización clara por cliente
+5. **Performance**: Guardado asíncrono no bloquea proceso principal
+6. **Robustez**: Errores de guardado no afectan liquidación
+
+##### **🔧 CAMBIOS EN ARCHIVOS**
+
+**MODIFICADO**: `Clasificador/clasificador_ica.py`
+- ✅ Nuevo método `_guardar_respuesta_gemini()` (líneas 175-225)
+- ✅ Actualizada signatura `_identificar_ubicaciones_gemini()` para recibir NIT (línea 228)
+- ✅ Actualizada signatura `_relacionar_actividades_gemini()` para recibir NIT (línea 738)
+- ✅ Agregado `from pathlib import Path` (línea 8)
+- ✅ Ambos métodos Gemini llaman a guardado automático después de análisis exitoso
+
+##### **📋 LOGGING IMPLEMENTADO**
+
+**Éxito**:
+```
+INFO: 💾 Respuestas Gemini guardadas en: Results/2025-10-13/ICA_Respuestas_Gemini/830054060/
+INFO:   - ica_ubicaciones_19-02-53-052_raw.txt
+INFO:   - ica_ubicaciones_19-02-53-052_parsed.json
+```
+
+**Error (no crítico)**:
+```
+WARNING: ⚠️ Error al guardar respuestas de Gemini: [detalle del error]
+WARNING: El análisis ICA continuará normalmente.
+```
+
+##### **🎯 PRINCIPIOS SOLID APLICADOS**
+
+- **SRP**: Método `_guardar_respuesta_gemini()` tiene una sola responsabilidad
+- **OCP**: Extensible para guardar otros tipos de respuestas sin modificar código existente
+- **DIP**: No depende de implementaciones concretas de filesystem
+- **Robustez**: Errores de guardado no afectan flujo principal (fail-safe)
+
+##### **🚀 IMPACTO**
+
+- ✅ Auditoría completa de análisis ICA disponible por primera vez
+- ✅ Debugging de prompts facilitado enormemente
+- ✅ Trazabilidad histórica por NIT implementada
+- ✅ Sin impacto en performance (guardado rápido, no bloquea proceso)
+- ✅ Sin riesgo (errores de guardado no afectan liquidación)
+
+---
+
+## [3.0.0 - Implementación ICA (Industria y Comercio)] - 2025-10-13
+
+### 🆕 **NUEVA FUNCIONALIDAD: RETENCIÓN DE ICA**
+
+#### **NUEVO IMPUESTO: ICA (INDUSTRIA Y COMERCIO) SIGUIENDO ARQUITECTURA SOLID**
+
+**PRINCIPIO FUNDAMENTAL**: Implementación completa de retención ICA siguiendo todos los principios SOLID con arquitectura separada de responsabilidades (IA para identificación, Python para validaciones).
+
+**DESCRIPCIÓN**: Sistema de análisis y liquidación de retención de ICA basado en ubicaciones geográficas y actividades económicas, con dos llamadas a Gemini y validaciones manuales exhaustivas.
+
+**🔧 PROCESAMIENTO HÍBRIDO MULTIMODAL**: ICA implementa el mismo patrón multimodal usado en IVA, donde algunos archivos (Excel, Word) se procesan localmente como texto y otros (PDF, imágenes) se envían directamente a Gemini para análisis visual avanzado.
+
+##### **🏗️ ARQUITECTURA IMPLEMENTADA (SOLID + CLEAN ARCHITECTURE)**
+
+**NUEVOS MÓDULOS CREADOS**:
+
+1. **Clasificador/prompt_ica.py**
+   - SRP: Solo generación de prompts especializados para ICA
+   - **MULTIMODAL**: Usa helper `_generar_seccion_archivos_directos()` de prompt_clasificador.py
+   - Funciones principales:
+     - `crear_prompt_identificacion_ubicaciones()`: Prompt para primera llamada Gemini (con soporte multimodal)
+     - `crear_prompt_relacionar_actividades()`: Prompt para segunda llamada Gemini (con soporte multimodal)
+     - `limpiar_json_gemini()`: Limpieza de respuestas
+     - `validar_estructura_ubicaciones()`: Validación de JSON ubicaciones
+     - `validar_estructura_actividades()`: Validación de JSON actividades
+
+2. **Clasificador/clasificador_ica.py**
+   - SRP: Solo análisis y validación de ICA
+   - DIP: Depende de abstracciones (database_manager, procesador_gemini)
+   - **MULTIMODAL**: Implementa procesamiento híbrido con cache de archivos
+   - Clase principal: `ClasificadorICA`
+   - Métodos clave:
+     - `analizar_ica()`: Coordina flujo completo de análisis con cache_archivos
+     - `_obtener_ubicaciones_bd()`: Consulta tabla UBICACIONES ICA
+     - `_identificar_ubicaciones_gemini()`: Primera llamada Gemini (MULTIMODAL)
+     - `_validar_ubicaciones_manualmente()`: Validaciones Python (ubicaciones)
+     - `_obtener_actividades_por_ubicacion()`: Consulta tabla ACTIVIDADES IK
+     - `_relacionar_actividades_gemini()`: Segunda llamada Gemini (MULTIMODAL)
+     - `_validar_actividades_manualmente()`: Validaciones Python (actividades)
+
+3. **Liquidador/liquidador_ica.py**
+   - SRP: Solo cálculos de liquidación ICA
+   - DIP: Depende de database_manager para consultas de tarifas
+   - Clase principal: `LiquidadorICA`
+   - Métodos clave:
+     - `liquidar_ica()`: Coordina liquidación completa
+     - `_liquidar_actividad_facturada()`: Calcula valores por actividad
+     - `_obtener_tarifa_bd()`: Consulta tarifas de BD
+     - `_obtener_porcentaje_ubicacion()`: Obtiene porcentajes de ejecución
+
+**FUNCIÓN DE CONFIGURACIÓN**:
+
+4. **config.py - nit_aplica_ICA()** - `config.py:1394`
+   - SRP: Solo validación de NIT para ICA
+   - DIP: Usa validar_nit_administrativo() (abstracción)
+   - Verifica si "RETENCION_ICA" está en impuestos aplicables del NIT
+
+##### **🗄️ TABLAS DE BASE DE DATOS UTILIZADAS**
+
+**SUPABASE (PostgreSQL)**:
+
+1. **UBICACIONES ICA**
+   - Columnas: CODIGO UBICACION, NOMBRE UBICACION
+   - Propósito: Parametrización de municipios/ciudades donde aplica ICA
+
+2. **ACTIVIDADES IK**
+   - Columnas:
+     - CODIGO UBICACION
+     - NOMBRE UBICACION
+     - CODIGO DE LA ACTIVIDAD
+     - DESCRIPCION DE LA ACTIVIDAD
+     - PORCENTAJE ICA
+     - TIPO DE ACTIVIDAD
+   - Propósito: Tarifas y actividades económicas por ubicación
+
+##### **🔄 FLUJO DE PROCESAMIENTO ICA (2 LLAMADAS GEMINI + VALIDACIONES)**
+
+**ARQUITECTURA SEPARADA v3.0**:
+```
+RESPONSABILIDAD GEMINI:
+✅ Primera llamada: Identificar ubicaciones de ejecución
+✅ Segunda llamada: Relacionar actividades facturadas con BD
+
+RESPONSABILIDAD PYTHON:
+✅ Validaciones ubicaciones (porcentajes, ubicaciones no parametrizadas)
+✅ Validaciones actividades (bases gravables, códigos)
+✅ Consultas a base de datos (tarifas, actividades)
+✅ Cálculos finales: base_gravable * tarifa * porcentaje_ubicacion
+```
+
+**FLUJO COMPLETO**:
+```
+1. Validar NIT aplica ICA (nit_aplica_ICA)
+   ↓
+2. Obtener ubicaciones de BD (tabla UBICACIONES ICA)
+   ↓
+3. Primera llamada Gemini: Identificar ubicaciones de actividad
+   └→ Gemini identifica: ubicación(es), porcentajes, texto soporte
+   ↓
+4. Validaciones manuales ubicaciones (Python)
+   ├─ Una ubicación → porcentaje = 100%
+   ├─ Múltiples ubicaciones → suma porcentajes = 100%
+   ├─ Ubicaciones no parametrizadas → error
+   └─ Texto identificador vacío → error
+   ↓
+5. Consultar actividades por ubicación (tabla ACTIVIDADES IK)
+   ↓
+6. Segunda llamada Gemini: Relacionar actividades
+   └→ Gemini relaciona actividades facturadas con actividades BD
+   ↓
+7. Validaciones manuales actividades (Python)
+   ├─ Actividad sin nombre → error
+   ├─ Base gravable <= 0 → error
+   ├─ Códigos actividad/ubicación <= 0 → error
+   └─ Una actividad relacionada por ubicación
+   ↓
+8. Liquidación (LiquidadorICA)
+   ├─ Consultar tarifas de BD
+   ├─ Calcular: base * tarifa * porcentaje_ubicacion
+   └─ Sumar todos los valores
+   ↓
+9. Resultado final con estructura JSON
+```
+
+##### **📝 VALIDACIONES MANUALES IMPLEMENTADAS**
+
+**VALIDACIONES UBICACIONES**:
+1. Una ubicación sin nombre → error "no se identificó ubicación"
+2. Texto identificador vacío → error "no se pudo identificar con certeza"
+3. Código ubicación <= 0 → error "ubicación no parametrizada"
+4. Múltiples ubicaciones sin porcentajes → error "no se identificó porcentaje"
+5. Suma porcentajes != 100% → error "inconsistencia en porcentajes"
+
+**VALIDACIONES ACTIVIDADES**:
+1. Nombre actividad vacío → error "no se identificó actividad facturada"
+2. Base gravable <= 0 → error "no se identificó base gravable"
+3. Sin actividades relacionadas → estado "no aplica impuesto"
+4. Códigos <= 0 → error "no se relacionó correctamente"
+5. Múltiples actividades para misma ubicación → error (solo una permitida)
+
+##### **📊 ESTRUCTURA DE RESPUESTA**
+
+**FORMATO JSON RESULTADO ICA**:
+```json
+{
+  "ica": {
+    "aplica": true/false,
+    "estado": "Preliquidado | Preliquidacion sin finalizar | No aplica impuesto",
+    "valor_total_ica": 0.0,
+    "actividades_facturadas": [
+      {
+        "nombre_actividad_fact": "Nombre textual factura",
+        "base_gravable": 0.0,
+        "actividades_relacionada": [
+          {
+            "nombre_act_rel": "Nombre BD",
+            "tarifa": 0.0,
+            "valor": 0.0,
+            "nombre_ubicacion": "",
+            "codigo_ubicacion": 0,
+            "porcentaje_ubi": 0.0
+          }
+        ]
+      }
+    ],
+    "observaciones": [],
+    "fecha_liquidacion": "ISO timestamp"
+  }
+}
+```
+
+##### **🔧 INTEGRACIÓN EN MAIN.PY**
+
+**CAMBIOS EN ENDPOINT PRINCIPAL** - `main.py`:
+
+1. **Importaciones nuevas** - `main.py:76-79`
+   - `from Clasificador.clasificador_ica import ClasificadorICA`
+   - `from Liquidador.liquidador_ica import LiquidadorICA`
+   - `from config import nit_aplica_ICA`
+
+2. **Validación de NIT** - `main.py:826`
+   - `aplica_ica = nit_aplica_ICA(nit_administrativo)`
+   - Agregado a lista de impuestos a procesar
+
+3. **Tarea de análisis ICA** - `main.py:1027-1054`
+   - Función asíncrona especializada
+   - Crea ClasificadorICA con db_manager y modelo Gemini
+   - Procesamiento en paralelo con otros impuestos
+
+4. **Liquidación ICA** - `main.py:1340-1372`
+   - Obtiene resultado del análisis
+   - Crea LiquidadorICA
+   - Calcula valores finales
+   - Agrega a resultado_final["impuestos"]["ica"]
+
+##### **🎯 PRINCIPIOS SOLID APLICADOS**
+
+**SRP (Single Responsibility Principle)**:
+- `prompt_ica.py`: Solo generación de prompts
+- `clasificador_ica.py`: Solo análisis y validaciones
+- `liquidador_ica.py`: Solo cálculos de liquidación
+- `nit_aplica_ICA()`: Solo validación de NIT
+
+**OCP (Open/Closed Principle)**:
+- Extensible para nuevas ubicaciones sin modificar código
+- Extensible para nuevas actividades sin modificar código
+
+**DIP (Dependency Inversion Principle)**:
+- ClasificadorICA depende de abstracciones (database_manager, gemini_model)
+- LiquidadorICA depende de abstracciones (database_manager)
+
+**LSP (Liskov Substitution Principle)**:
+- ClasificadorICA puede sustituirse por otras implementaciones
+- LiquidadorICA puede sustituirse por otras implementaciones
+
+**ISP (Interface Segregation Principle)**:
+- Interfaces específicas para cada responsabilidad
+
+##### **📈 MÉTRICAS Y CARACTERÍSTICAS**
+
+- **Líneas de código agregadas**: ~1500+
+- **Archivos nuevos**: 3 (prompt_ica.py, clasificador_ica.py, liquidador_ica.py)
+- **Funciones nuevas**: 15+
+- **Validaciones manuales**: 10+
+- **Llamadas a Gemini**: 2 por análisis
+- **Consultas a BD**: 3 por análisis
+- **Procesamiento**: Paralelo con otros impuestos
+
+##### **✅ BENEFICIOS**
+
+1. **Precisión**: Validaciones manuales garantizan cálculos correctos
+2. **Transparencia**: Estructura detallada por actividad y ubicación
+3. **Escalabilidad**: Fácil agregar nuevas ubicaciones/actividades
+4. **Mantenibilidad**: Código siguiendo SOLID
+5. **Performance**: Procesamiento paralelo con otros impuestos
+
+##### **🔍 TESTING RECOMENDADO**
+
+- Pruebas con una ubicación
+- Pruebas con múltiples ubicaciones
+- Pruebas con ubicaciones no parametrizadas
+- Pruebas con porcentajes incorrectos
+- Pruebas con actividades no relacionables
+- Pruebas con múltiples actividades facturadas
+
+---
+
 ## [2.12.0 - Filtro NIT Administrativo para Estampilla y Obra Pública] - 2025-10-10
 
 ### 🔧 **MEJORA: VALIDACIÓN DOBLE NIT + CÓDIGO DE NEGOCIO**

@@ -73,8 +73,10 @@ logger = logging.getLogger(__name__)
 
 # Importar clases desde módulos
 from Clasificador import ProcesadorGemini
+from Clasificador.clasificador_ica import ClasificadorICA
 from Liquidador import LiquidadorRetencion
 from Liquidador.liquidador_consorcios import LiquidadorConsorcios, convertir_resultado_a_dict as convertir_consorcio_a_dict
+from Liquidador.liquidador_ica import LiquidadorICA
 from Extraccion import ProcesadorArchivos
 
 # Importar módulos de base de datos (SOLID: Clean Architecture Module)
@@ -94,6 +96,7 @@ from config import (
     codigo_negocio_aplica_estampilla_universidad,
     codigo_negocio_aplica_obra_publica,
     nit_aplica_iva_reteiva,  #  NUEVA IMPORTACIÓN IVA
+    nit_aplica_ICA,  #  NUEVA IMPORTACIÓN ICA
     nit_aplica_tasa_prodeporte,  #  NUEVA IMPORTACIÓN TASA PRODEPORTE
     detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
 
@@ -820,11 +823,12 @@ async def procesar_facturas_integrado(
         aplica_estampilla = deteccion_impuestos["aplica_estampilla_universidad"]
         aplica_obra_publica = deteccion_impuestos["aplica_contribucion_obra_publica"]
         aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # VALIDACIÓN IVA
+        aplica_ica = nit_aplica_ICA(nit_administrativo)  # VALIDACIÓN ICA
         aplica_tasa_prodeporte = nit_aplica_tasa_prodeporte(nit_administrativo)  # VALIDACIÓN TASA PRODEPORTE
 
         logger.info(f" Código de negocio: {codigo_del_negocio} - {nombre_negocio}")
-        logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}")
-        
+        logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}, Aplica ICA: {aplica_ica}")
+
         # Determinar estrategia de procesamiento
         impuestos_a_procesar = []
         if aplica_retencion:
@@ -835,6 +839,8 @@ async def procesar_facturas_integrado(
             impuestos_a_procesar.append("CONTRIBUCION_OBRA_PUBLICA")
         if aplica_iva:
             impuestos_a_procesar.append("IVA_RETEIVA")
+        if aplica_ica:
+            impuestos_a_procesar.append("RETENCION_ICA")
 
         logger.info(f" Estrategia: PROCESAMIENTO PARALELO (todos los NITs aplican múltiples impuestos)")
         logger.info(f" Impuestos a procesar: {impuestos_a_procesar}")
@@ -1017,6 +1023,34 @@ async def procesar_facturas_integrado(
             tarea_tasa_prodeporte = clasificador.analizar_tasa_prodeporte(documentos_clasificados, None, cache_archivos, observaciones_tp)
             tareas_analisis.append(("tasa_prodeporte", tarea_tasa_prodeporte))
             logger.info(f"✓ Tasa Prodeporte: Análisis activado para NIT {nit_administrativo}")
+
+        # Tarea 6: Análisis de ICA - NUEVA FUNCIONALIDAD (MULTIMODAL)
+        if aplica_ica:
+            # ICA requiere procesamiento especial con ClasificadorICA
+            async def analizar_ica_async():
+                try:
+                    clasificador_ica = ClasificadorICA(
+                        database_manager=db_manager,
+                        procesador_gemini=clasificador  # Procesador completo para multimodal
+                    )
+                    return await clasificador_ica.analizar_ica(
+                        nit_administrativo=nit_administrativo,
+                        textos_documentos=documentos_clasificados,
+                        cache_archivos=cache_archivos  # Cache para procesamiento híbrido
+                    )
+                except Exception as e:
+                    logger.error(f"Error en análisis ICA: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return {
+                        "aplica": False,
+                        "estado": "Preliquidacion sin finalizar",
+                        "observaciones": [f"Error en análisis ICA: {str(e)}"]
+                    }
+
+            tarea_ica = analizar_ica_async()
+            tareas_analisis.append(("ica", tarea_ica))
+            logger.info(f"✓ ICA: Análisis activado para NIT {nit_administrativo}")
 
         # Ejecutar todas las tareas en paralelo
         logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
@@ -1295,13 +1329,47 @@ async def procesar_facturas_integrado(
 
                 #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
                 resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas.get("estampillas_generales", {})
-                
+
             except Exception as e:
                 logger.error(f" Error liquidando estampillas generales: {e}")
                 resultado_final["impuestos"]["estampillas_generales"] = {
                     "procesamiento_exitoso": False,
                     "error": str(e),
                     "observaciones_generales": ["Error procesando estampillas generales"]
+                }
+
+        # Liquidar ICA - NUEVA FUNCIONALIDAD
+        if "ica" in resultados_analisis and aplica_ica:
+            try:
+                logger.info(" Liquidando ICA...")
+
+                # Obtener análisis de ICA (ya validado por ClasificadorICA)
+                analisis_ica = resultados_analisis["ica"]
+
+                # Crear liquidador ICA
+                liquidador_ica = LiquidadorICA(database_manager=db_manager)
+
+                # Liquidar ICA
+                resultado_ica = liquidador_ica.liquidar_ica(analisis_ica)
+
+                # Agregar resultado al resultado final
+                resultado_final["impuestos"]["ica"] = resultado_ica
+
+                # Logs informativos
+                estado_ica = resultado_ica.get("estado", "Desconocido")
+                valor_ica = resultado_ica.get("valor_total_ica", 0.0)
+                logger.info(f" ICA - Estado: {estado_ica}")
+                logger.info(f" ICA - Valor total: ${valor_ica:,.2f}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando ICA: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                resultado_final["impuestos"]["ica"] = {
+                    "aplica": False,
+                    "estado": "Preliquidacion sin finalizar",
+                    "error": str(e),
+                    "observaciones": [f"Error en liquidación ICA: {str(e)}"]
                 }
 
         # Liquidar Tasa Prodeporte - NUEVA FUNCIONALIDAD

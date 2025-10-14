@@ -1387,6 +1387,26 @@ def nit_aplica_iva_reteiva(nit: str) -> bool:
     """Verifica si un NIT aplica para análisis de IVA y ReteIVA"""
     return nit in NITS_IVA_RETEIVA
 
+# ===============================
+# FUNCIONES ICA (INDUSTRIA Y COMERCIO)
+# ===============================
+
+def nit_aplica_ICA(nit: str) -> bool:
+    """
+    Verifica si un NIT aplica para retención de ICA (Industria y Comercio).
+
+    PRINCIPIO SRP: Responsabilidad única de validación de NIT para ICA
+    PRINCIPIO DIP: Depende de la abstracción NITS_CONFIGURACION
+
+    Args:
+        nit: NIT a verificar
+
+    Returns:
+        bool: True si el NIT aplica para ICA
+    """
+    es_valido, _, impuestos = validar_nit_administrativo(nit)
+    return es_valido and "RETENCION_ICA" in impuestos
+
 def obtener_configuracion_iva() -> Dict[str, Any]:
     """Obtiene toda la configuración de IVA para uso en prompts"""
     return {

@@ -1991,12 +1991,12 @@ INSTRUCCIONES CRÍTICAS:
 1.  **IDENTIFICACIÓN DE ESTAMPILLAS**:
    • Busca menciones EXACTAS de los nombres de las estampillas
    • Identifica variaciones comunes:
-     - "Pro Cultura" / "Procultura" / "Estampilla ProCultura"/ PROCULTURA
-     - "Pro Bienestar" /  "Estampilla Bienestar"
-     - "Adulto Mayor" / "Pro Adulto Mayor" / "Estampilla Adulto Mayor / Estampilla Bienestar Adulto Mayor"
-     - "Universidad Pedagógica" / "Estampilla Pro Universidad Pedagógica" 
-     - "Francisco José de Caldas" / "FJDC" / Estampilla Francisco José de Caldas
-     - "Pro Deporte" / "Prodeporte" / "Estampilla ProDeporte"
+     - "Estampilla Pro Cultura" / "Estampilla ProCultura"/ ESTAMPILLA PROCULTURA
+     - "Estampilla Pro Bienestar" /  "Estampilla Bienestar"
+     - "Estampilla Adulto Mayor" / "Pro Adulto Mayor" / "Estampilla Adulto Mayor / Estampilla Bienestar Adulto Mayor"
+     - "Estampilla Pro Universidad Pedagógica"
+     -  "Estampilla FJDC" / Estampilla Francisco José de Caldas
+     - "Estampilla Pro Deporte" /  "Estampilla ProDeporte"
 
 2.  **EXTRACCIÓN DE INFORMACIÓN**:
    Para cada estampilla identificada, extrae:
