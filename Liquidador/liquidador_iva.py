@@ -746,6 +746,7 @@ class LiquidadorIVA:
             "iva_reteiva": {
                 "aplica": True,
                 "valor_iva_identificado": validacion.valor_iva_calculado,
+                "valor_subtotal_sin_iva": datos.valor_subtotal_sin_iva,
                 "valor_reteiva": reteiva["valor_reteiva"],
                 "porcentaje_iva": validacion.porcentaje_iva_calculado,
                 "tarifa_reteiva": reteiva["tarifa_reteiva"],
@@ -771,6 +772,7 @@ class LiquidadorIVA:
             "iva_reteiva": {
                 "aplica": False,
                 "valor_iva_identificado": validacion.valor_iva_calculado,
+                "valor_subtotal_sin_iva": datos.valor_subtotal_sin_iva,
                 "valor_reteiva": 0.0,
                 "porcentaje_iva": validacion.porcentaje_iva_calculado,
                 "tarifa_reteiva": 0.0,
@@ -794,6 +796,7 @@ class LiquidadorIVA:
             "iva_reteiva": {
                 "aplica": False,
                 "valor_iva_identificado": validacion.valor_iva_calculado,
+                "valor_subtotal_sin_iva": datos.valor_subtotal_sin_iva,
                 "valor_reteiva": 0.0,
                 "porcentaje_iva": validacion.porcentaje_iva_calculado,
                 "tarifa_reteiva": 0.0,
@@ -813,6 +816,7 @@ class LiquidadorIVA:
             "iva_reteiva": {
                 "aplica": False,
                 "valor_iva_identificado": 0.0,
+                "valor_subtotal_sin_iva": 0.0,
                 "valor_reteiva": 0.0,
                 "porcentaje_iva": 0.0,
                 "tarifa_reteiva": 0.0,
@@ -882,6 +886,7 @@ if __name__ == "__main__":
     print("RESULTADO LIQUIDACIÓN IVA Y RETEIVA")
     print("="*60)
     print(f"Aplica: {resultado['iva_reteiva']['aplica']}")
+    print(f"Valor Subtotal sin IVA: ${resultado['iva_reteiva']['valor_subtotal_sin_iva']:,.2f}")
     print(f"Valor IVA: ${resultado['iva_reteiva']['valor_iva_identificado']:,.2f}")
     print(f"Valor ReteIVA: ${resultado['iva_reteiva']['valor_reteiva']:,.2f}")
     print(f"Porcentaje IVA: {resultado['iva_reteiva']['porcentaje_iva']:.2%}")
