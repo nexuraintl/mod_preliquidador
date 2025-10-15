@@ -1,12 +1,38 @@
-# 🧪 Tests - Preliquidador de Impuestos Colombianos
+# Tests - Preliquidador de Impuestos Colombianos
 
-## 📋 Directorio de Pruebas
+## Directorio de Pruebas
 
 Esta carpeta contiene todos los tests del proyecto. **NO se deben crear tests en archivos de producción** (main.py, liquidadores, clasificadores, etc.).
 
-## 🎯 Objetivo
+## Objetivo
 
 Mantener el código de producción limpio y separado de las pruebas, siguiendo el **Principio de Separación de Responsabilidades (SRP)**.
+
+## Tests Disponibles
+
+### test_liquidador_sobretasa_bomberil.py
+Tests completos para el liquidador de Sobretasa Bomberil con 11 casos de prueba:
+
+**Ejecutar**: `python tests/test_liquidador_sobretasa_bomberil.py`
+
+**Casos de prueba**:
+1. ICA con valor > 0 y ubicación con tarifa (exitoso)
+2. Múltiples ubicaciones, algunas con tarifa
+3. Todas las ubicaciones con tarifa
+4. ICA con valor = 0 (no aplica)
+5. ICA válido pero ubicación sin tarifa en BD
+6. ICA sin actividades facturadas
+7. Error al consultar base de datos
+8. Excepción general durante liquidación
+9. Extracción de ubicaciones del resultado ICA
+10. Obtención de tarifa de BD exitosa
+11. Obtención de tarifa BD sin registros
+
+**Características**:
+- Usa mocks para simular respuestas de ICA y base de datos
+- Tests aislados e independientes
+- Validación de cálculos: `valor_sobretasa = valor_ica × tarifa`
+- Cobertura de casos exitosos, errores y edge cases
 
 ## 📁 Estructura Sugerida
 

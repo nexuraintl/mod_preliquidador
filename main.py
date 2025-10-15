@@ -77,6 +77,7 @@ from Clasificador.clasificador_ica import ClasificadorICA
 from Liquidador import LiquidadorRetencion
 from Liquidador.liquidador_consorcios import LiquidadorConsorcios, convertir_resultado_a_dict as convertir_consorcio_a_dict
 from Liquidador.liquidador_ica import LiquidadorICA
+from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
 from Extraccion import ProcesadorArchivos
 
 # Importar módulos de base de datos (SOLID: Clean Architecture Module)
@@ -1370,6 +1371,40 @@ async def procesar_facturas_integrado(
                     "estado": "Preliquidacion sin finalizar",
                     "error": str(e),
                     "observaciones": [f"Error en liquidación ICA: {str(e)}"]
+                }
+
+        # Liquidar Sobretasa Bomberil - NUEVA FUNCIONALIDAD (Solo si ICA fue procesado)
+        if "ica" in resultado_final["impuestos"]:
+            try:
+                logger.info(" Liquidando Sobretasa Bomberil...")
+
+                # Obtener resultado de ICA
+                resultado_ica = resultado_final["impuestos"]["ica"]
+
+                # Crear liquidador Sobretasa Bomberil
+                liquidador_sobretasa = LiquidadorSobretasaBomberil(database_manager=db_manager)
+
+                # Liquidar Sobretasa Bomberil
+                resultado_sobretasa = liquidador_sobretasa.liquidar_sobretasa_bomberil(resultado_ica)
+
+                # Agregar resultado al resultado final
+                resultado_final["impuestos"]["sobretasa_bomberil"] = resultado_sobretasa
+
+                # Logs informativos
+                estado_sobretasa = resultado_sobretasa.get("estado", "Desconocido")
+                valor_sobretasa = resultado_sobretasa.get("valor_total_sobretasa", 0.0)
+                logger.info(f" Sobretasa Bomberil - Estado: {estado_sobretasa}")
+                logger.info(f" Sobretasa Bomberil - Valor total: ${valor_sobretasa:,.2f}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando Sobretasa Bomberil: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                resultado_final["impuestos"]["sobretasa_bomberil"] = {
+                    "aplica": False,
+                    "estado": "Preliquidacion sin finalizar",
+                    "error": str(e),
+                    "observaciones": f"Error en liquidación Sobretasa Bomberil: {str(e)}"
                 }
 
         # Liquidar Tasa Prodeporte - NUEVA FUNCIONALIDAD

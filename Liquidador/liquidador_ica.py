@@ -309,7 +309,7 @@ class LiquidadorICA:
                 descripcion = response.data[0]["DESCRIPCION_DE_LA_ACTIVIDAD"]
 
                 observacion = (
-                    f"⚠️ ADVERTENCIA: La actividad '{descripcion}' (código {codigo_actividad}) "
+                    f" ADVERTENCIA: La actividad '{descripcion}' (código {codigo_actividad}) "
                     f"en ubicación {codigo_ubicacion} está DUPLICADA en la base de datos "
                     f"({len(response.data)} registros encontrados). "
                     f"Se utilizó el primer registro para el cálculo (tarifa: {tarifa_primer_registro}%)"

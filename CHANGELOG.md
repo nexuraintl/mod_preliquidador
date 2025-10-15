@@ -1,5 +1,197 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.0.4 - Implementación Sobretasa Bomberil] - 2025-10-14
+
+### 🆕 **NUEVA FUNCIONALIDAD: SOBRETASA BOMBERIL**
+
+#### **NUEVO IMPUESTO INTEGRADO AL SISTEMA**
+
+**DESCRIPCIÓN**: Implementación del cálculo de Sobretasa Bomberil (Tasa de Bomberos), impuesto municipal que se aplica como porcentaje sobre el valor total de ICA. Este impuesto solo aplica cuando ICA tiene valor mayor a cero.
+
+##### **✅ CARACTERÍSTICAS PRINCIPALES**
+
+**DEPENDENCIA DE ICA**:
+- Solo se calcula si ICA fue preliquidado exitosamente
+- Requiere valor_total_ica > 0 para aplicar
+- Si ICA no aplica, Sobretasa Bomberil no aplica automáticamente
+
+**CÁLCULO POR UBICACIÓN**:
+- Itera todas las ubicaciones identificadas en el análisis de ICA
+- Consulta tarifa específica por ubicación en tabla `TASA_BOMBERIL`
+- Calcula: `valor_sobretasa = valor_ica_ubicacion × tarifa`
+- Suma valores de todas las ubicaciones que aplican
+
+**VALIDACIONES IMPLEMENTADAS**:
+1. **Sin ICA**: Estado "Preliquidacion sin finalizar" - No aplica ICA, por tanto no aplica Sobretasa Bomberil
+2. **Error BD**: Estado "Preliquidacion sin finalizar" - Error al consultar la base de datos
+3. **Sin tarifa**: Estado "No aplica impuesto" - La ubicación no aplica Sobretasa Bomberil
+4. **Exitoso**: Estado "Preliquidado" - Sobretasa calculada correctamente
+
+##### **🏗️ ARQUITECTURA (SOLID)**
+
+**NUEVO ARCHIVO: `Liquidador/liquidador_sobretasa_b.py`**
+
+**CLASE PRINCIPAL: `LiquidadorSobretasaBomberil`**:
+- ✅ **SRP**: Responsabilidad única - solo cálculos de Sobretasa Bomberil
+- ✅ **DIP**: Inyección de dependencias - `database_manager`
+- ✅ **OCP**: Abierto para extensión - nuevas tarifas/reglas
+- ✅ **Separación de responsabilidades**: Métodos privados especializados
+
+**MÉTODOS IMPLEMENTADOS**:
+
+1. **`liquidar_sobretasa_bomberil(resultado_ica)`**:
+   - Método principal de liquidación
+   - Valida que ICA tenga valor > 0
+   - Extrae todas las ubicaciones del resultado ICA
+   - Procesa cada ubicación individualmente
+   - Retorna resultado estructurado
+
+2. **`_extraer_ubicaciones_ica(resultado_ica)`**:
+   - ✅ **SRP**: Solo extrae ubicaciones del resultado ICA
+   - Itera TODAS las actividades relacionadas
+   - Retorna lista con: código_ubicacion, nombre_ubicacion, valor_ica
+
+3. **`_obtener_tarifa_bd(codigo_ubicacion)`**:
+   - ✅ **SRP**: Solo consulta tarifa de la BD
+   - Consulta tabla `TASA_BOMBERIL`
+   - Retorna: tarifa, nombre_ubicacion, error, mensaje
+
+**FACTORY FUNCTION**:
+- `crear_liquidador_sobretasa_bomberil(database_manager)`
+- Patrón Factory para creación simplificada
+
+##### **📊 ESTRUCTURA DE RESPUESTA**
+
+```json
+{
+  "aplica": true,
+  "estado": "Preliquidado",
+  "valor_total_sobretasa": 150000.0,
+  "ubicaciones": [
+    {
+      "nombre_ubicacion": "BOGOTÁ D.C.",
+      "codigo_ubicacion": 11001,
+      "tarifa": 0.05,
+      "base_gravable_ica": 2000000.0,
+      "valor": 100000.0
+    },
+    {
+      "nombre_ubicacion": "MEDELLÍN",
+      "codigo_ubicacion": 5001,
+      "tarifa": 0.04,
+      "base_gravable_ica": 1250000.0,
+      "valor": 50000.0
+    }
+  ],
+  "observaciones": "Sobretasa Bomberil aplicada en 2 ubicación(es)",
+  "fecha_liquidacion": "2025-10-14T10:30:00.000000"
+}
+```
+
+##### **🔄 INTEGRACIÓN EN MAIN.PY**
+
+**CAMBIOS EN `main.py`**:
+
+1. **Línea 80 - Import agregado**:
+   ```python
+   from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
+   ```
+
+2. **Líneas 1376-1408 - Bloque de liquidación**:
+   - Se ejecuta después de ICA
+   - Validación: Solo si `"ica"` existe en `resultado_final["impuestos"]`
+   - Crea instancia del liquidador
+   - Pasa resultado de ICA como entrada
+   - Agrega resultado como impuesto independiente: `sobretasa_bomberil`
+   - Manejo de errores consistente con otros impuestos
+
+**LOGS INFORMATIVOS**:
+```
+💰 Liquidando Sobretasa Bomberil...
+💰 Sobretasa Bomberil - Estado: Preliquidado
+💰 Sobretasa Bomberil - Valor total: $150,000.00
+```
+
+##### **🗄️ BASE DE DATOS**
+
+**TABLA REQUERIDA: `TASA_BOMBERIL`**
+
+**COLUMNAS**:
+- `CODIGO_UBICACION` (int): Código del municipio/departamento
+- `NOMBRE_UBICACION` (varchar): Nombre del municipio
+- `TARIFA` (decimal): Tarifa aplicable (ejemplo: 0.05 para 5%)
+
+**EJEMPLO DE DATOS**:
+```
+CODIGO_UBICACION | NOMBRE_UBICACION | TARIFA
+11001           | BOGOTÁ D.C.      | 0.05
+5001            | MEDELLÍN         | 0.04
+76001           | CALI             | 0.03
+```
+
+##### **📋 CASOS DE USO**
+
+**CASO 1: ICA no aplica**:
+```json
+{
+  "aplica": false,
+  "estado": "Preliquidacion sin finalizar",
+  "valor_total_sobretasa": 0.0,
+  "ubicaciones": [],
+  "observaciones": "No aplica ICA, por tanto no aplica Sobretasa Bomberil"
+}
+```
+
+**CASO 2: Error en base de datos**:
+```json
+{
+  "aplica": false,
+  "estado": "Preliquidacion sin finalizar",
+  "valor_total_sobretasa": 0.0,
+  "ubicaciones": [],
+  "observaciones": "Error al consultar la base de datos"
+}
+```
+
+**CASO 3: Ubicación sin tarifa**:
+```json
+{
+  "aplica": false,
+  "estado": "No aplica impuesto",
+  "valor_total_sobretasa": 0.0,
+  "ubicaciones": [],
+  "observaciones": "Ninguna de las 1 ubicaciones aplica Sobretasa Bomberil"
+}
+```
+
+**CASO 4: Cálculo exitoso (múltiples ubicaciones)**:
+- Algunas ubicaciones tienen tarifa, otras no
+- Solo se calculan las que tienen tarifa
+- Se suman todos los valores
+- Estado: "Preliquidado"
+
+##### **🎯 BENEFICIOS**
+
+- ✅ **Modularidad**: Código separado en archivo específico
+- ✅ **SOLID**: Principios de diseño aplicados consistentemente
+- ✅ **Reutilización**: Aprovecha estructura existente de ICA
+- ✅ **Transparencia**: Detalle por ubicación en la respuesta
+- ✅ **Escalabilidad**: Fácil agregar nuevas ubicaciones en BD
+- ✅ **Mantenibilidad**: Código limpio y bien documentado
+- ✅ **Trazabilidad**: Logs detallados para auditoría
+
+##### **🔧 TESTING SUGERIDO**
+
+**PRUEBAS RECOMENDADAS**:
+1. ICA con valor > 0 y ubicación con tarifa
+2. ICA con valor > 0 pero ubicación sin tarifa
+3. ICA con valor = 0
+4. Múltiples ubicaciones con diferentes tarifas
+5. Error de conexión a base de datos
+6. ICA no procesado (no existe en resultado_final)
+
+---
+
 ## [3.0.3 - Validación Duplicados en Tarifas ICA] - 2025-10-13
 
 ### 🆕 **NUEVA FUNCIONALIDAD: DETECCIÓN DE TARIFAS DUPLICADAS**

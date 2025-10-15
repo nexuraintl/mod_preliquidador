@@ -768,7 +768,7 @@ class ClasificadorICA:
                 # CORRECCIÓN: Procesar archivos al formato esperado por Gemini
                 archivos_procesados = await self._procesar_archivos_para_gemini(archivos_directos)
                 contenido_gemini.extend(archivos_procesados)
-                logger.info(f"📎 ICA - Enviando {len(archivos_procesados)} archivos procesados a Gemini para relacionar actividades")
+                logger.info(f" ICA - Enviando {len(archivos_procesados)} archivos procesados a Gemini para relacionar actividades")
 
             # Llamar a Gemini con contexto completo
             loop = asyncio.get_event_loop()
@@ -782,7 +782,7 @@ class ClasificadorICA:
             json_limpio = limpiar_json_gemini(respuesta_texto)
             data = json.loads(json_limpio)
 
-            # 💾 GUARDAR RESPUESTA DE GEMINI (Segunda llamada - actividades)
+            #  GUARDAR RESPUESTA DE GEMINI (Segunda llamada - actividades)
             self._guardar_respuesta_gemini(
                 respuesta_texto=respuesta_texto,
                 data_parseada=data,
