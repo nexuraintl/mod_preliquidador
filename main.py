@@ -410,7 +410,7 @@ inicializar_configuracion()
 
 # Configurar APIs
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GOOGLE_CLOUD_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+#GOOGLE_CLOUD_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY no está configurada en el archivo .env")
@@ -2034,7 +2034,7 @@ if __name__ == "__main__":
     logger.info(" Iniciando Preliquidador de Retefuente v2.0 - Sistema Integrado")
     logger.info(" Funcionalidades: Retención en la fuente + Estampilla universidad + Obra pública 5%")
     logger.info(f" Gemini configurado: {bool(GEMINI_API_KEY)}")
-    logger.info(f" Vision configurado: {bool(GOOGLE_CLOUD_CREDENTIALS)}")
+    #logger.info(f" Vision configurado: {bool(GOOGLE_CLOUD_CREDENTIALS)}")
     logger.info(f" Conceptos cargados: {len(CONCEPTOS_RETEFUENTE)}")
     
     # Verificar estructura de carpetas

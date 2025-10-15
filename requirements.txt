@@ -39,6 +39,9 @@ aiofiles==23.2.0
 # Procesamiento de emails
 extract-msg==0.48.4
 
+# Cliente de base de datos
+supabase==2.3.0
+
 # NUEVAS DEPENDENCIAS v2.3.0:
 # =======================================
 # pdfplumber: Método principal para extracción de PDF con estructuras complejas
