@@ -300,9 +300,10 @@ NITS_CONFIGURACION = {
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "IVA",
-            "RETENCION_ICA", 
+            "RETENCION_ICA",
             "CONTRIBUCION_OBRA_PUBLICA",
-            "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
+            "ESTAMPILLA_UNIVERSIDAD_NACIONAL",
+            "IMPUESTO_TIMBRE"
         ]
     },
     "830054060": {
@@ -311,8 +312,9 @@ NITS_CONFIGURACION = {
             "RETENCION_FUENTE",
             "IVA",
             "RETENCION_ICA",
-            "CONTRIBUCION_OBRA_PUBLICA", 
-            "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
+            "CONTRIBUCION_OBRA_PUBLICA",
+            "ESTAMPILLA_UNIVERSIDAD_NACIONAL",
+            "IMPUESTO_TIMBRE"
         ]
     },
     "900649119": {
@@ -322,7 +324,8 @@ NITS_CONFIGURACION = {
             "IVA",
             "RETENCION_ICA",
             "CONTRIBUCION_OBRA_PUBLICA",
-            "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
+            "ESTAMPILLA_UNIVERSIDAD_NACIONAL",
+            "IMPUESTO_TIMBRE"
         ]
     },
     "901281733": {
@@ -839,23 +842,32 @@ def obtener_configuracion_obra_publica() -> Dict[str, Any]:
 # FUNCIÓN INTEGRADA DE DETECCIÓN AUTOMÁTICA
 # ===============================
 
-def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio: str = None, nit_administrativo: str = None) -> Dict[str, Any]:
+def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio: str = None, nit_administrativo: str = None, business_service = None) -> Dict[str, Any]:
     """
     Detecta automáticamente qué impuestos aplican según el código de negocio y NIT administrativo.
 
     SRP: Solo detecta y estructura información de impuestos aplicables
+    DIP: Recibe business_service como dependencia inyectada
+
+    FLUJO DE VALIDACIÓN (v3.1):
+    1. Validar NIT administrativo (si se proporciona)
+    2. Validar código de negocio
+    3. NUEVO: Validar tipo de recurso (Públicos/Privados) en BD
+    4. Retornar resultado consolidado
 
     Args:
         codigo_negocio: Código único del negocio
         nombre_negocio: Nombre del negocio (opcional, para logging)
         nit_administrativo: NIT del administrativo extraído de la base de datos (opcional)
+        business_service: Servicio de datos de negocio para validar tipo de recurso (DIP)
 
     Returns:
-        Dict con información de qué impuestos aplican, incluyendo validaciones de NIT
+        Dict con información de qué impuestos aplican, incluyendo validaciones de NIT y tipo de recurso
 
     Notas:
         - Si no se proporciona nit_administrativo, solo valida por código de negocio (compatibilidad)
         - Si se proporciona nit_administrativo, valida PRIMERO el NIT, DESPUÉS el código
+        - Si se proporciona business_service, valida tipo de recurso (Públicos/Privados) en BD
     """
     nombre_registrado = CODIGOS_NEGOCIO_ESTAMPILLA.get(codigo_negocio, nombre_negocio or "Desconocido")
 
@@ -908,18 +920,96 @@ def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio
         }
 
     # Si llegamos aquí, el NIT es válido (y el código también si era necesario validarlo)
-    # APLICAR AMBOS IMPUESTOS DIRECTAMENTE
-    # No validamos el código otra vez porque ya fue validado dentro de validar_nit_administrativo_para_impuestos()
+
+    # ===================================================================
+    # VALIDACIÓN 3: TIPO DE RECURSO (PÚBLICOS/PRIVADOS) - NUEVA v3.1
+    # ===================================================================
+    # Si business_service está disponible, validar tipo de recurso del negocio
+    if business_service:
+        logger.info(f"Validando tipo de recurso para código de negocio {codigo_negocio}")
+
+        try:
+            validacion_recurso = business_service.validar_tipo_recurso_negocio(codigo_negocio)
+
+            # CASO 1: No aplica porque administra recursos privados
+            if validacion_recurso.get("tipo_recurso") == "Privados":
+                logger.info(f"Negocio {codigo_negocio} administra recursos privados - No aplican impuestos especiales")
+                return {
+                    "codigo_negocio": codigo_negocio,
+                    "nombre_negocio": nombre_registrado,
+                    "aplica_estampilla_universidad": False,
+                    "aplica_contribucion_obra_publica": False,
+                    "impuestos_aplicables": [],
+                    "procesamiento_paralelo": False,
+                    "nombre_entidad_estampilla": None,
+                    "nombre_entidad_obra_publica": None,
+                    "validacion_nit": validacion_nit,
+                    "validacion_recurso": validacion_recurso,  # Incluir resultado completo
+                    "razon_no_aplica_estampilla": validacion_recurso.get("razon"),
+                    "razon_no_aplica_obra_publica": validacion_recurso.get("razon")
+                }
+
+            # CASO 2: No parametrizado o error técnico
+            elif not validacion_recurso.get("success"):
+                logger.warning(f"No se pudo validar tipo de recurso para código {codigo_negocio}: {validacion_recurso.get('observaciones')}")
+                return {
+                    "codigo_negocio": codigo_negocio,
+                    "nombre_negocio": nombre_registrado,
+                    "aplica_estampilla_universidad": False,
+                    "aplica_contribucion_obra_publica": False,
+                    "impuestos_aplicables": [],
+                    "procesamiento_paralelo": False,
+                    "nombre_entidad_estampilla": None,
+                    "nombre_entidad_obra_publica": None,
+                    "validacion_nit": validacion_nit,
+                    "validacion_recurso": validacion_recurso,  # Incluir resultado completo
+                    "estado_especial": "Preliquidacion sin finalizar",
+                    "razon_no_aplica_estampilla": validacion_recurso.get("observaciones"),
+                    "razon_no_aplica_obra_publica": validacion_recurso.get("observaciones")
+                }
+
+            # CASO 3: Recursos Públicos - Continuar con flujo normal
+            logger.info(f"Negocio {codigo_negocio} administra recursos públicos - Aplican impuestos especiales")
+
+        except Exception as e:
+            # Error inesperado en validación de recurso
+            logger.error(f"Error inesperado validando tipo de recurso: {e}")
+            return {
+                "codigo_negocio": codigo_negocio,
+                "nombre_negocio": nombre_registrado,
+                "aplica_estampilla_universidad": False,
+                "aplica_contribucion_obra_publica": False,
+                "impuestos_aplicables": [],
+                "procesamiento_paralelo": False,
+                "nombre_entidad_estampilla": None,
+                "nombre_entidad_obra_publica": None,
+                "validacion_nit": validacion_nit,
+                "validacion_recurso": {
+                    "success": False,
+                    "error": str(e),
+                    "observaciones": f"Error técnico al validar tipo de recurso: {str(e)}"
+                },
+                "estado_especial": "Preliquidacion sin finalizar",
+                "razon_no_aplica_estampilla": f"Error técnico al validar tipo de recurso: {str(e)}",
+                "razon_no_aplica_obra_publica": f"Error técnico al validar tipo de recurso: {str(e)}"
+            }
+
+    # Si no hay business_service, continuar sin validar tipo de recurso (compatibilidad)
+    else:
+        logger.warning("BusinessService no disponible - no se validó tipo de recurso")
+
+    # APLICAR AMBOS IMPUESTOS (todas las validaciones pasaron)
     return {
         "codigo_negocio": codigo_negocio,
         "nombre_negocio": nombre_registrado,
-        "aplica_estampilla_universidad": True,  # Aplica directamente
-        "aplica_contribucion_obra_publica": True,  # Aplica directamente
+        "aplica_estampilla_universidad": True,
+        "aplica_contribucion_obra_publica": True,
         "impuestos_aplicables": ["ESTAMPILLA_UNIVERSIDAD", "CONTRIBUCION_OBRA_PUBLICA"],
         "procesamiento_paralelo": True,
         "nombre_entidad_estampilla": nombre_registrado,
         "nombre_entidad_obra_publica": nombre_registrado,
         "validacion_nit": validacion_nit,
+        "validacion_recurso": validacion_recurso if business_service else None,
         "razon_no_aplica_estampilla": None,
         "razon_no_aplica_obra_publica": None
     }
@@ -1406,6 +1496,27 @@ def nit_aplica_ICA(nit: str) -> bool:
     """
     es_valido, _, impuestos = validar_nit_administrativo(nit)
     return es_valido and "RETENCION_ICA" in impuestos
+
+def nit_aplica_timbre(nit: str) -> bool:
+    """
+    Verifica si un NIT aplica para Impuesto al Timbre.
+
+    PRINCIPIO SRP: Responsabilidad unica de validacion de NIT para Timbre
+    PRINCIPIO DIP: Depende de la abstraccion NITS_CONFIGURACION
+
+    NITs que aplican timbre:
+    - 800178148: Fiduciaria Colombiana de Comercio Exterior S.A.
+    - 900649119: Fondo Nacional de Turismo FONTUR
+    - 830054060: Fideicomiso Sociedad Fiduciaria Fiducoldex
+
+    Args:
+        nit: NIT a verificar
+
+    Returns:
+        bool: True si el NIT aplica para Impuesto al Timbre
+    """
+    es_valido, _, impuestos = validar_nit_administrativo(nit)
+    return es_valido and "IMPUESTO_TIMBRE" in impuestos
 
 def obtener_configuracion_iva() -> Dict[str, Any]:
     """Obtiene toda la configuración de IVA para uso en prompts"""

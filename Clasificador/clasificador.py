@@ -62,7 +62,6 @@ class NaturalezaTercero(BaseModel):
     es_persona_natural: Optional[bool] = None
     regimen_tributario: Optional[str] = None  # SIMPLE, ORDINARIO, ESPECIAL
     es_autorretenedor: Optional[bool] = None
-    es_responsable_iva: Optional[bool] = None  # NUEVA VALIDACIÓN
 
 # NUEVOS MODELOS PARA ARTÍCULO 383 - ESTRUCTURA ACTUALIZADA PARA GEMINI
 

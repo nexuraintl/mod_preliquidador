@@ -1,5 +1,575 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.0.8 - Mejora: Cache de Archivos en Timbre] - 2025-10-18
+
+### MEJORA: SOPORTE PARA CACHE DE ARCHIVOS EN PROCESAMIENTO PARALELO
+
+#### MANEJO CONSISTENTE DE ARCHIVOS PARA TIMBRE
+
+**DESCRIPCIÓN**: Implementación del mismo patrón de cache de archivos usado en otros impuestos para el clasificador de timbre. Esto asegura compatibilidad con workers paralelos y procesamiento consistente.
+
+##### CAMBIOS EN `Clasificador/clasificador_timbre.py`
+
+**Método `extraer_datos_contrato()` actualizado** (líneas 139-176):
+
+**ANTES**:
+```python
+# Uso directo de archivos_directos sin manejo de cache
+if archivos_directos:
+    respuesta = await self.procesador._llamar_gemini_hibrido_factura(prompt, archivos_directos)
+```
+
+**AHORA**:
+```python
+# USAR CACHE SI ESTÁ DISPONIBLE (para workers paralelos)
+if cache_archivos:
+    logger.info(f"Usando cache de archivos para extracción timbre (workers paralelos): {len(cache_archivos)} archivos")
+    archivos_directos = self.procesador._obtener_archivos_clonados_desde_cache(cache_archivos)
+    total_archivos_directos = len(archivos_directos)
+else:
+    total_archivos_directos = len(archivos_directos) if archivos_directos else 0
+    logger.info(f"Usando archivos directos originales (sin cache): {total_archivos_directos} archivos")
+
+total_textos_preprocesados = len(documentos_clasificados)
+
+if total_archivos_directos > 0:
+    logger.info(f"Extracción timbre HÍBRIDO: {total_archivos_directos} directos + {total_textos_preprocesados} preprocesados")
+else:
+    logger.info(f"Extracción timbre TRADICIONAL: {total_textos_preprocesados} textos preprocesados")
+```
+
+##### VENTAJAS DE ESTA IMPLEMENTACIÓN
+
+**Compatibilidad con Workers Paralelos**:
+- Soporte completo para procesamiento asíncrono múltiple
+- Cache de archivos compartido entre workers
+- Evita lectura duplicada de archivos
+
+**Logging Detallado**:
+- Informa si se usa cache o archivos originales
+- Distingue entre modo HÍBRIDO (con archivos) y TRADICIONAL (solo texto)
+- Muestra conteo de archivos directos y textos preprocesados
+
+**Consistencia con Otros Impuestos**:
+- Mismo patrón usado en retefuente, IVA, estampillas
+- Facilita mantenimiento y debugging
+- Comportamiento predecible
+
+**Manejo Robusto de Casos Edge**:
+- Valida que `archivos_directos` no sea None antes de contar
+- Maneja correctamente caso sin archivos (modo TEXTO)
+- Logging específico para cada escenario
+
+##### CASOS DE USO
+
+**Caso 1: Workers Paralelos con Cache**
+```python
+# Múltiples impuestos procesándose en paralelo
+cache_archivos = {
+    "factura.pdf": bytes_factura,
+    "contrato.pdf": bytes_contrato
+}
+# Timbre usa cache para clonar archivos
+resultado = await clasificador_timbre.extraer_datos_contrato(
+    documentos_clasificados=docs,
+    cache_archivos=cache_archivos  # Usa cache
+)
+# Log: "Usando cache de archivos para extracción timbre (workers paralelos): 2 archivos"
+```
+
+**Caso 2: Procesamiento Individual sin Cache**
+```python
+# Solo timbre procesándose
+resultado = await clasificador_timbre.extraer_datos_contrato(
+    documentos_clasificados=docs,
+    archivos_directos=archivos_upload  # Sin cache
+)
+# Log: "Usando archivos directos originales (sin cache): 2 archivos"
+```
+
+**Caso 3: Solo Textos Preprocesados**
+```python
+# Sin archivos directos
+resultado = await clasificador_timbre.extraer_datos_contrato(
+    documentos_clasificados=docs
+)
+# Log: "Extracción timbre TRADICIONAL: 5 textos preprocesados"
+```
+
+##### IMPACTO EN ARQUITECTURA
+
+**No Breaking Changes**:
+- Interface del método sin cambios
+- Comportamiento backward-compatible
+- Solo mejora interna de procesamiento
+
+**Mejor Rendimiento en Paralelo**:
+- Cache reduce overhead de I/O
+- Clonación eficiente de archivos en memoria
+- Menos contención de recursos
+
+##### ARCHIVOS MODIFICADOS
+
+1. `Clasificador/clasificador_timbre.py`:
+   - Líneas 139-176: Agregado patrón de cache de archivos
+   - Logging detallado de modos de procesamiento
+   - Manejo robusto de casos sin archivos
+
+---
+
+## [3.0.7 - Refactorización SOLID: Consulta BD en Liquidador Timbre] - 2025-10-18
+
+### REFACTORIZACIÓN: MOVIMIENTO DE LÓGICA DE BD A LIQUIDADOR
+
+#### APLICACIÓN ESTRICTA DE SRP (SINGLE RESPONSIBILITY PRINCIPLE)
+
+**DESCRIPCIÓN**: Refactorización de la consulta a base de datos moviendo toda la lógica desde `main.py` al `liquidador_timbre.py`. Esto asegura que el liquidador maneje todas sus validaciones y el main solo orqueste.
+
+##### CAMBIOS ARQUITECTÓNICOS
+
+**Liquidador/liquidador_timbre.py**:
+
+1. **Constructor modificado**:
+   - Ahora recibe `db_manager` como dependencia (DIP)
+   - Inyección de dependencias explícita
+   ```python
+   def __init__(self, db_manager=None):
+       self.db_manager = db_manager
+   ```
+
+2. **Firma de `liquidar_timbre()` modificada**:
+   - ELIMINADO: `tarifa_bd` y `tipo_cuantia_bd` (se obtienen internamente)
+   - AGREGADO: `codigo_negocio` y `nit_proveedor` (para consulta BD)
+   ```python
+   def liquidar_timbre(
+       self,
+       nit_administrativo: str,
+       codigo_negocio: str,        # NUEVO
+       nit_proveedor: str,         # NUEVO
+       analisis_observaciones: Dict[str, Any],
+       datos_contrato: Dict[str, Any] = None
+   ) -> ResultadoTimbre:
+   ```
+
+3. **Nuevo método `_consultar_cuantia_bd()`**:
+   - Encapsula toda la lógica de consulta a BD
+   - Maneja 3 casos de error explícitamente
+   - Retorna tupla `(tarifa, tipo_cuantia)` si exitoso
+   - Retorna `ResultadoTimbre` con error si falla
+
+**Validaciones Agregadas en Liquidador**:
+
+**VALIDACION 1.5: ID Contrato y Consulta BD** (líneas 87-118):
+
+**Caso 1**: ID_contrato es string vacío
+```python
+if not id_contrato or id_contrato.strip() == "":
+    return ResultadoTimbre(
+        estado="Preliquidacion sin finalizar",
+        observaciones="No se pudo extraer el numero del contrato de los documentos anexos"
+    )
+```
+
+**Caso 2**: Consulta BD exitosa pero sin datos
+```python
+if not resultado_cuantia.get('success'):
+    return ResultadoTimbre(
+        estado="Preliquidacion sin finalizar",
+        observaciones=f"No se encontro cuantia en BD para el contrato {id_contrato}"
+    )
+```
+
+**Caso 3**: Error en la consulta a BD
+```python
+except Exception as e:
+    return ResultadoTimbre(
+        estado="Preliquidacion sin finalizar",
+        observaciones=f"Error en la base de datos: {str(e)}"
+    )
+```
+
+**Caso 4**: Consulta exitosa con datos válidos
+- Extrae `tarifa` y `tipo_cuantia`
+- Continúa con VALIDACION 2 (base gravable en observaciones)
+
+**main.py - Simplificación**:
+
+**ANTES** (líneas 1518-1551):
+```python
+# 25 líneas de lógica de consulta BD
+id_contrato = datos_contrato.get("id_contrato", "")
+tarifa_timbre = 0.0
+tipo_cuantia_timbre = "Indeterminable"
+if id_contrato and id_contrato.strip() != "":
+    resultado_cuantia = db_manager.obtener_cuantia_contrato(...)
+    # ... manejo de casos ...
+liquidador_timbre = LiquidadorTimbre()
+```
+
+**DESPUÉS** (líneas 1518-1526):
+```python
+# 2 líneas - solo orquestación
+liquidador_timbre = LiquidadorTimbre(db_manager=db_manager)
+resultado_timbre = liquidador_timbre.liquidar_timbre(
+    codigo_negocio=str(codigo_del_negocio),
+    nit_proveedor=proveedor,
+    ...
+)
+```
+
+##### PRINCIPIOS SOLID REFORZADOS
+
+**Single Responsibility Principle (SRP)** ✅:
+- `main.py`: Solo orquesta el flujo, NO valida ni consulta BD
+- `liquidador_timbre.py`: Responsable de TODAS las validaciones y cálculos de timbre
+- Separación clara: orquestación vs lógica de negocio
+
+**Dependency Inversion Principle (DIP)** ✅:
+- `LiquidadorTimbre` recibe `db_manager` como abstracción
+- No depende de implementación concreta de Supabase
+- Fácil testing con mocks
+
+**Open/Closed Principle (OCP)** ✅:
+- Extensible: Se pueden agregar nuevas validaciones sin modificar main
+- Cerrado: Interface del liquidador estable
+
+##### VENTAJAS DE ESTA REFACTORIZACIÓN
+
+**Cohesión**:
+- Toda la lógica de timbre en un solo módulo
+- Fácil entender flujo completo de validaciones
+- Menos acoplamiento entre módulos
+
+**Testabilidad**:
+- Liquidador testeable con db_manager mock
+- No necesita main.py para probar lógica
+- Tests unitarios aislados
+
+**Mantenibilidad**:
+- Cambios en validaciones de timbre solo afectan liquidador
+- main.py más limpio y legible
+- Menos líneas de código en orquestador
+
+**Escalabilidad**:
+- Fácil agregar nuevas validaciones de BD
+- Patrón replicable para otros impuestos
+- Arquitectura consistente
+
+##### FLUJO DE VALIDACIÓN ACTUALIZADO
+
+1. VALIDACION 1: ¿Aplica timbre según observaciones?
+2. **VALIDACION 1.5 (NUEVA)**: ¿ID contrato válido? ¿Cuantía en BD?
+3. VALIDACION 2: ¿Base gravable en observaciones?
+4. VALIDACION 3: ¿Tipo de cuantía válido?
+5. ... Validaciones específicas según tipo cuantía
+
+##### ARCHIVOS MODIFICADOS
+
+1. `Liquidador/liquidador_timbre.py`:
+   - Líneas 43-51: Constructor con DIP
+   - Líneas 53-118: Firma nueva y validación de consulta BD
+   - Líneas 412-472: Nuevo método `_consultar_cuantia_bd()`
+
+2. `main.py`:
+   - Líneas 1518-1526: Simplificación (eliminadas 23 líneas de lógica BD)
+   - Solo instancia liquidador con `db_manager` y llama método
+
+##### IMPACTO EN TESTING
+
+**Tests para Liquidador** (recomendados):
+```python
+def test_liquidar_timbre_id_contrato_vacio():
+    db_manager_mock = Mock()
+    liquidador = LiquidadorTimbre(db_manager=db_manager_mock)
+    resultado = liquidador.liquidar_timbre(
+        id_contrato="",  # Caso 1: ID vacío
+        ...
+    )
+    assert resultado.estado == "Preliquidacion sin finalizar"
+    assert "no se pudo extraer" in resultado.observaciones
+
+def test_liquidar_timbre_cuantia_no_encontrada():
+    db_manager_mock = Mock()
+    db_manager_mock.obtener_cuantia_contrato.return_value = {'success': False}
+    liquidador = LiquidadorTimbre(db_manager=db_manager_mock)
+    # ... Caso 2: Sin datos en BD
+
+def test_liquidar_timbre_error_bd():
+    db_manager_mock = Mock()
+    db_manager_mock.obtener_cuantia_contrato.side_effect = Exception("BD error")
+    # ... Caso 3: Error de BD
+```
+
+---
+
+## [3.0.6 - Consulta BD para Tarifa y Tipo Cuantía de Timbre] - 2025-10-18
+
+### MEJORA: INTEGRACIÓN CON BASE DE DATOS PARA IMPUESTO AL TIMBRE
+
+#### CONSULTA DINÁMICA A TABLA CUANTIAS
+
+**DESCRIPCIÓN**: Implementación de consulta a la base de datos para obtener tarifa y tipo de cuantía desde la tabla CUANTIAS, reemplazando valores hardcodeados. Sigue arquitectura SOLID y reutiliza infraestructura existente sin repetir código.
+
+##### ARQUITECTURA IMPLEMENTADA
+
+**Nuevos Métodos en `database/database.py`**:
+
+1. **DatabaseInterface** (Abstracción):
+   - Agregado método abstracto `obtener_cuantia_contrato()`
+   - Cumple ISP: Interface específica para consulta de cuantías
+
+2. **SupabaseDatabase** (Implementación):
+   - Método `obtener_cuantia_contrato(id_contrato, codigo_negocio, nit_proveedor)`
+   - Usa operador LIKE para `ID_CONTRATO` y `NIT_PROVEEDOR`
+   - Usa operador EQ para `CODIGO_NEGOCIO`
+   - Retorna `TIPO_CUANTIA` y `TARIFA` de la tabla CUANTIAS
+   - SRP: Solo consulta datos, no aplica lógica de negocio
+
+3. **DatabaseManager** (Coordinador):
+   - Método wrapper `obtener_cuantia_contrato()`
+   - DIP: Delega a la implementación configurada (Strategy Pattern)
+
+**Integración en `main.py`**:
+
+**Flujo de Consulta**:
+1. Extrae `id_contrato` de respuesta de Gemini
+2. Solo consulta BD si `id_contrato` no es string vacío
+3. Consulta tabla CUANTIAS con:
+   - LIKE en `ID_CONTRATO` (permite coincidencias parciales)
+   - EQ en `CODIGO_NEGOCIO` (código del negocio del endpoint)
+   - LIKE en `NIT_PROVEEDOR` (NIT del proveedor del endpoint)
+4. Si consulta exitosa: usa `tarifa` y `tipo_cuantia` de BD
+5. Si consulta falla o ID vacío: usa valores por defecto (Tarifa=0.0, Tipo="Indeterminable")
+
+**Logging Detallado**:
+- Informa cuando se consulta BD
+- Registra valores encontrados (tarifa y tipo cuantía)
+- Advierte cuando no se encuentra registro
+- Explica uso de valores por defecto
+
+##### PRINCIPIOS SOLID APLICADOS
+
+**Single Responsibility Principle (SRP)**:
+- `SupabaseDatabase.obtener_cuantia_contrato()`: Solo consulta datos
+- `LiquidadorTimbre`: Solo aplica lógica de negocio con datos recibidos
+
+**Dependency Inversion Principle (DIP)**:
+- `main.py` depende de abstracción `DatabaseManager`
+- No depende de implementación concreta Supabase
+
+**Open/Closed Principle (OCP)**:
+- Nueva funcionalidad agregada sin modificar métodos existentes
+- Extensión de `DatabaseInterface` sin cambiar contratos existentes
+
+**Interface Segregation Principle (ISP)**:
+- Método específico para consulta de cuantías
+- No contamina interface con métodos no relacionados
+
+##### VENTAJAS DE ESTA IMPLEMENTACIÓN
+
+**Reutilización de Código**:
+- Usa infraestructura existente de `database/`
+- Sigue mismo patrón que `obtener_tipo_recurso()`
+- No duplica lógica de conexión a Supabase
+
+**Flexibilidad**:
+- Operador LIKE permite coincidencias parciales en ID_contrato
+- Maneja casos donde documento no tiene ID exacto
+- Valores por defecto evitan crashes
+
+**Trazabilidad**:
+- Logs detallados de cada consulta
+- Fácil debugging de problemas de coincidencia
+- Transparencia en valores usados
+
+**Mantenibilidad**:
+- Cambios en estructura BD solo afectan capa de datos
+- Lógica de negocio desacoplada de acceso a datos
+- Fácil agregar nuevas validaciones
+
+##### ARCHIVOS MODIFICADOS
+
+1. `database/database.py`:
+   - Líneas 34-37: Método abstracto en `DatabaseInterface`
+   - Líneas 174-231: Implementación en `SupabaseDatabase`
+   - Líneas 296-310: Wrapper en `DatabaseManager`
+
+2. `main.py`:
+   - Líneas 1517-1540: Consulta a BD y manejo de resultados
+   - Reemplaza hardcoded `datos_negocio.get('tarifa')` y `datos_negocio.get('tipo_cuantia')`
+
+##### TESTING RECOMENDADO
+
+**Casos de Prueba**:
+1. Contrato con ID exacto en BD → Debe encontrar tarifa y tipo
+2. Contrato con ID parcial en BD → LIKE debe encontrar coincidencia
+3. Contrato con ID no existente → Debe usar valores por defecto
+4. ID_contrato vacío ("") → No consulta BD, usa valores por defecto
+5. Error de conexión BD → Debe manejar excepción y usar valores por defecto
+
+---
+
+## [3.0.5 - Implementación Impuesto al Timbre] - 2025-10-18
+
+### NUEVA FUNCIONALIDAD: IMPUESTO AL TIMBRE
+
+#### NUEVO IMPUESTO INTEGRADO AL SISTEMA
+
+**DESCRIPCION**: Implementacion del calculo del Impuesto al Timbre con arquitectura SOLID y separacion IA-Validacion Manual. Este impuesto solo aplica para 3 NITs especificos y requiere analisis de observaciones de PGD mas extraccion de datos del contrato.
+
+##### CARACTERISTICAS PRINCIPALES
+
+**NITS QUE APLICAN**:
+- 800178148: Fiduciaria Colombiana de Comercio Exterior S.A. (Fiduciaria y Encargos)
+- 900649119: Fondo Nacional de Turismo FONTUR
+- 830054060: Fideicomiso Sociedad Fiduciaria Fiducoldex
+
+**FLUJO DE PROCESAMIENTO EN DOS ETAPAS**:
+
+1. **Primera Llamada (Paralela)**: Analisis de observaciones de PGD
+   - Determina si se menciona aplicacion de timbre
+   - Extrae base gravable de observaciones (si existe)
+   - Guarda JSON en `Results/` para monitoreo
+
+2. **Segunda Llamada (Secuencial)**: Extraccion de datos del contrato
+   - Solo ejecuta si `aplica_timbre == True`
+   - Extrae: ID contrato, fecha suscripcion, valor inicial, valor total, adiciones
+   - Convierte fechas a formato YYYY-MM-DD
+   - Guarda JSON en `Results/` para monitoreo
+
+**VALIDACIONES MANUALES EN PYTHON**:
+
+**Validacion 1 - NIT Administrativo**:
+- Si NIT no aplica timbre → Estado: "no aplica impuesto"
+
+**Validacion 2 - Observaciones PGD**:
+- Si no se menciona timbre → Estado: "no aplica impuesto"
+
+**Validacion 3 - Base Gravable en Observaciones**:
+- Si base_gravable_obs > 0 → Usar esa base y calcular directo
+- Si base_gravable_obs <= 0 → Continuar con determinacion por tipo cuantia
+
+**Determinacion de Base Gravable por Tipo de Cuantia**:
+
+**CUANTIA INDETERMINABLE**:
+- Base gravable DEBE venir de observaciones
+- Si no esta → Estado: "Preliquidacion sin finalizar"
+
+**CUANTIA DETERMINABLE**:
+
+*Validaciones de Fecha de Suscripcion*:
+- Si fecha_suscripcion == "0000-00-00" → Estado: "Preliquidacion sin finalizar"
+
+*Contrato ANTES del 22 de febrero de 2025*:
+- Solo aplica a adiciones POSTERIORES al 22/02/2025
+- Valida valor_adicion > 0 y fecha_adicion != "0000-00-00"
+- Base gravable = suma de adiciones validas
+- Si no hay adiciones validas → Estado: "no aplica impuesto" o "Preliquidacion sin finalizar"
+
+*Contrato POSTERIOR al 22 de febrero de 2025*:
+- Base gravable = valor_total_contrato (incluye adiciones)
+
+##### ARQUITECTURA (SOLID)
+
+**NUEVOS ARCHIVOS CREADOS**:
+
+1. **`Clasificador/prompt_timbre.py`**:
+   - `PROMPT_ANALISIS_TIMBRE_OBSERVACIONES()`: Analiza observaciones de PGD
+   - `PROMPT_EXTRACCION_CONTRATO_TIMBRE()`: Extrae datos del contrato
+   - SRP: Solo definicion de prompts
+
+2. **`Clasificador/clasificador_timbre.py`**:
+   - Clase `ClasificadorTimbre` con DIP (inyecta ProcesadorGemini)
+   - Metodo `analizar_observaciones_timbre()`: Primera llamada a Gemini
+   - Metodo `extraer_datos_contrato()`: Segunda llamada a Gemini
+   - Metodo `_guardar_json_gemini()`: Guarda respuestas en Results/ para monitoreo
+   - Reutiliza funciones de `ProcesadorGemini` (DIP)
+
+3. **`Liquidador/liquidador_timbre.py`**:
+   - Clase `LiquidadorTimbre` con validaciones manuales completas
+   - Metodo `liquidar_timbre()`: Orquestador principal
+   - Metodos privados especializados:
+     - `_procesar_cuantia_indeterminable()`
+     - `_procesar_cuantia_determinable()`
+     - `_procesar_contrato_antes_limite()`
+     - `_procesar_contrato_posterior_limite()`
+   - Modelo Pydantic `ResultadoTimbre` para respuesta estructurada
+   - Python hace TODAS las validaciones (Gemini solo identifica)
+
+**PRINCIPIOS SOLID APLICADOS**:
+- SRP: Cada clase tiene una responsabilidad unica
+- DIP: Dependencias inyectadas (ProcesadorGemini, datos de BD)
+- OCP: Extensible para nuevas reglas sin modificar codigo existente
+
+##### ESTRUCTURA DE RESPUESTA
+
+```json
+{
+  "timbre": {
+    "aplica": true,
+    "estado": "Preliquidado",
+    "valor": 500000.0,
+    "tarifa": 0.015,
+    "tipo_cuantia": "Determinable",
+    "base_gravable": 10000000.0,
+    "ID_contrato": "FNTCE-572-2023",
+    "observaciones": "Contrato suscrito el 2025-03-15 (posterior al 22/02/2025). Base gravable: valor total del contrato $10000000.00"
+  }
+}
+```
+
+##### INTEGRACION EN EL SISTEMA
+
+**CAMBIOS EN `config.py`**:
+- Agregado "IMPUESTO_TIMBRE" a lista de impuestos aplicables en 3 NITs
+- Nueva funcion `nit_aplica_timbre(nit)` para validacion
+
+**CAMBIOS EN `main.py`**:
+
+1. **Imports agregados (lineas 77-78, 82, 104)**:
+   ```python
+   from Clasificador.clasificador_timbre import ClasificadorTimbre
+   from Liquidador.liquidador_timbre import LiquidadorTimbre
+   nit_aplica_timbre
+   ```
+
+2. **Deteccion de aplicacion (linea 833)**:
+   ```python
+   aplica_timbre = nit_aplica_timbre(nit_administrativo)
+   ```
+
+3. **Agregado a impuestos_a_procesar (lineas 850-851)**
+
+4. **Tarea paralela de analisis (lineas 1063-1087)**:
+   - Analiza observaciones en paralelo con otros impuestos
+   - Usa `observaciones_tp` del Form
+
+5. **Liquidacion completa (lineas 1484-1549)**:
+   - Verifica resultado de analisis de observaciones
+   - Segunda llamada secuencial si aplica
+   - Obtiene tarifa y tipo_cuantia de BD
+   - Liquidacion con validaciones manuales
+
+6. **Completar cuando no aplica (lineas 1628-1639)**
+
+7. **Suma al total de impuestos (lineas 1660-1661)**
+
+##### MONITOREO Y DEBUGGING
+
+**ARCHIVOS JSON GUARDADOS EN `Results/`**:
+- `timbre_observaciones_HH-MM-SS.json`: Respuesta del analisis de observaciones
+- `timbre_extraccion_contrato_HH-MM-SS.json`: Respuesta de extraccion del contrato
+
+Esto permite monitorear las respuestas de Gemini y validar la extraccion de datos.
+
+##### FECHA LIMITE CONFIGURADA
+
+- **Fecha limite para validaciones**: 22 de febrero de 2025
+- Contratos/adiciones antes de esta fecha NO aplican timbre
+- Contratos/adiciones despues de esta fecha SI aplican timbre
+
+---
+
 ## [3.0.4 - Implementación Sobretasa Bomberil] - 2025-10-14
 
 ### 🆕 **NUEVA FUNCIONALIDAD: SOBRETASA BOMBERIL**

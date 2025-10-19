@@ -373,19 +373,12 @@ Buscar TEXTUALMENTE en el RUT:
 ├─ Si encuentras texto "ES AUTORRETENEDOR" → es_autorretenedor: true
 └─ Si NO encuentras esa frase → es_autorretenedor: false
 
-
- RESPONSABLE DE IVA (Sección Responsabilidades):
-├─ Si encuentras "NO RESPONSABLE DE IVA" o "49 - No responsable de IVA" → es_responsable_iva: false
-├─ Si encuentras "RESPONSABLE DE IVA" (sin el NO) → es_responsable_iva: true
-└─ Si NO encuentras ninguna mención → es_responsable_iva: null
-
  PASO 3: VALIDACIÓN DE CONDICIONES DE NO APLICACIÓN
 Verificar si aplica alguna condición de exclusión:
 
  NO APLICA RETENCIÓN SI:
 ├─ regimen_tributario == "SIMPLE" → estado: "no aplica impuesto"
 ├─ es_autorretenedor == true → estado: "no aplica impuesto"
-├─ es_responsable_iva == false → estado: "no aplica impuesto"
 └─ Cualquier campo crítico == null → estado: "Preliquidacion sin finalizar"
 
  PASO 4: IDENTIFICACIÓN DE CONCEPTOS 
@@ -409,7 +402,6 @@ Verificar si aplica alguna condición de exclusión:
 └─ "valor_total" es el valor total de la factura
 
  PASO 5: VALIDACIÓN DE COHERENCIA
-├─ Verificar que IVA en factura coincida con es_responsable_iva del RUT
 ├─ Si hay incongruencia → estado: "Preliquidacion sin finalizar" + observación
 └─ Documentar TODA anomalía en observaciones
 
@@ -422,7 +414,6 @@ Verificar si aplica alguna condición de exclusión:
  NO calcules valores no mostrados
  NO deduzcas el régimen tributario por el tipo de empresa
  NO asumas que alguien es autorretenedor sin confirmación explícita
- NO uses información de la factura para determinar responsabilidad IVA 
 
 ═══════════════════════════════════════════════════════════════════
  FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO):
@@ -440,8 +431,7 @@ Verificar si aplica alguna condición de exclusión:
     "naturaleza_tercero": {{
         "es_persona_natural": true | false | null,
         "regimen_tributario": "SIMPLE" | "ORDINARIO" | "ESPECIAL" | null,
-        "es_autorretenedor": true | false,
-        "es_responsable_iva": true | false | null
+        "es_autorretenedor": true | false
     }},
     "es_facturacion_exterior": boolean,
     "valor_total": número encontrado o 0.0,
@@ -1910,6 +1900,7 @@ REGLAS CRÍTICAS
 • Si hay IVA en la factura, SIEMPRE es categoría "gravado"
 • Extrae EXACTAMENTE lo que aparece en los documentos
 • No calcules valores que no estén explícitos en la factura
+
 
 """
 def PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(factura_texto: str, rut_texto: str, anexos_texto: str, 

@@ -38,7 +38,6 @@ class NaturalezaTercero(BaseModel):
     es_declarante: Optional[bool] = None
     regimen_tributario: Optional[str] = None  # SIMPLE, ORDINARIO, ESPECIAL
     es_autorretenedor: Optional[bool] = None
-    es_responsable_iva: Optional[bool] = None  # NUEVA VALIDACIÓN
 
 # NUEVOS MODELOS PARA ARTÍCULO 383 - ESTRUCTURA ACTUALIZADA PARA GEMINI
 
@@ -118,7 +117,7 @@ class AnalisisFactura(BaseModel):
 class ResultadoLiquidacion(BaseModel):
     valor_base_retencion: float
     valor_retencion: float
-    conceptos_aplicados: List[DetalleConcepto]  # 🆕 NUEVO: Detalles por concepto
+    conceptos_aplicados: List[DetalleConcepto]  #  NUEVO: Detalles por concepto
     resumen_conceptos: str  #  NUEVO: Resumen descriptivo - Puede que no sea necesario
     fecha_calculo: str
     puede_liquidar: bool
@@ -1057,14 +1056,9 @@ class LiquidadorRetencion:
                 resultado["mensajes"].append("El tercero es autorretenedor - NO se debe practicar retención")
                 logger.info("Tercero es autorretenedor - no aplica retención")
                 return resultado
-            
-            # VALIDACIÓN CRÍTICA: Responsable de IVA
-            if hasattr(naturaleza, 'es_responsable_iva') and naturaleza.es_responsable_iva is False:
-                resultado["puede_continuar"] = False
-                resultado["mensajes"].append("El tercero NO es responsable de IVA - NO se le aplica retención en la fuente")
-                logger.info("Tercero NO es responsable de IVA - no aplica retención")
-                return resultado
-            
+
+            # Ya no se valida responsable de IVA porque aplica retención igual
+
             # Validar régimen simple
             if hasattr(naturaleza, 'regimen_tributario') and naturaleza.regimen_tributario == "SIMPLE":
                 resultado["puede_continuar"] = False
@@ -1079,8 +1073,7 @@ class LiquidadorRetencion:
                 datos_faltantes.append("régimen tributario")
             if not hasattr(naturaleza, 'es_autorretenedor') or naturaleza.es_autorretenedor is None:
                 datos_faltantes.append("condición de autorretenedor")
-            if not hasattr(naturaleza, 'es_responsable_iva') or naturaleza.es_responsable_iva is None:
-                datos_faltantes.append("condición de responsable de IVA")
+
             
             if datos_faltantes:
                 resultado["advertencias"].append(
@@ -1239,9 +1232,8 @@ class LiquidadorRetencion:
         # Determinar concepto específico basado en el mensaje de error
         if mensajes_error:
             primer_mensaje = mensajes_error[0].lower()
-            if "responsable de iva" in primer_mensaje:
-                concepto_descriptivo = "No aplica - tercero no responsable de IVA"
-            elif "autorretenedor" in primer_mensaje:
+            
+            if "autorretenedor" in primer_mensaje:
                 concepto_descriptivo = "No aplica - tercero es autorretenedor"
             elif "simple" in primer_mensaje:
                 concepto_descriptivo = "No aplica - régimen simple de tributación"

@@ -74,10 +74,12 @@ logger = logging.getLogger(__name__)
 # Importar clases desde módulos
 from Clasificador import ProcesadorGemini
 from Clasificador.clasificador_ica import ClasificadorICA
+from Clasificador.clasificador_timbre import ClasificadorTimbre
 from Liquidador import LiquidadorRetencion
 from Liquidador.liquidador_consorcios import LiquidadorConsorcios, convertir_resultado_a_dict as convertir_consorcio_a_dict
 from Liquidador.liquidador_ica import LiquidadorICA
 from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
+from Liquidador.liquidador_timbre import LiquidadorTimbre
 from Extraccion import ProcesadorArchivos
 
 # Importar módulos de base de datos (SOLID: Clean Architecture Module)
@@ -99,6 +101,7 @@ from config import (
     nit_aplica_iva_reteiva,  #  NUEVA IMPORTACIÓN IVA
     nit_aplica_ICA,  #  NUEVA IMPORTACIÓN ICA
     nit_aplica_tasa_prodeporte,  #  NUEVA IMPORTACIÓN TASA PRODEPORTE
+    nit_aplica_timbre,  #  NUEVA IMPORTACIÓN TIMBRE
     detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
 
 )
@@ -437,7 +440,6 @@ class NaturalezaTercero(BaseModel):
     es_declarante: Optional[bool] = None
     regimen_tributario: Optional[str] = None  # SIMPLE, ORDINARIO, ESPECIAL
     es_autorretenedor: Optional[bool] = None
-    es_responsable_iva: Optional[bool] = None  # NUEVA VALIDACIÓN
 
 # NUEVOS MODELOS PARA ARTÍCULO 383
 class DeduccionArticulo383(BaseModel):
@@ -617,7 +619,7 @@ def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administ
         # Convertir naturaleza del tercero
         naturaleza_data = datos_analisis.get("naturaleza_tercero", {})
         if not isinstance(naturaleza_data, dict):
-            logger.warning(f"⚠️ naturaleza_tercero no es dict: {type(naturaleza_data)}")
+            logger.warning(f" naturaleza_tercero no es dict: {type(naturaleza_data)}")
             naturaleza_data = {}
         
         naturaleza_obj = NaturalezaTercero(
@@ -742,6 +744,7 @@ async def procesar_facturas_integrado(
     archivos: List[UploadFile] = File(...),
     codigo_del_negocio: int = Form(...),
     proveedor: str = Form(...),
+    nit_proveedor: str = Form(...),
     observaciones_tp: Optional[str] = Form(None),
     genera_presupuesto: Optional[str] = Form(None),
     rubro: Optional[str] = Form(None),
@@ -814,11 +817,13 @@ async def procesar_facturas_integrado(
         logger.info(f"Impuestos configurados: {impuestos_aplicables}")
 
         # Detectar automáticamente qué impuestos aplican usando código de negocio y NIT administrativo
+        # NUEVO v3.1: Se pasa business_service para validar tipo de recurso (Públicos/Privados)
         nombre_negocio = datos_negocio.get('negocio', 'Desconocido')
         deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(
             codigo_del_negocio,
             nombre_negocio,
-            nit_administrativo  # Validación doble: NIT + código de negocio
+            nit_administrativo,  # Validación doble: NIT + código de negocio
+            business_service  # DIP: Inyección de dependencia para validar tipo de recurso
         )
         aplica_retencion = "RETENCION_FUENTE" in impuestos_aplicables
         aplica_estampilla = deteccion_impuestos["aplica_estampilla_universidad"]
@@ -826,9 +831,10 @@ async def procesar_facturas_integrado(
         aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # VALIDACIÓN IVA
         aplica_ica = nit_aplica_ICA(nit_administrativo)  # VALIDACIÓN ICA
         aplica_tasa_prodeporte = nit_aplica_tasa_prodeporte(nit_administrativo)  # VALIDACIÓN TASA PRODEPORTE
+        aplica_timbre = nit_aplica_timbre(nit_administrativo)  # VALIDACIÓN TIMBRE
 
         logger.info(f" Código de negocio: {codigo_del_negocio} - {nombre_negocio}")
-        logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}, Aplica ICA: {aplica_ica}")
+        logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}, Aplica ICA: {aplica_ica}, Aplica Timbre: {aplica_timbre}")
 
         # Determinar estrategia de procesamiento
         impuestos_a_procesar = []
@@ -842,6 +848,8 @@ async def procesar_facturas_integrado(
             impuestos_a_procesar.append("IVA_RETEIVA")
         if aplica_ica:
             impuestos_a_procesar.append("RETENCION_ICA")
+        if aplica_timbre:
+            impuestos_a_procesar.append("IMPUESTO_TIMBRE")
 
         logger.info(f" Estrategia: PROCESAMIENTO PARALELO (todos los NITs aplican múltiples impuestos)")
         logger.info(f" Impuestos a procesar: {impuestos_a_procesar}")
@@ -1052,6 +1060,32 @@ async def procesar_facturas_integrado(
             tarea_ica = analizar_ica_async()
             tareas_analisis.append(("ica", tarea_ica))
             logger.info(f"✓ ICA: Análisis activado para NIT {nit_administrativo}")
+
+        # Tarea 7: Análisis de Timbre - NUEVA FUNCIONALIDAD
+        if aplica_timbre:
+            # Timbre requiere procesamiento especial con ClasificadorTimbre
+            async def analizar_timbre_async():
+                try:
+                    clasificador_timbre = ClasificadorTimbre(
+                        procesador_gemini=clasificador  # Procesador completo para reutilizar funciones
+                    )
+                    # Primera llamada: analizar observaciones
+                    return await clasificador_timbre.analizar_observaciones_timbre(
+                        observaciones=observaciones_tp or ""
+                    )
+                except Exception as e:
+                    logger.error(f"Error en análisis Timbre (observaciones): {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return {
+                        "aplica_timbre": False,
+                        "base_gravable_obs": 0.0,
+                        "observaciones_analisis": f"Error en análisis Timbre: {str(e)}"
+                    }
+
+            tarea_timbre = analizar_timbre_async()
+            tareas_analisis.append(("timbre", tarea_timbre))
+            logger.info(f"✓ Timbre: Análisis activado para NIT {nit_administrativo}")
 
         # Ejecutar todas las tareas en paralelo
         logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
@@ -1448,6 +1482,69 @@ async def procesar_facturas_integrado(
                     "estado": "Preliquidacion sin finalizar"
                 }
 
+        # Liquidar Timbre - NUEVA FUNCIONALIDAD
+        if "timbre" in resultados_analisis and aplica_timbre:
+            try:
+                logger.info(" Liquidando Impuesto al Timbre...")
+
+                # Obtener análisis de observaciones de timbre
+                analisis_observaciones_timbre = resultados_analisis["timbre"]
+                aplica_timbre_obs = analisis_observaciones_timbre.get("aplica_timbre", False)
+
+                # Si no aplica según observaciones, registrar como no aplica
+                if not aplica_timbre_obs:
+                    resultado_final["impuestos"]["timbre"] = {
+                        "aplica": False,
+                        "estado": "no aplica impuesto",
+                        "valor": 0.0,
+                        "tarifa": 0.0,
+                        "tipo_cuantia": "",
+                        "base_gravable": 0.0,
+                        "ID_contrato": "",
+                        "observaciones": analisis_observaciones_timbre.get("observaciones_analisis", "No se identifico aplicacion del impuesto al timbre en observaciones")
+                    }
+                    logger.info(" Timbre: No aplica según observaciones de PGD")
+                else:
+                    # Segunda llamada a Gemini: extraer datos del contrato
+                    logger.info(" Timbre aplica - Extrayendo datos del contrato...")
+
+                    clasificador_timbre = ClasificadorTimbre(procesador_gemini=clasificador)
+                    datos_contrato = await clasificador_timbre.extraer_datos_contrato(
+                        documentos_clasificados=documentos_clasificados,
+                        archivos_directos=archivos_directos,
+                        cache_archivos=cache_archivos
+                    )
+
+                    # Crear liquidador y liquidar (el liquidador se encarga de consultar BD)
+                    liquidador_timbre = LiquidadorTimbre(db_manager=db_manager)
+                    resultado_timbre = liquidador_timbre.liquidar_timbre(
+                        nit_administrativo=nit_administrativo,
+                        codigo_negocio=str(codigo_del_negocio),
+                        nit_proveedor=proveedor,
+                        analisis_observaciones=analisis_observaciones_timbre,
+                        datos_contrato=datos_contrato
+                    )
+
+                    # Convertir Pydantic a dict
+                    resultado_final["impuestos"]["timbre"] = resultado_timbre.dict()
+
+                    # Log según resultado
+                    if resultado_timbre.aplica:
+                        logger.info(f" Timbre liquidado: ${resultado_timbre.valor:,.2f} (Tarifa: {resultado_timbre.tarifa*100}%)")
+                    else:
+                        logger.info(f" Timbre: {resultado_timbre.estado}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando Timbre: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                resultado_final["impuestos"]["timbre"] = {
+                    "aplica": False,
+                    "estado": "Preliquidacion sin finalizar",
+                    "error": str(e),
+                    "observaciones": f"Error en liquidación Timbre: {str(e)}"
+                }
+
         # =================================
         # COMPLETAR IMPUESTOS QUE NO APLICAN
         # =================================
@@ -1455,21 +1552,49 @@ async def procesar_facturas_integrado(
         # Agregar respuesta para impuestos que no aplican según código de negocio
         if not aplica_estampilla and "estampilla_universidad" not in resultado_final["impuestos"]:
             razon_estampilla = deteccion_impuestos.get("razon_no_aplica_estampilla") or f"El negocio {nombre_negocio} no aplica este impuesto"
+            estado_estampilla = deteccion_impuestos.get("estado_especial") or "No aplica el impuesto"
+
+            # Construir mensajes_error sin duplicados
+            # Si hay observaciones, usar solo esas; si no, usar la razón
+            if deteccion_impuestos.get("validacion_recurso") and deteccion_impuestos["validacion_recurso"].get("observaciones"):
+                mensajes_error_estampilla = [deteccion_impuestos["validacion_recurso"]["observaciones"]]
+            else:
+                mensajes_error_estampilla = [razon_estampilla]
+
             resultado_final["impuestos"]["estampilla_universidad"] = {
                 "aplica": False,
-                "estado": "No aplica el impuesto",
-                "razon": razon_estampilla
+                "estado": estado_estampilla,
+                "valor_estampilla": 0.0,
+                "tarifa_aplicada": 0.0,
+                "rango_uvt": "",
+                "valor_contrato_pesos": 0.0,
+                "valor_contrato_uvt": 0.0,
+                "mensajes_error": mensajes_error_estampilla,
+                "razon": razon_estampilla,
             }
-            logger.info(f" Estampilla Universidad: No aplica - {razon_estampilla}")
+            logger.info(f" Estampilla Universidad: {estado_estampilla} - {razon_estampilla}")
 
         if not aplica_obra_publica and "contribucion_obra_publica" not in resultado_final["impuestos"]:
             razon_obra_publica = deteccion_impuestos.get("razon_no_aplica_obra_publica") or f"El negocio {nombre_negocio} no aplica este impuesto"
+            estado_obra_publica = deteccion_impuestos.get("estado_especial") or "No aplica el impuesto"
+
+            # Construir mensajes_error sin duplicados
+            # Si hay observaciones, usar solo esas; si no, usar la razón
+            if deteccion_impuestos.get("validacion_recurso") and deteccion_impuestos["validacion_recurso"].get("observaciones"):
+                mensajes_error_obra_publica = [deteccion_impuestos["validacion_recurso"]["observaciones"]]
+            else:
+                mensajes_error_obra_publica = [razon_obra_publica]
+
             resultado_final["impuestos"]["contribucion_obra_publica"] = {
                 "aplica": False,
-                "estado": "No aplica el impuesto",
-                "razon": razon_obra_publica
+                "estado": estado_obra_publica,
+                "tarifa_aplicada": 0.0,
+                "valor_contribucion": 0.0,
+                "valor_factura_sin_iva": 0.0,
+                "mensajes_error": mensajes_error_obra_publica,
+                "razon": razon_obra_publica,
             }
-            logger.info(f" Contribución Obra Pública: No aplica - {razon_obra_publica}")
+            logger.info(f" Contribución Obra Pública: {estado_obra_publica} - {razon_obra_publica}")
 
         if not aplica_iva and "iva_reteiva" not in resultado_final["impuestos"]:
             resultado_final["impuestos"]["iva_reteiva"] = {
@@ -1497,6 +1622,19 @@ async def procesar_facturas_integrado(
             }
             logger.info(f" Tasa Prodeporte: No aplica para NIT {nit_administrativo} (solo FONTUR 900649119)")
 
+        if not aplica_timbre and "timbre" not in resultado_final["impuestos"]:
+            resultado_final["impuestos"]["timbre"] = {
+                "aplica": False,
+                "estado": "no aplica impuesto",
+                "valor": 0.0,
+                "tarifa": 0.0,
+                "tipo_cuantia": "",
+                "base_gravable": 0.0,
+                "ID_contrato": "",
+                "observaciones": f"Nit {nit_administrativo} no aplica impuesto al timbre"
+            }
+            logger.info(f" Timbre: No aplica para NIT {nit_administrativo}")
+
         #  CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
         valor_total_impuestos = 0.0
         
@@ -1515,6 +1653,9 @@ async def procesar_facturas_integrado(
 
         if "tasa_prodeporte" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["tasa_prodeporte"], dict):
             valor_total_impuestos += resultado_final["impuestos"]["tasa_prodeporte"].get("valor_imp", 0)
+
+        if "timbre" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["timbre"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["timbre"].get("valor", 0)
 
         resultado_final["resumen_total"] = {
             "valor_total_impuestos": valor_total_impuestos,

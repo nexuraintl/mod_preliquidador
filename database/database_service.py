@@ -193,6 +193,150 @@ class BusinessDataService(IBusinessDataService):
             logger.error(f"❌ Error verificando disponibilidad de database: {e}")
             return False
 
+    def validar_tipo_recurso_negocio(self, codigo_negocio: int) -> Dict[str, Any]:
+        """
+        Valida si un negocio administra recursos públicos o privados.
+
+        SRP: Solo valida el tipo de recurso del negocio (Business Logic Layer)
+
+        REGLAS DE NEGOCIO:
+        - "Públicos" → aplica_impuestos=True, continua flujo normal
+        - "Privados" → aplica_impuestos=False, estado="No aplica el impuesto"
+        - No parametrizado → estado="Preliquidacion sin finalizar"
+        - Error consulta → estado="Preliquidacion sin finalizar" con observaciones
+
+        Args:
+            codigo_negocio: Código único del negocio a validar
+
+        Returns:
+            Dict con estructura:
+            {
+                "success": bool,
+                "tipo_recurso": str | None,
+                "aplica_impuestos": bool,
+                "estado": str | None,
+                "razon": str | None,
+                "observaciones": str | None,
+                "error": str | None
+            }
+        """
+        logger.info(f"🔍 Validando tipo de recurso para código de negocio: {codigo_negocio}")
+
+        # PASO 1: Validar disponibilidad del database manager
+        if not self.database_manager:
+            warning_msg = "DatabaseManager no está disponible para validar tipo de recurso"
+            logger.warning(f"⚠️ {warning_msg}")
+            return {
+                "success": False,
+                "tipo_recurso": None,
+                "aplica_impuestos": False,
+                "estado": "Preliquidacion sin finalizar",
+                "razon": None,
+                "observaciones": "Error al conectar con la base de datos: DatabaseManager no disponible",
+                "error": warning_msg
+            }
+
+        # PASO 2: Consultar tipo de recurso
+        try:
+            resultado_consulta = self.database_manager.obtener_tipo_recurso_negocio(str(codigo_negocio))
+
+            # CASO 1: Error en la consulta
+            if not resultado_consulta.get('success', False):
+                error_msg = resultado_consulta.get('message', 'Error desconocido')
+
+                # Distinguir entre no parametrizado y error técnico
+                if 'No existe parametrización' in error_msg:
+                    logger.warning(f"⚠️ Código {codigo_negocio} no parametrizado en tabla RECURSOS")
+                    return {
+                        "success": False,
+                        "tipo_recurso": None,
+                        "aplica_impuestos": False,
+                        "estado": "Preliquidacion sin finalizar",
+                        "razon": None,
+                        "observaciones": f"No se pudo determinar el tipo de recurso administrado por el negocio ya que el codigo de negocio {codigo_negocio} no esta parametrizado en BD",
+                        "error": None
+                    }
+                else:
+                    # Error técnico en la consulta
+                    logger.error(f"❌ Error consultando tipo de recurso para código {codigo_negocio}: {error_msg}")
+                    return {
+                        "success": False,
+                        "tipo_recurso": None,
+                        "aplica_impuestos": False,
+                        "estado": "Preliquidacion sin finalizar",
+                        "razon": None,
+                        "observaciones": f"Error al consultar tipo de recurso en la base de datos: {error_msg}",
+                        "error": resultado_consulta.get('error')
+                    }
+
+            # CASO 2: Consulta exitosa - procesar tipo de recurso
+            datos_recurso = resultado_consulta.get('data', {})
+            tipo_recurso = datos_recurso.get('tipo_recurso')
+
+            # Validar que el tipo de recurso no sea None o vacío
+            if not tipo_recurso:
+                logger.warning(f"⚠️ Código {codigo_negocio} existe pero el campo PUBLICO/PRIVADO está vacío")
+                return {
+                    "success": False,
+                    "tipo_recurso": None,
+                    "aplica_impuestos": False,
+                    "estado": "Preliquidacion sin finalizar",
+                    "razon": None,
+                    "observaciones": f"El tipo de recurso no está definido para el codigo de negocio {codigo_negocio} en BD",
+                    "error": None
+                }
+
+            # CASO 3: Recursos Públicos (aplica impuestos)
+            if tipo_recurso == "Públicos":
+                logger.info(f"✅ Negocio {codigo_negocio} administra recursos públicos - Aplican impuestos")
+                return {
+                    "success": True,
+                    "tipo_recurso": "Públicos",
+                    "aplica_impuestos": True,
+                    "estado": None,  # Continúa con flujo normal
+                    "razon": None,
+                    "observaciones": None,
+                    "error": None
+                }
+
+            # CASO 4: Recursos Privados (no aplica impuestos)
+            elif tipo_recurso == "Privados":
+                logger.info(f"ℹ️ Negocio {codigo_negocio} administra recursos privados - No aplican impuestos")
+                return {
+                    "success": True,
+                    "tipo_recurso": "Privados",
+                    "aplica_impuestos": False,
+                    "estado": "No aplica el impuesto",
+                    "razon": "El negocio administra recursos privados",
+                    "observaciones": None,
+                    "error": None
+                }
+
+            # CASO 5: Valor desconocido
+            else:
+                logger.warning(f"⚠️ Código {codigo_negocio} tiene valor desconocido en PUBLICO/PRIVADO: {tipo_recurso}")
+                return {
+                    "success": False,
+                    "tipo_recurso": tipo_recurso,
+                    "aplica_impuestos": False,
+                    "estado": "Preliquidacion sin finalizar",
+                    "razon": None,
+                    "observaciones": f"Tipo de recurso '{tipo_recurso}' no reconocido para el codigo de negocio {codigo_negocio}",
+                    "error": None
+                }
+
+        except Exception as e:
+            logger.error(f"❌ Error inesperado validando tipo de recurso para código {codigo_negocio}: {e}")
+            return {
+                "success": False,
+                "tipo_recurso": None,
+                "aplica_impuestos": False,
+                "estado": "Preliquidacion sin finalizar",
+                "razon": None,
+                "observaciones": f"Error técnico al consultar tipo de recurso: {str(e)}",
+                "error": str(e)
+            }
+
 
 # ===============================
 # FACTORY PARA CREACIÓN DE SERVICIOS

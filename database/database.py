@@ -15,20 +15,25 @@ from abc import ABC, abstractmethod
 
 class DatabaseInterface(ABC):
     """Interface abstracta para operaciones de base de datos"""
-    
+
     @abstractmethod
     def obtener_por_codigo(self, codigo: str) -> Dict[str, Any]:
         """Obtiene un negocio por su código"""
         pass
-    
+
     @abstractmethod
     def listar_codigos_disponibles(self, limite: int = 10) -> Dict[str, Any]:
         """Lista códigos disponibles para pruebas"""
         pass
-    
+
     @abstractmethod
     def health_check(self) -> bool:
         """Verifica la salud de la conexión"""
+        pass
+
+    @abstractmethod
+    def obtener_cuantia_contrato(self, id_contrato: str, codigo_negocio: str, nit_proveedor: str) -> Dict[str, Any]:
+        """Obtiene la tarifa y tipo de cuantía para un contrato"""
         pass
 
 
@@ -126,6 +131,110 @@ class SupabaseDatabase(DatabaseInterface):
                 'message': f'Error al listar códigos: {e}'
             }
     
+    def obtener_tipo_recurso(self, codigo_negocio: str) -> Dict[str, Any]:
+        """
+        Obtiene el tipo de recurso (Públicos/Privados) para un código de negocio.
+
+        SRP: Solo consulta la tabla RECURSOS (Data Access Layer)
+
+        Args:
+            codigo_negocio: Código del negocio a consultar
+
+        Returns:
+            Dict con estructura estándar de respuesta
+        """
+        try:
+            response = self.supabase.table('RECURSOS').select(
+                '"PUBLICO/PRIVADO"'
+            ).eq('"CODIGO_NEGOCIO"', codigo_negocio).execute()
+
+            if response.data and len(response.data) > 0:
+                tipo_recurso_raw = response.data[0]
+                tipo_recurso = tipo_recurso_raw.get('PUBLICO/PRIVADO')
+
+                return {
+                    'success': True,
+                    'data': {
+                        'tipo_recurso': tipo_recurso,
+                        'codigo_negocio': codigo_negocio
+                    },
+                    'message': f'Tipo de recurso encontrado para código {codigo_negocio}',
+                    'raw_data': tipo_recurso_raw
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'No existe parametrización de recurso para código: {codigo_negocio}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar tipo de recurso: {e}'
+            }
+
+    def obtener_cuantia_contrato(self, id_contrato: str, codigo_negocio: str, nit_proveedor: str) -> Dict[str, Any]:
+        """
+        Obtiene la tarifa y tipo de cuantía para un contrato de la tabla CUANTIAS.
+
+        SRP: Solo consulta la tabla CUANTIAS (Data Access Layer)
+
+        Args:
+            id_contrato: ID del contrato identificado por Gemini
+            codigo_negocio: Código del negocio del endpoint
+            nit_proveedor: NIT del proveedor del endpoint
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo tarifa y tipo_cuantia
+        """
+        try:
+            response = self.supabase.table('CUANTIAS').select(
+                '"TIPO_CUANTIA", "TARIFA"'
+            ).ilike('"ID_CONTRATO"', f'%{id_contrato}%').eq(
+                '"CODIGO_NEGOCIO"', codigo_negocio
+            ).ilike('"NIT_PROVEEDOR"', f'%{nit_proveedor}%').execute()
+
+            if response.data and len(response.data) > 0:
+                cuantia_raw = response.data[0]
+                tipo_cuantia = cuantia_raw.get('TIPO_CUANTIA')
+                tarifa = cuantia_raw.get('TARIFA', 0.0)
+
+                # Convertir tarifa a float si es necesario
+                try:
+                    tarifa = float(tarifa) if tarifa is not None else 0.0
+                except (ValueError, TypeError):
+                    tarifa = 0.0
+
+                return {
+                    'success': True,
+                    'data': {
+                        'tipo_cuantia': tipo_cuantia,
+                        'tarifa': tarifa,
+                        'id_contrato': id_contrato,
+                        'codigo_negocio': codigo_negocio,
+                        'nit_proveedor': nit_proveedor
+                    },
+                    'message': f'Cuantía encontrada para contrato {id_contrato}',
+                    'raw_data': cuantia_raw
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'No existe cuantía para contrato {id_contrato} con código {codigo_negocio} y NIT {nit_proveedor}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar cuantía del contrato: {e}'
+            }
+
     def health_check(self) -> bool:
         """
         Verifica si la conexión a Supabase funciona
@@ -175,7 +284,37 @@ class DatabaseManager:
         """
         return self.db_connection.health_check()
 
-    
+    def obtener_tipo_recurso_negocio(self, codigo_negocio: str) -> Dict[str, Any]:
+        """
+        Obtiene el tipo de recurso para un código de negocio.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            codigo_negocio: Código del negocio
+
+        Returns:
+            Dict con resultado de la consulta
+        """
+        return self.db_connection.obtener_tipo_recurso(codigo_negocio)
+
+    def obtener_cuantia_contrato(self, id_contrato: str, codigo_negocio: str, nit_proveedor: str) -> Dict[str, Any]:
+        """
+        Obtiene la tarifa y tipo de cuantía para un contrato.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            id_contrato: ID del contrato identificado por Gemini
+            codigo_negocio: Código del negocio del endpoint
+            nit_proveedor: NIT del proveedor del endpoint
+
+        Returns:
+            Dict con resultado de la consulta incluyendo tarifa y tipo_cuantia
+        """
+        return self.db_connection.obtener_cuantia_contrato(id_contrato, codigo_negocio, nit_proveedor)
+
+
 def ejecutar_pruebas_completas(db_manager: DatabaseManager):
     """
     Ejecuta un conjunto completo de pruebas
