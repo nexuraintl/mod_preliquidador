@@ -348,12 +348,11 @@ OBJETO DEL CONTRATO:
 
  PASO 1: VERIFICACIÓN DEL RUT
 ├─ Si RUT existe → Continuar al PASO 2
-└─ Si RUT NO existe → DETENER análisis con:
-   
-     "aplica_retencion": false,
-     "estado": "Preliquidacion sin finalizar",
-     "observaciones": ["RUT no disponible en documentos adjuntos"]
-     (Los demás campos pueden ser null o 0.0 según corresponda)
+└─ Si RUT NO existe → Saltar PASO 2 y asignar en análisis :
+      "es_persona_natural": null,
+      "regimen_tributario":  null,
+      "es_autorretenedor": false,
+      "observaciones": ["RUT no disponible en documentos adjuntos"]
 
  PASO 2: EXTRACCIÓN DE DATOS DEL RUT (SOLO del documento RUT)
 Buscar TEXTUALMENTE en el RUT:
@@ -373,15 +372,7 @@ Buscar TEXTUALMENTE en el RUT:
 ├─ Si encuentras texto "ES AUTORRETENEDOR" → es_autorretenedor: true
 └─ Si NO encuentras esa frase → es_autorretenedor: false
 
- PASO 3: VALIDACIÓN DE CONDICIONES DE NO APLICACIÓN
-Verificar si aplica alguna condición de exclusión:
-
- NO APLICA RETENCIÓN SI:
-├─ regimen_tributario == "SIMPLE" → estado: "no aplica impuesto"
-├─ es_autorretenedor == true → estado: "no aplica impuesto"
-└─ Cualquier campo crítico == null → estado: "Preliquidacion sin finalizar"
-
- PASO 4: IDENTIFICACIÓN DE CONCEPTOS 
+ PASO 3: IDENTIFICACIÓN DE CONCEPTOS 
 
  REGLAS DE IDENTIFICACIÓN:
 1. Buscar PRIMERO en la factura principal
@@ -402,7 +393,7 @@ Verificar si aplica alguna condición de exclusión:
 └─ "valor_total" es el valor total de la factura
 
  PASO 5: VALIDACIÓN DE COHERENCIA
-├─ Si hay incongruencia → estado: "Preliquidacion sin finalizar" + observación
+├─ Si hay incongruencia → mencionalo en observaciones
 └─ Documentar TODA anomalía en observaciones
 
 ═══════════════════════════════════════════════════════════════════
@@ -419,8 +410,6 @@ Verificar si aplica alguna condición de exclusión:
  FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO):
 ═══════════════════════════════════════════════════════════════════
 {{
-    "aplica_retencion": boolean,
-    "estado": "Preliquidado" | "no aplica impuesto" | "Preliquidacion sin finalizar",
     "conceptos_identificados": [
         {{
             "concepto": "Nombre exacto del diccionario o CONCEPTO_NO_IDENTIFICADO",
@@ -2192,11 +2181,12 @@ FORMATO DE RESPUESTA JSON
 REGLAS IMPORTANTES
 ═══════════════════════════════════════════════════════════════════════
 
-• Si NO encuentras un valor, usa 0.0 para numeros y "" para textos
+• Si NO encuentras un valor, ESTRICTAMENTE SOLO usa 0.0 para numeros y "" para textos
 • Los textos copiados deben ser LITERALES, sin interpretacion
 • NO inventes informacion que no este en los documentos
 • Si un campo no aplica o no lo encuentras, dejalo vacio o en 0
 • Para valores monetarios, extrae solo numeros (sin simbolos $ ni comas)
+• Revisa la estructura del JSON cuidadosamente antes de responder
     """
 
 

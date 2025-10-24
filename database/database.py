@@ -195,7 +195,7 @@ class SupabaseDatabase(DatabaseInterface):
                 '"TIPO_CUANTIA", "TARIFA"'
             ).ilike('"ID_CONTRATO"', f'%{id_contrato}%').eq(
                 '"CODIGO_NEGOCIO"', codigo_negocio
-            ).ilike('"NIT_PROVEEDOR"', f'%{nit_proveedor}%').execute()
+            ).execute()
 
             if response.data and len(response.data) > 0:
                 cuantia_raw = response.data[0]
@@ -224,7 +224,7 @@ class SupabaseDatabase(DatabaseInterface):
                 return {
                     'success': False,
                     'data': None,
-                    'message': f'No existe cuantía para contrato {id_contrato} con código {codigo_negocio} y NIT {nit_proveedor}'
+                    'message': f'No existe cuantía para contrato {id_contrato} con código de negocio {codigo_negocio}'
                 }
 
         except Exception as e:

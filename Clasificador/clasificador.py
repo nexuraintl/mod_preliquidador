@@ -130,10 +130,9 @@ class InformacionArticulo383(BaseModel):
     # ELIMINADO: calculo - Gemini ya no calcula, solo identifica
 
 class AnalisisFactura(BaseModel):
-    aplica_retencion: bool
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
-    articulo_383: Optional[InformacionArticulo383] = None  # 🆕 NUEVO CAMPO SINCRONIZADO
+    articulo_383: Optional[InformacionArticulo383] = None  #  NUEVO CAMPO SINCRONIZADO
     es_facturacion_exterior: bool
     valor_total: Optional[float]
     iva: Optional[float]
@@ -738,7 +737,7 @@ class ProcesadorGemini:
             
             #  NUEVO: ANÁLISIS SEPARADO DEL ARTÍCULO 383 PARA PERSONAS NATURALES
             if (resultado.get("naturaleza_tercero") and 
-                resultado["naturaleza_tercero"].get("es_persona_natural") == True and resultado["aplica_retencion"] == True ):
+                resultado["naturaleza_tercero"].get("es_persona_natural") == True):
                 
                 logger.info(" PERSONA NATURAL detectada - Iniciando análisis separado del Artículo 383")
                 

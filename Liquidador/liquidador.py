@@ -105,7 +105,6 @@ class InformacionArticulo383(BaseModel):
     
 
 class AnalisisFactura(BaseModel):
-    aplica_retencion: bool  #  CAMPO SINCRONIZADO AGREGADO
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
     articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
@@ -1060,9 +1059,9 @@ class LiquidadorRetencion:
             # Ya no se valida responsable de IVA porque aplica retención igual
 
             # Validar régimen simple
-            if hasattr(naturaleza, 'regimen_tributario') and naturaleza.regimen_tributario == "SIMPLE":
+            if hasattr(naturaleza, 'regimen_tributario') and naturaleza.regimen_tributario == "SIMPLE" and hasattr(naturaleza, 'es_persona_natural') and naturaleza.es_persona_natural == False:
                 resultado["puede_continuar"] = False
-                resultado["mensajes"].append("Régimen Simple de Tributación - NO aplica retención en la fuente")
+                resultado["mensajes"].append("Régimen Simple de Tributación - Persona Jurídica - NO aplica retención en la fuente")
                 logger.info("Régimen Simple detectado - no aplica retención")
                 return resultado
             
@@ -1381,3 +1380,173 @@ class LiquidadorRetencion:
         
         logger.info(f"Retención extranjera calculada: ${valor_retencion:,.0f} ({tarifa_concepto*100:.1f}%)")
         return resultado
+
+    def liquidar_retefuente_seguro(self, analisis_retefuente: Dict[str, Any], nit_administrativo: str) -> Dict[str, Any]:
+        """
+        Liquida retefuente con manejo seguro de estructura de datos.
+
+        SOLUCIONA EL ERROR: 'dict' object has no attribute 'es_facturacion_exterior'
+
+        FUNCIONALIDAD:
+        Maneja estructura JSON de análisis de Gemini
+        Extrae correctamente la sección "analisis"
+        Convierte dict a objeto AnalisisFactura
+        Verifica campos requeridos antes de liquidar
+        Manejo robusto de errores con logging detallado
+        Fallback seguro en caso de errores
+
+        Args:
+            analisis_retefuente: Resultado del análisis de Gemini (estructura JSON)
+            nit_administrativo: NIT administrativo
+
+        Returns:
+            Dict con resultado de liquidación o información de error
+        """
+        try:
+            logger.info(f"Iniciando liquidación segura de retefuente para NIT: {nit_administrativo}")
+
+            # VERIFICAR ESTRUCTURA Y EXTRAER ANÁLISIS
+            if isinstance(analisis_retefuente, dict):
+                if "analisis" in analisis_retefuente:
+                    # Estructura: {"analisis": {...}, "timestamp": ..., etc}
+                    datos_analisis = analisis_retefuente["analisis"]
+                    logger.info("Extrayendo análisis desde estructura JSON con clave 'analisis'")
+                else:
+                    # Estructura directa: {"es_facturacion_exterior": ..., etc}
+                    datos_analisis = analisis_retefuente
+                    logger.info("Usando estructura directa de análisis")
+            else:
+                # Ya es un objeto, usar directamente
+                datos_analisis = analisis_retefuente
+                logger.info("Usando objeto AnalisisFactura directamente")
+
+            # VERIFICAR CAMPOS REQUERIDOS
+            campos_requeridos = ["es_facturacion_exterior", "conceptos_identificados", "naturaleza_tercero"]
+            campos_faltantes = []
+
+            for campo in campos_requeridos:
+                if campo not in datos_analisis:
+                    campos_faltantes.append(campo)
+
+            if campos_faltantes:
+                error_msg = f"Campos requeridos faltantes: {', '.join(campos_faltantes)}"
+                logger.error(f"{error_msg}")
+                logger.error(f"Claves disponibles: {list(datos_analisis.keys()) if isinstance(datos_analisis, dict) else 'No es dict'}")
+
+                return {
+                    "aplica": False,
+                    "error": error_msg,
+                    "valor_retencion": 0.0,
+                    "observaciones": [
+                        "Error en estructura de datos del análisis",
+                        f"Faltan campos: {', '.join(campos_faltantes)}",
+                        "Revise el análisis de Gemini"
+                    ]
+                }
+
+            # CREAR OBJETO ANALYSISFACTURA MANUALMENTE
+            from Clasificador.clasificador import AnalisisFactura, ConceptoIdentificado, NaturalezaTercero
+
+            # Convertir conceptos identificados
+            conceptos = []
+            conceptos_data = datos_analisis.get("conceptos_identificados", [])
+
+            if not isinstance(conceptos_data, list):
+                logger.warning(f"conceptos_identificados no es lista: {type(conceptos_data)}")
+                conceptos_data = []
+
+            for concepto_data in conceptos_data:
+                if isinstance(concepto_data, dict):
+                    concepto_obj = ConceptoIdentificado(
+                        concepto=concepto_data.get("concepto", ""),
+                        tarifa_retencion=concepto_data.get("tarifa_retencion", 0.0),
+                        base_gravable=concepto_data.get("base_gravable", None)
+                    )
+                    conceptos.append(concepto_obj)
+                    logger.info(f"Concepto convertido: {concepto_obj.concepto} - {concepto_obj.tarifa_retencion}%")
+
+            # Convertir naturaleza del tercero
+            naturaleza_data = datos_analisis.get("naturaleza_tercero", {})
+            if not isinstance(naturaleza_data, dict):
+                logger.warning(f"naturaleza_tercero no es dict: {type(naturaleza_data)}")
+                naturaleza_data = {}
+
+            naturaleza_obj = NaturalezaTercero(
+                es_persona_natural=naturaleza_data.get("es_persona_natural", None),
+                regimen_tributario=naturaleza_data.get("regimen_tributario", None),
+                es_autorretenedor=naturaleza_data.get("es_autorretenedor", None),
+                es_responsable_iva=naturaleza_data.get("es_responsable_iva", None)
+            )
+
+            # Crear objeto completo
+            analisis_obj = AnalisisFactura(
+                aplica_retencion=datos_analisis.get("aplica_retencion", True),
+                conceptos_identificados=conceptos,
+                naturaleza_tercero=naturaleza_obj,
+                articulo_383=datos_analisis.get("articulo_383", None),
+                es_facturacion_exterior=datos_analisis.get("es_facturacion_exterior", False),
+                valor_total=datos_analisis.get("valor_total", None),
+                iva=datos_analisis.get("iva", None),
+                observaciones=datos_analisis.get("observaciones", [])
+            )
+
+            logger.info(f"Objeto AnalisisFactura creado: {len(conceptos)} conceptos, facturación_exterior={analisis_obj.es_facturacion_exterior}")
+
+            # LIQUIDAR CON OBJETO VÁLIDO
+            resultado = self.liquidar_factura(analisis_obj, nit_administrativo)
+
+            # CONVERTIR RESULTADO CON NUEVA ESTRUCTURA
+            resultado_dict = {
+                "aplica": resultado.puede_liquidar,
+                "valor_retencion": resultado.valor_retencion,
+                "base_gravable": resultado.valor_base_retencion,
+                "fecha_calculo": resultado.fecha_calculo,
+                "observaciones": resultado.mensajes_error,
+                "calculo_exitoso": resultado.puede_liquidar,
+                # NUEVOS CAMPOS CON ESTRUCTURA MEJORADA:
+                "conceptos_aplicados": [concepto.dict() for concepto in resultado.conceptos_aplicados] if resultado.conceptos_aplicados else [],
+                "resumen_conceptos": resultado.resumen_conceptos,
+            }
+
+            if resultado.puede_liquidar:
+                logger.info(f"Retefuente liquidada exitosamente: ${resultado.valor_retencion:,.2f}")
+            else:
+                logger.warning(f"Retefuente no se pudo liquidar: {resultado.mensajes_error}")
+
+            return resultado_dict
+
+        except ImportError as e:
+            error_msg = f"Error importando clases necesarias: {str(e)}"
+            logger.error(f"{error_msg}")
+            return {
+                "aplica": False,
+                "error": error_msg,
+                "valor_retencion": 0.0,
+                "observaciones": ["Error importando módulos de análisis", "Revise la configuración del sistema"]
+            }
+
+        except Exception as e:
+            error_msg = f"Error liquidando retefuente: {str(e)}"
+            logger.error(f"{error_msg}")
+            logger.error(f"Tipo de estructura recibida: {type(analisis_retefuente)}")
+
+            # Log adicional para debugging
+            if isinstance(analisis_retefuente, dict):
+                logger.error(f"Claves disponibles en análisis: {list(analisis_retefuente.keys())}")
+                if "analisis" in analisis_retefuente and isinstance(analisis_retefuente["analisis"], dict):
+                    logger.error(f"Claves en 'analisis': {list(analisis_retefuente['analisis'].keys())}")
+
+            # Log del traceback completo para debugging
+            import traceback
+            logger.error(f"Traceback completo: {traceback.format_exc()}")
+
+            return {
+                "aplica": False,
+                "error": error_msg,
+                "valor_retencion": 0.0,
+                "observaciones": [
+                    "Error en liquidación de retefuente",
+                    "Revise estructura de datos",
+                    f"Error técnico: {str(e)}"
+                ]
+            }

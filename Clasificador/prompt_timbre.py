@@ -39,10 +39,11 @@ CAMPO OBSERVACIONES A ANALIZAR:
 INSTRUCCIONES DE ANALISIS:
 
 1. IDENTIFICACION DE APLICACION DE TIMBRE:
-   - Busca menciones explicitas de "impuesto al timbre", "timbre", "estampilla timbre"
+   - Busca menciones  similares a " aplicar impuesto al timbre", " validar timbre", " analizar estampilla timbre"
    - Busca frases que indiquen aplicacion de este impuesto
    - Si encuentras cualquier mencion, establece aplica_timbre = true
-   - Si NO encuentras ninguna mencion, establece aplica_timbre = false
+   - Si NO encuentras ninguna mencion o si encuentras " no aplicar timbre" o similares que indiquen que NO se debe aplicar el impuesto . Establece aplica_timbre = false
+   
 
 2. EXTRACCION DE BASE GRAVABLE:
    - Busca el valor de la base gravable mencionada para el impuesto al timbre
@@ -148,11 +149,11 @@ INFORMACION A EXTRAER:
    - Busca el numero de contrato que aparece con etiquetas como:
      * "No. Contrato"
      * "Orden de Servicios"
-     * "Convenio"
      * "Numero de Contrato"
    - El formato tipico es: FNTCE-572-2023, 049-2024, FNTCE-229A-2025
    - Extrae EXACTAMENTE como aparece en el documento
    - Si NO encuentras, establece: ""
+   - Si encuentras el ID del contrato menciona la cita textual del fragmento donde aparece en cita_texto_ID_contrato, SOLO agrega un corto fragmento de maximo 50 caracteres.
 
 2. FECHA DE SUSCRIPCION DEL CONTRATO:
    - Busca la fecha con etiquetas como:
@@ -167,8 +168,8 @@ INFORMACION A EXTRAER:
    - Si NO encuentras fecha, establece: "0000-00-00"
 
 3. VALOR INICIAL DEL CONTRATO:
-   - Busca el valor inicial o valor del contrato
-   - Puede aparecer como "Valor del Contrato", "Valor Inicial", "Monto"
+   - Busca el valor inicial del contrato
+   - Puede aparecer como "Valor del Contrato", "Valor Inicial"
    - Extrae solo el valor numerico (sin simbolos)
    - Si NO encuentras, establece: 0.0
 
@@ -180,7 +181,7 @@ INFORMACION A EXTRAER:
    - Si NO encuentras, establece: 0.0
 
 5. ADICIONES AL CONTRATO:
-   - Busca modificaciones al contrato (OTRO SI, ADICIONES, MODIFICACIONES)
+   - Busca modificaciones monetarias al contrato (OTRO SI, ADICIONES, MODIFICACIONES)
    - Para CADA adicion encontrada, extrae:
      a) valor_adicion: Monto de la adicion (valor numerico)
      b) fecha_adicion: Fecha de la adicion o del OTRO SI en formato YYYY-MM-DD
@@ -191,6 +192,7 @@ FORMATO DE RESPUESTA REQUERIDO (JSON estricto):
 ```json
 {{
   "id_contrato": "FNTCE-572-2023",
+  "cita_texto_ID_contrato": "El contrato No. Contrato FNTCE-572-2023 fue suscrito...",
   "fecha_suscripcion": "2024-03-15",
   "valor_inicial_contrato": 10000000.0,
   "valor_total_contrato": 12000000.0,
@@ -203,7 +205,8 @@ FORMATO DE RESPUESTA REQUERIDO (JSON estricto):
       "valor_adicion": 1000000.0,
       "fecha_adicion": "2024-09-15"
     }}
-  ]
+  ],
+  "observaciones": ""
 }}
 ```
 
@@ -233,15 +236,21 @@ REGLAS IMPORTANTES:
    - Extrae EXACTAMENTE como aparece
    - Puede tener letras, numeros, guiones
    - Si no encuentras, usa: ""
-
+   
+6. OBSERVACIONES:
+   - Agrega en las observaciones la informacion que creas pertinente de tu analisis, se muy breve y conciso.
+   
+   
 EJEMPLO DE RESPUESTA CON DATOS NO ENCONTRADOS:
 ```json
 {{
   "id_contrato": "",
+  "cita_texto_ID_contrato": "",
   "fecha_suscripcion": "0000-00-00",
   "valor_inicial_contrato": 0.0,
   "valor_total_contrato": 0.0,
-  "adiciones": []
+  "adiciones": [],
+  "observaciones": "No se encontraron datos relevantes en los documentos proporcionados."
 }}
 ```
 

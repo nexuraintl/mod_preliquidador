@@ -204,18 +204,18 @@ class ValidadorNaturalezaTributaria(IValidadorNaturaleza):
             es_responsable_iva = naturaleza.get('es_responsable_iva')
             es_autorretenedor = naturaleza.get('es_autorretenedor', False)
             regimen_tributario = naturaleza.get('regimen_tributario')
+            es_persona_natural = naturaleza.get('es_persona_natural', None)
 
-            # No responsable de IVA
-            if es_responsable_iva is False:
-                return False, "No responsable de IVA"
+            # Responsable de IVA ya no se valida
+
 
             # Autorretenedor
             if es_autorretenedor is True:
                 return False, "Autorretenedor"
 
             # Régimen simple
-            if regimen_tributario == "SIMPLE":
-                return False, "Régimen simple"
+            if regimen_tributario == "SIMPLE" and es_persona_natural is not True:
+                return False, "Régimen simple, y persona no natural"
 
             # Si pasa todas las validaciones, aplica retención
             return True, ""

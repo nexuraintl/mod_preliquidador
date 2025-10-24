@@ -147,13 +147,13 @@ class LiquidadorTimbre:
             )
 
         # DETERMINACION DE BASE GRAVABLE SEGUN TIPO DE CUANTIA
-        if tipo_cuantia_bd == "Indeterminable":
+        if tipo_cuantia_bd == "I":
             return self._procesar_cuantia_indeterminable(
                 base_gravable_obs=base_gravable_obs,
                 tarifa_bd=tarifa_bd,
                 datos_contrato=datos_contrato
             )
-        elif tipo_cuantia_bd == "Determinable":
+        elif tipo_cuantia_bd == "D":
             return self._procesar_cuantia_determinable(
                 tarifa_bd=tarifa_bd,
                 datos_contrato=datos_contrato
