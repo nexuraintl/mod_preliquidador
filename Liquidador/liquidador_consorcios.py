@@ -251,24 +251,67 @@ class ValidadorConceptos(IValidadorConceptos):
     SRP: Solo responsable de validar conceptos contra diccionario
     """
 
-    def validar_concepto(self, concepto: str, diccionario_conceptos: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
+    def __init__(self, estructura_contable: int = None, db_manager = None):
         """
-        Valida si un concepto existe en el diccionario de conceptos válidos.
+        Inicializa el validador
+
+        Args:
+            estructura_contable: Código de estructura contable para consultas
+            db_manager: Instancia de DatabaseManager para consultas a BD
+        """
+        self.estructura_contable = estructura_contable
+        self.db_manager = db_manager
+
+    def validar_concepto(self, concepto: str, diccionario_conceptos: Dict[str, Any], concepto_index: int = None) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Valida si un concepto existe y consulta datos reales desde BD si tiene index.
 
         Args:
             concepto: Nombre del concepto a validar
-            diccionario_conceptos: Diccionario de conceptos válidos
+            diccionario_conceptos: Diccionario de conceptos válidos (ahora con formato {descripcion: index})
+            concepto_index: Index del concepto identificado por Gemini
 
         Returns:
-            Tuple[bool, Dict]: (es_valido, datos_concepto)
+            Tuple[bool, Dict]: (es_valido, datos_concepto con tarifa y base de BD)
         """
         try:
             # Validar concepto no identificado
             if concepto == "CONCEPTO_NO_IDENTIFICADO" or not concepto:
                 return False, {}
 
+            # Si tenemos concepto_index, consultar BD directamente
+            if concepto_index and self.db_manager and self.estructura_contable is not None:
+                try:
+                    logger.info(f"Consultando BD para concepto_index={concepto_index}")
+                    resultado_bd = self.db_manager.obtener_concepto_por_index(
+                        concepto_index,
+                        self.estructura_contable
+                    )
+
+                    if resultado_bd['success']:
+                        porcentaje_bd = resultado_bd['data']['porcentaje']
+                        base_minima_bd = resultado_bd['data']['base']
+
+                        # Retornar datos en formato esperado por el calculador
+                        datos_concepto = {
+                            'tarifa_retencion': porcentaje_bd / 100,  # Convertir de 11 a 0.11
+                            'base_pesos': base_minima_bd
+                        }
+
+                        logger.info(f"Concepto obtenido de BD: tarifa={porcentaje_bd}%, base=${base_minima_bd:,.2f}")
+                        return True, datos_concepto
+                    else:
+                        logger.warning(f"No se pudo obtener concepto de BD: {resultado_bd['message']}")
+                except Exception as e:
+                    logger.error(f"Error consultando BD para concepto_index={concepto_index}: {e}")
+
+            # Fallback: buscar concepto en diccionario (comportamiento legacy)
             # Buscar concepto exacto
             if concepto in diccionario_conceptos:
+                # Si el valor es un index, no un diccionario con datos
+                if isinstance(diccionario_conceptos[concepto], int):
+                    logger.warning(f"Concepto encontrado pero sin datos de BD, usando index={diccionario_conceptos[concepto]}")
+                    return False, {}
                 return True, diccionario_conceptos[concepto]
 
             # Buscar concepto con variaciones (sin acentos, mayúsculas, etc.)
@@ -276,6 +319,8 @@ class ValidadorConceptos(IValidadorConceptos):
 
             for nombre_concepto, datos_concepto in diccionario_conceptos.items():
                 if self._normalizar_concepto(nombre_concepto) == concepto_normalizado:
+                    if isinstance(datos_concepto, int):
+                        return False, {}
                     return True, datos_concepto
 
             # No encontrado
@@ -405,13 +450,18 @@ class CalculadorRetencionConsorcio(ICalculadorRetencion):
                 # BASE GRAVABLE DE LA FACTURA (extraída por Gemini por este concepto)
                 base_gravable_factura = Decimal(str(concepto.get('base_gravable', 0)))
 
-                # BASE MÍNIMA DEL DICCIONARIO (normativa por este concepto desde config.py)
-                nombre_concepto_dict = concepto.get('concepto', '')
-                logger.debug(f"🔍 DEBUG: Buscando concepto '{nombre_concepto_dict}' en diccionario")
-                logger.debug(f"🔍 DEBUG: Concepto completo de Gemini: {concepto}")
+                # BASE MÍNIMA: Primero intentar obtener de BD (ya está en concepto), luego diccionario
+                base_minima_diccionario = None
 
-                # Buscar en el diccionario de conceptos la base mínima normativa
-                base_minima_diccionario = self._obtener_base_minima_del_diccionario(nombre_concepto_dict, diccionario_conceptos)
+                # ESTRATEGIA 1: Si ya viene en el concepto (desde BD en validar_concepto)
+                if 'base_pesos' in concepto and concepto['base_pesos'] is not None:
+                    base_minima_diccionario = Decimal(str(concepto['base_pesos']))
+                    logger.debug(f"✅ Base mínima obtenida de BD (en concepto): ${base_minima_diccionario:,.2f}")
+                else:
+                    # ESTRATEGIA 2: Fallback a diccionario legacy
+                    nombre_concepto_dict = concepto.get('concepto', '')
+                    logger.debug(f"🔍 Buscando concepto '{nombre_concepto_dict}' en diccionario legacy")
+                    base_minima_diccionario = self._obtener_base_minima_del_diccionario(nombre_concepto_dict, diccionario_conceptos)
 
                 # Calcular base gravable individual del consorciado
                 base_gravable_individual = base_gravable_factura * porcentaje_decimal
@@ -522,6 +572,8 @@ class LiquidadorConsorcios:
     """
 
     def __init__(self,
+                 estructura_contable: int = None,
+                 db_manager = None,
                  validador_naturaleza: Optional[IValidadorNaturaleza] = None,
                  validador_conceptos: Optional[IValidadorConceptos] = None,
                  calculador_retencion: Optional[ICalculadorRetencion] = None):
@@ -529,13 +581,19 @@ class LiquidadorConsorcios:
         Inicializa el liquidador con inyección de dependencias.
 
         Args:
+            estructura_contable: Código de estructura contable para consultas
+            db_manager: Instancia de DatabaseManager para consultas a BD
             validador_naturaleza: Validador de naturaleza tributaria
             validador_conceptos: Validador de conceptos
             calculador_retencion: Calculador de retenciones
         """
+        # Guardar parámetros de BD
+        self.estructura_contable = estructura_contable
+        self.db_manager = db_manager
+
         # DIP: Inyección de dependencias con valores por defecto
         self.validador_naturaleza = validador_naturaleza or ValidadorNaturalezaTributaria()
-        self.validador_conceptos = validador_conceptos or ValidadorConceptos()
+        self.validador_conceptos = validador_conceptos or ValidadorConceptos(estructura_contable, db_manager)
         self.calculador_retencion = calculador_retencion or CalculadorRetencionConsorcio()
 
         logger.info("LiquidadorConsorcios inicializado con arquitectura SOLID")
@@ -662,9 +720,10 @@ class LiquidadorConsorcios:
 
         for concepto_data in conceptos_identificados:
             concepto_nombre = concepto_data.get('concepto', '')
+            concepto_index = concepto_data.get('concepto_index', None)
 
             es_valido, datos_concepto = self.validador_conceptos.validar_concepto(
-                concepto_nombre, diccionario_conceptos
+                concepto_nombre, diccionario_conceptos, concepto_index
             )
 
             if not es_valido:
@@ -672,7 +731,7 @@ class LiquidadorConsorcios:
                 logger.warning(f"Concepto no válido: {concepto_nombre}")
                 return [], mensaje_error
 
-            # Combinar datos de Gemini con datos del diccionario
+            # Combinar datos de Gemini con datos del diccionario/BD
             concepto_completo = {
                 **concepto_data,
                 **datos_concepto

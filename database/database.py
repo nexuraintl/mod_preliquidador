@@ -36,6 +36,16 @@ class DatabaseInterface(ABC):
         """Obtiene la tarifa y tipo de cuantía para un contrato"""
         pass
 
+    @abstractmethod
+    def obtener_conceptos_retefuente(self, estructura_contable: int) -> Dict[str, Any]:
+        """Obtiene los conceptos de retención en la fuente según estructura contable"""
+        pass
+
+    @abstractmethod
+    def obtener_concepto_por_index(self, index: int, estructura_contable: int) -> Dict[str, Any]:
+        """Obtiene los datos completos de un concepto por su index"""
+        pass
+
 
 # ================================
 #  IMPLEMENTACIÓN SUPABASE
@@ -202,10 +212,16 @@ class SupabaseDatabase(DatabaseInterface):
                 tipo_cuantia = cuantia_raw.get('TIPO_CUANTIA')
                 tarifa = cuantia_raw.get('TARIFA', 0.0)
 
-                # Convertir tarifa a float si es necesario
+                # Convertir tarifa a float manejando formato con coma decimal (5,0 -> 5.0)
                 try:
-                    tarifa = float(tarifa) if tarifa is not None else 0.0
-                except (ValueError, TypeError):
+                    if tarifa is not None:
+                        tarifa_str = str(tarifa).replace(',', '.')
+                        tarifa = float(tarifa_str)
+                    else:
+                        tarifa = 0.0
+                except (ValueError, TypeError) as e:
+                    # Si falla, reportar el error pero usar valor por defecto
+                    print(f"[WARNING] Error convirtiendo tarifa: {e}. Raw: tarifa={tarifa}")
                     tarifa = 0.0
 
                 return {
@@ -233,6 +249,125 @@ class SupabaseDatabase(DatabaseInterface):
                 'data': None,
                 'error': str(e),
                 'message': f'Error al consultar cuantía del contrato: {e}'
+            }
+
+    def obtener_conceptos_retefuente(self, estructura_contable: int) -> Dict[str, Any]:
+        """
+        Obtiene los conceptos de retención en la fuente según estructura contable.
+
+        SRP: Solo consulta la tabla RETENCION EN LA FUENTE (Data Access Layer)
+
+        Args:
+            estructura_contable: Código de estructura contable para filtrar conceptos
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo lista de conceptos
+        """
+        try:
+            response = self.supabase.table('RETENCION EN LA FUENTE').select(
+                'descripcion_concepto, index'
+            ).eq('estructura_contable', estructura_contable).execute()
+
+            if response.data and len(response.data) > 0:
+                conceptos = []
+                for item in response.data:
+                    conceptos.append({
+                        'descripcion_concepto': item.get('descripcion_concepto'),
+                        'index': item.get('index')
+                    })
+
+                return {
+                    'success': True,
+                    'data': conceptos,
+                    'total': len(conceptos),
+                    'message': f'{len(conceptos)} conceptos encontrados para estructura contable {estructura_contable}'
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': [],
+                    'message': f'No se encontraron conceptos para estructura contable {estructura_contable}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': [],
+                'error': str(e),
+                'message': f'Error al consultar conceptos de retefuente: {e}'
+            }
+
+    def obtener_concepto_por_index(self, index: int, estructura_contable: int) -> Dict[str, Any]:
+        """
+        Obtiene los datos completos de un concepto específico por su index.
+
+        SRP: Solo consulta la tabla RETENCION EN LA FUENTE (Data Access Layer)
+
+        Args:
+            index: Índice del concepto
+            estructura_contable: Código de estructura contable
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo base, porcentaje y descripción
+        """
+        try:
+            response = self.supabase.table('RETENCION EN LA FUENTE').select(
+                'descripcion_concepto, base, porcentaje, codigo_concepto'
+            ).eq('index', index).eq('estructura_contable', estructura_contable).execute()
+
+            if response.data and len(response.data) > 0:
+                concepto_raw = response.data[0]
+                base = concepto_raw.get('base', 0.0)
+                porcentaje = concepto_raw.get('porcentaje', 0.0)
+                codigo_concepto = concepto_raw.get('codigo_concepto', '')
+
+                # Convertir a float manejando formato con coma decimal (3,5 -> 3.5)
+                try:
+                    # Manejar base
+                    if base is not None:
+                        base_str = str(base).replace(',', '.')
+                        base = float(base_str)
+                    else:
+                        base = 0.0
+
+                    # Manejar porcentaje (puede venir como string con coma: '3,5')
+                    if porcentaje is not None:
+                        porcentaje_str = str(porcentaje).replace(',', '.')
+                        porcentaje = float(porcentaje_str)
+                    else:
+                        porcentaje = 0.0
+                except (ValueError, TypeError) as e:
+                    # Si aún falla, reportar el error pero usar valores por defecto
+                    print(f"[WARNING] Error convirtiendo base/porcentaje: {e}. Raw: base={base}, porcentaje={porcentaje}")
+                    base = 0.0
+                    porcentaje = 0.0
+
+                return {
+                    'success': True,
+                    'data': {
+                        'descripcion_concepto': concepto_raw.get('descripcion_concepto'),
+                        'base': base,
+                        'porcentaje': porcentaje,
+                        'index': index,
+                        'estructura_contable': estructura_contable,
+                        'codigo_concepto': codigo_concepto
+                    },
+                    'message': f'Concepto encontrado para index {index}',
+                    'raw_data': concepto_raw
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'No existe concepto con index {index} para estructura contable {estructura_contable}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar concepto por index: {e}'
             }
 
     def health_check(self) -> bool:
@@ -313,6 +448,35 @@ class DatabaseManager:
             Dict con resultado de la consulta incluyendo tarifa y tipo_cuantia
         """
         return self.db_connection.obtener_cuantia_contrato(id_contrato, codigo_negocio, nit_proveedor)
+
+    def obtener_conceptos_retefuente(self, estructura_contable: int) -> Dict[str, Any]:
+        """
+        Obtiene los conceptos de retención en la fuente según estructura contable.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            estructura_contable: Código de estructura contable
+
+        Returns:
+            Dict con resultado de la consulta incluyendo lista de conceptos
+        """
+        return self.db_connection.obtener_conceptos_retefuente(estructura_contable)
+
+    def obtener_concepto_por_index(self, index: int, estructura_contable: int) -> Dict[str, Any]:
+        """
+        Obtiene los datos completos de un concepto por su index.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            index: Índice del concepto
+            estructura_contable: Código de estructura contable
+
+        Returns:
+            Dict con resultado de la consulta incluyendo base, porcentaje y descripción
+        """
+        return self.db_connection.obtener_concepto_por_index(index, estructura_contable)
 
 
 def ejecutar_pruebas_completas(db_manager: DatabaseManager):

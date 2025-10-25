@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 class ConceptoIdentificado(BaseModel):
     concepto: str
-    tarifa_retencion: float
     base_gravable: Optional[float] = None
+    concepto_index: Optional[int] = None
 
 # 🆕 NUEVO MODELO PARA DETALLES POR CONCEPTO
 class DetalleConcepto(BaseModel):
@@ -32,6 +32,7 @@ class DetalleConcepto(BaseModel):
     tarifa_retencion: float
     base_gravable: float
     valor_retencion: float
+    codigo_concepto: Optional[str] = None  # Código del concepto desde BD
 
 class NaturalezaTercero(BaseModel):
     es_persona_natural: Optional[bool] = None
@@ -108,9 +109,8 @@ class AnalisisFactura(BaseModel):
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
     articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
-    es_facturacion_exterior: bool
+    es_facturacion_exterior: bool = False  # Default False, se obtiene de clasificación inicial
     valor_total: Optional[float]
-    iva: Optional[float]
     observaciones: List[str]
 
 class ResultadoLiquidacion(BaseModel):
@@ -121,6 +121,7 @@ class ResultadoLiquidacion(BaseModel):
     fecha_calculo: str
     puede_liquidar: bool
     mensajes_error: List[str]
+    estado: str  # NUEVO: "No aplica impuesto", "Preliquidacion sin finalizar", "Preliquidado"
     
 
 # ===============================
@@ -135,8 +136,16 @@ class LiquidadorRetencion:
     y valida todas las condiciones previas para determinar si aplica retención.
     """
     
-    def __init__(self):
-        """Inicializa el liquidador"""
+    def __init__(self, estructura_contable: int = None, db_manager = None):
+        """
+        Inicializa el liquidador
+
+        Args:
+            estructura_contable: Código de estructura contable para consultas
+            db_manager: Instancia de DatabaseManager para consultas a BD
+        """
+        self.estructura_contable = estructura_contable
+        self.db_manager = db_manager
         logger.info("LiquidadorRetencion inicializado")
     
     def calcular_retencion(self, analisis: AnalisisFactura) -> ResultadoLiquidacion:
@@ -162,7 +171,10 @@ class LiquidadorRetencion:
         # VALIDACIÓN 2: Naturaleza del tercero
         resultado_validacion = self._validar_naturaleza_tercero(analisis.naturaleza_tercero)
         if not resultado_validacion["puede_continuar"]:
-            return self._crear_resultado_no_liquidable(resultado_validacion["mensajes"])
+            return self._crear_resultado_no_liquidable(
+                resultado_validacion["mensajes"],
+                estado=resultado_validacion.get("estado", "Preliquidacion sin finalizar")  # NUEVO: Pasar estado
+            )
         
         # Agregar advertencias de naturaleza del tercero (si las hay)
         mensajes_error.extend(resultado_validacion["advertencias"])
@@ -188,9 +200,12 @@ class LiquidadorRetencion:
             mensajes_error.append("No se identificaron conceptos válidos para calcular retención")
             puede_liquidar = False
             logger.error("No hay conceptos identificados válidos")
-        
+
         if not puede_liquidar:
-            return self._crear_resultado_no_liquidable(mensajes_error)
+            return self._crear_resultado_no_liquidable(
+                mensajes_error,
+                estado="Preliquidacion sin finalizar"  # NUEVO: Conceptos no identificados
+            )
         
         #  VALIDACIÓN SEPARADA: ARTÍCULO 383 PARA PERSONAS NATURALES
         # Verificar si se analizó Art 383 y si aplica
@@ -250,10 +265,13 @@ class LiquidadorRetencion:
             if not mensajes_error:
                 mensajes_error.append("No se pudo calcular retención para ningún concepto")
             logger.error("No se calculó retención para ningún concepto")
-        
+
         # Si no se puede liquidar, devolver resultado vacío
         if not puede_liquidar:
-            return self._crear_resultado_no_liquidable(mensajes_error)
+            return self._crear_resultado_no_liquidable(
+                mensajes_error,
+                estado="Preliquidacion sin finalizar"  # NUEVO: No se pudo calcular retención
+            )
         
         #  PREPARAR RESULTADO FINAL CON ESTRUCTURA MEJORADA
         # Crear lista de detalles por concepto
@@ -269,13 +287,14 @@ class LiquidadorRetencion:
                 mensajes_error.append(
                     f"  • {detalle['concepto']}: ${detalle['base_gravable']:,.0f} x {detalle['tarifa']:.1f}% = ${detalle['valor_retencion']:,.0f}"
                 )
-                
+
                 # Crear objeto DetalleConcepto para nueva estructura
                 detalle_concepto = DetalleConcepto(
                     concepto=detalle['concepto'],
                     tarifa_retencion=detalle['tarifa'],
                     base_gravable=detalle['base_gravable'],
-                    valor_retencion=detalle['valor_retencion']
+                    valor_retencion=detalle['valor_retencion'],
+                    codigo_concepto=detalle.get('codigo_concepto', None)
                 )
                 detalles_conceptos.append(detalle_concepto)
                 
@@ -294,6 +313,7 @@ class LiquidadorRetencion:
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=True,
             mensajes_error=mensajes_error,
+            estado="Preliquidado"  # NUEVO: Proceso completado exitosamente
         )
         
         logger.info(f"Retención calculada exitosamente: ${valor_retencion_total:,.0f}")
@@ -429,7 +449,8 @@ class LiquidadorRetencion:
                 concepto=concepto_art383,
                 tarifa_retencion=tarifa_art383,
                 base_gravable=base_gravable_final,
-                valor_retencion=valor_retencion_art383
+                valor_retencion=valor_retencion_art383,
+                codigo_concepto=None  # Art 383 no tiene código de concepto específico
             )
             
             # Generar resumen descriptivo
@@ -443,6 +464,7 @@ class LiquidadorRetencion:
                 fecha_calculo=datetime.now().isoformat(),
                 puede_liquidar=True,
                 mensajes_error=mensajes_detalle,
+                estado="Preliquidado"  # NUEVO: Artículo 383 completado exitosamente
             )
             
             return {
@@ -825,7 +847,8 @@ class LiquidadorRetencion:
                 concepto=concepto_art383_validado,
                 tarifa_retencion=tarifa_art383,
                 base_gravable=base_gravable_final,
-                valor_retencion=valor_retencion_art383
+                valor_retencion=valor_retencion_art383,
+                codigo_concepto=None  # Art 383 no tiene código de concepto específico
             )
             
             # Generar resumen descriptivo
@@ -839,6 +862,7 @@ class LiquidadorRetencion:
                 fecha_calculo=datetime.now().isoformat(),
                 puede_liquidar=True,
                 mensajes_error=mensajes_detalle,
+                estado="Preliquidado"  # NUEVO: Artículo 383 validado completado exitosamente
             )
             
             return {
@@ -970,25 +994,25 @@ class LiquidadorRetencion:
     
     def _validar_bases_individuales_conceptos(self, conceptos_identificados: List[ConceptoIdentificado], valor_base_total: float) -> List[ConceptoIdentificado]:
         """
-        FUNCIÓN MODIFICADA: Valida que TODOS los conceptos tengan base gravable.
-        
-        Si algún concepto no tiene base específica, PARA la liquidación con error.
-        
+        SRP: SOLO valida que TODOS los conceptos tengan base gravable.
+
+        La responsabilidad de obtener tarifa y base mínima está en _calcular_retencion_concepto.
+
         Args:
             conceptos_identificados: Lista de conceptos identificados por Gemini
             valor_base_total: Valor total de la factura para validaciones
-            
+
         Returns:
             List[ConceptoIdentificado]: Conceptos validados con bases gravables
-            
+
         Raises:
             ValueError: Si algún concepto no tiene base gravable definida
         """
-        
+
         #  VALIDACIÓN CRÍTICA: Todos los conceptos DEBEN tener base gravable
         conceptos_sin_base = []
         conceptos_validos = []
-        
+
         for concepto in conceptos_identificados:
             if not concepto.base_gravable or concepto.base_gravable <= 0:
                 conceptos_sin_base.append(concepto.concepto)
@@ -1012,14 +1036,7 @@ class LiquidadorRetencion:
             logger.error(error_msg)
             raise ValueError(f"Conceptos sin base gravable: {', '.join(conceptos_sin_base)}")
         
-        # ✅ VALIDACIÓN ADICIONAL: Verificar coherencia con total (tolerancia 0%)
-        suma_bases = sum(c.base_gravable for c in conceptos_validos)
-        diferencia_absoluta = abs(suma_bases - valor_base_total)
-        
-        if diferencia_absoluta > 0:  # Tolerancia del 0%
-            logger.warning(f"⚠️ Diferencia detectada: Suma bases ${suma_bases:,.2f} vs Total factura ${valor_base_total:,.2f} (${diferencia_absoluta:,.2f})")
-        
-        logger.info(f"✅ VALIDACIÓN EXITOSA: {len(conceptos_validos)} conceptos - Total bases: ${suma_bases:,.2f}")
+
         
         return conceptos_validos
     
@@ -1028,17 +1045,18 @@ class LiquidadorRetencion:
     def _validar_naturaleza_tercero(self, naturaleza: Optional[NaturalezaTercero]) -> Dict[str, Any]:
         """
         Valida la naturaleza del tercero y determina si puede continuar el cálculo.
-        
+
         Args:
             naturaleza: Información del tercero
-            
+
         Returns:
-            Dict con puede_continuar, mensajes y advertencias
+            Dict con puede_continuar, mensajes, advertencias y estado
         """
         resultado = {
             "puede_continuar": True,
             "mensajes": [],
-            "advertencias": []
+            "advertencias": [],
+            "estado": None  # NUEVO: Se asignará según validaciones
         }
         
         # 🔧 VALIDACIÓN MEJORADA: Manejar None correctamente
@@ -1053,6 +1071,7 @@ class LiquidadorRetencion:
             if hasattr(naturaleza, 'es_autorretenedor') and naturaleza.es_autorretenedor is True:
                 resultado["puede_continuar"] = False
                 resultado["mensajes"].append("El tercero es autorretenedor - NO se debe practicar retención")
+                resultado["estado"] = "No aplica impuesto"  # NUEVO
                 logger.info("Tercero es autorretenedor - no aplica retención")
                 return resultado
 
@@ -1062,6 +1081,7 @@ class LiquidadorRetencion:
             if hasattr(naturaleza, 'regimen_tributario') and naturaleza.regimen_tributario == "SIMPLE" and hasattr(naturaleza, 'es_persona_natural') and naturaleza.es_persona_natural == False:
                 resultado["puede_continuar"] = False
                 resultado["mensajes"].append("Régimen Simple de Tributación - Persona Jurídica - NO aplica retención en la fuente")
+                resultado["estado"] = "No aplica impuesto"  # NUEVO
                 logger.info("Régimen Simple detectado - no aplica retención")
                 return resultado
             
@@ -1081,6 +1101,7 @@ class LiquidadorRetencion:
                 )
                 resultado["puede_continuar"] = False
                 resultado["mensajes"].append(f"Datos faltantes de la naturaleza del tercero - NO se puede practicar retención : {datos_faltantes}")
+                resultado["estado"] = "Preliquidacion sin finalizar"  # NUEVO
                 logger.warning(f"Datos faltantes de la naturaleza del tercero: {datos_faltantes}")
                 return resultado
                 
@@ -1094,20 +1115,20 @@ class LiquidadorRetencion:
         
         return resultado
     
-    def _calcular_retencion_concepto(self, concepto_item: ConceptoIdentificado, 
+    def _calcular_retencion_concepto(self, concepto_item: ConceptoIdentificado,
                                    conceptos_retefuente: Dict) -> Dict[str, Any]:
         """
-        CORREGIDO: Calcula retención para un concepto específico usando SOLO su base gravable.
-        
+        SRP: Responsable de obtener tarifa/base mínima (BD o diccionario) Y calcular retención.
+
         Args:
-            concepto_item: Concepto identificado por Gemini con base_gravable específica
-            conceptos_retefuente: Diccionario de conceptos con tarifas y bases
-            
+            concepto_item: Concepto identificado por Gemini con base_gravable y concepto_index
+            conceptos_retefuente: Diccionario de conceptos (fallback legacy)
+
         Returns:
             Dict con resultado del cálculo para este concepto
         """
         concepto_aplicado = concepto_item.concepto
-        base_concepto = concepto_item.base_gravable  # CORRECCIÓN: Solo base específica
+        base_concepto = concepto_item.base_gravable
 
         # VALIDACIÓN ESPECIAL: Base cero por falta de valor disponible
         if base_concepto <= 0:
@@ -1116,19 +1137,49 @@ class LiquidadorRetencion:
                 "mensaje_error": f"{concepto_aplicado}: Sin base gravable disponible (${base_concepto:,.2f})",
                 "concepto": concepto_aplicado
             }
-        
-        # Buscar concepto exacto en el diccionario
-        if concepto_aplicado not in conceptos_retefuente:
-            return {
-                "aplica_retencion": False,
-                "mensaje_error": f"Concepto (IA) '{concepto_aplicado}' no encontrado en la tabla de retefuente",
-                "concepto": concepto_aplicado
-            }
-        
-        datos_concepto = conceptos_retefuente[concepto_aplicado]
-        tarifa = datos_concepto["tarifa_retencion"] * 100  # Convertir a porcentaje
-        base_minima = datos_concepto["base_pesos"]
-        
+
+        # RESPONSABILIDAD: Obtener tarifa, base mínima y código de concepto
+        tarifa = None
+        base_minima = None
+        codigo_concepto = None
+
+        # ESTRATEGIA 1: Si tiene concepto_index, consultar BD
+        if concepto_item.concepto_index and self.db_manager and self.estructura_contable is not None:
+            try:
+                logger.info(f"Consultando BD para concepto_index={concepto_item.concepto_index}")
+                resultado_bd = self.db_manager.obtener_concepto_por_index(
+                    concepto_item.concepto_index,
+                    self.estructura_contable
+                )
+
+                if resultado_bd['success']:
+                    porcentaje_bd = resultado_bd['data']['porcentaje']
+                    base_minima_bd = resultado_bd['data']['base']
+                    codigo_concepto = resultado_bd['data'].get('codigo_concepto', None)
+
+                    tarifa = porcentaje_bd  # Ya viene como 11 (porcentaje directo)
+                    base_minima = base_minima_bd
+
+                    logger.info(f"Datos obtenidos de BD: tarifa={tarifa}%, base_minima=${base_minima:,.2f}, codigo={codigo_concepto}")
+                else:
+                    logger.warning(f"No se pudo obtener datos de BD: {resultado_bd['message']}")
+            except Exception as e:
+                logger.error(f"Error consultando BD: {e}")
+
+        # ESTRATEGIA 2: Fallback a diccionario legacy si no se obtuvo de BD
+        if tarifa is None or base_minima is None:
+            if concepto_aplicado not in conceptos_retefuente:
+                return {
+                    "aplica_retencion": False,
+                    "mensaje_error": f"Concepto '{concepto_aplicado}' no encontrado en BD ni en diccionario",
+                    "concepto": concepto_aplicado
+                }
+
+            datos_concepto = conceptos_retefuente[concepto_aplicado]
+            tarifa = datos_concepto["tarifa_retencion"] * 100  # Convertir a porcentaje
+            base_minima = datos_concepto["base_pesos"]
+            logger.info(f"Usando diccionario legacy: tarifa={tarifa}%, base_minima=${base_minima:,.2f}")
+
         # Verificar base mínima
         if base_concepto < base_minima:
             return {
@@ -1136,21 +1187,23 @@ class LiquidadorRetencion:
                 "mensaje_error": f"{concepto_aplicado}: Base ${base_concepto:,.0f} no supera mínimo de ${base_minima:,.0f}",
                 "concepto": concepto_aplicado
             }
-        
-        # Calcular retención
+
+        # RESPONSABILIDAD: Calcular retención
         valor_retencion_concepto = (base_concepto * tarifa) / 100
-        
+
         return {
             "aplica_retencion": True,
             "valor_retencion": valor_retencion_concepto,
             "concepto": concepto_aplicado,
             "tarifa": tarifa,
+            "codigo_concepto": codigo_concepto,  # Código del concepto desde BD
             "detalle": {
                 "concepto": concepto_aplicado,
                 "base_gravable": base_concepto,
                 "tarifa": tarifa,
                 "valor_retencion": valor_retencion_concepto,
-                "base_minima": base_minima
+                "base_minima": base_minima,
+                "codigo_concepto": codigo_concepto
             }
         }
     
@@ -1215,36 +1268,46 @@ class LiquidadorRetencion:
             }
         }
     
-    def _crear_resultado_no_liquidable(self, mensajes_error: List[str]) -> ResultadoLiquidacion:
+    def _crear_resultado_no_liquidable(self, mensajes_error: List[str], estado: str = None) -> ResultadoLiquidacion:
         """
         Crea un resultado cuando no se puede liquidar retención.
-        
+
         Args:
             mensajes_error: Lista de mensajes explicando por qué no se puede liquidar
-            
+            estado: Estado específico a asignar (si no se proporciona, se determina automáticamente)
+
         Returns:
             ResultadoLiquidacion: Resultado con valores en cero y explicación
         """
         # 🔧 FIX: Generar concepto descriptivo en lugar de "N/A"
         concepto_descriptivo = "No aplica retención"
-        
-        # Determinar concepto específico basado en el mensaje de error
+
+        # NUEVO: Determinar estado si no se proporciona
+        if estado is None:
+            estado = "Preliquidacion sin finalizar"  # Default
+
+        # Determinar concepto específico y estado basado en el mensaje de error
         if mensajes_error:
             primer_mensaje = mensajes_error[0].lower()
-            
+
             if "autorretenedor" in primer_mensaje:
                 concepto_descriptivo = "No aplica - tercero es autorretenedor"
+                estado = "No aplica impuesto"
             elif "simple" in primer_mensaje:
                 concepto_descriptivo = "No aplica - régimen simple de tributación"
+                estado = "No aplica impuesto"
             elif "extranjera" in primer_mensaje or "exterior" in primer_mensaje:
                 concepto_descriptivo = "No aplica - facturación extranjera"
             elif "base" in primer_mensaje and "mínimo" in primer_mensaje:
                 concepto_descriptivo = "No aplica - base inferior al mínimo"
+                estado = "Preliquidacion sin finalizar"
             elif "concepto" in primer_mensaje and "identificado" in primer_mensaje:
                 concepto_descriptivo = "No aplica - conceptos no identificados"
-            elif "faltantes" in primer_mensaje and "Datos" in primer_mensaje:
+                estado = "Preliquidacion sin finalizar"
+            elif "faltantes" in primer_mensaje and "datos" in primer_mensaje:
                 concepto_descriptivo = "No aplica - datos del tercero incompletos"
-        
+                estado = "Preliquidacion sin finalizar"
+
         # 🆕 NUEVA ESTRUCTURA: Crear resultado con nueva estructura
         return ResultadoLiquidacion(
             valor_base_retencion=0,
@@ -1253,7 +1316,8 @@ class LiquidadorRetencion:
             resumen_conceptos=concepto_descriptivo,  # 🆕 NUEVO: Descripción clara del motivo
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=False,
-            mensajes_error=mensajes_error
+            mensajes_error=mensajes_error,
+            estado=estado  # NUEVO
         )
     
     # ===============================
@@ -1319,13 +1383,23 @@ class LiquidadorRetencion:
                 logger.info(f"💰 Factura extranjera: Usando base específica del concepto: ${valor_base:,.2f}")
             
             valor_retencion = valor_base * concepto_principal.tarifa_aplicada
-            
+
+            # Obtener codigo_concepto si está disponible (desde BD)
+            codigo_concepto_ext = None
+            if concepto_principal.concepto_index and self.db_manager and self.estructura_contable is not None:
+                resultado_bd = self.db_manager.obtener_concepto_por_index(
+                    concepto_principal.concepto_index, self.estructura_contable
+                )
+                if resultado_bd['success']:
+                    codigo_concepto_ext = resultado_bd['data'].get('codigo_concepto', None)
+
             # 🆕 NUEVA ESTRUCTURA: Crear detalle del concepto extranjero
             detalle_concepto_extranjero = DetalleConcepto(
                 concepto=concepto_principal.concepto,
                 tarifa_retencion=concepto_principal.tarifa_aplicada * 100,  # Convertir a porcentaje
                 base_gravable=valor_base,
-                valor_retencion=valor_retencion
+                valor_retencion=valor_retencion,
+                codigo_concepto=codigo_concepto_ext
             )
             
             # Generar resumen descriptivo
@@ -1352,16 +1426,51 @@ class LiquidadorRetencion:
         else:
             valor_base = concepto_principal.base_gravable
             logger.info(f"💰 Factura extranjera: Usando base específica del concepto (tarifa estándar): ${valor_base:,.2f}")
-        
-        tarifa_concepto = concepto_principal.tarifa_retencion  # Ya viene en decimal del prompt
+
+        # Obtener tarifa y código de concepto desde BD o diccionario legacy
+        tarifa_concepto = None
+        codigo_concepto_extranjero = None
+
+        # ESTRATEGIA 1: Si tiene concepto_index, consultar BD
+        if concepto_principal.concepto_index and self.db_manager and self.estructura_contable is not None:
+            resultado_bd = self.db_manager.obtener_concepto_por_index(
+                concepto_principal.concepto_index, self.estructura_contable
+            )
+            if resultado_bd['success']:
+                porcentaje_bd = resultado_bd['data']['porcentaje']
+                codigo_concepto_extranjero = resultado_bd['data'].get('codigo_concepto', None)
+                tarifa_concepto = porcentaje_bd / 100  # Convertir de 11 a 0.11
+                logger.info(f"Factura extranjera - Tarifa obtenida de BD: {porcentaje_bd}% = {tarifa_concepto}, codigo={codigo_concepto_extranjero}")
+
+        # ESTRATEGIA 2: Fallback a diccionario legacy
+        if tarifa_concepto is None:
+            if concepto_principal.concepto in conceptos_retefuente:
+                datos_concepto = conceptos_retefuente[concepto_principal.concepto]
+                tarifa_concepto = datos_concepto["tarifa_retencion"]
+                logger.info(f"Factura extranjera - Tarifa obtenida de diccionario legacy: {tarifa_concepto*100}%")
+            else:
+                logger.error(f"Factura extranjera - Concepto '{concepto_principal.concepto}' no encontrado en BD ni diccionario")
+                return ResultadoLiquidacion(
+                    valor_base_retencion=0,
+                    valor_retencion=0,
+                    conceptos_aplicados=[],
+                    resumen_conceptos=f"ERROR: Concepto '{concepto_principal.concepto}' no encontrado",
+                    aplica_retencion=False,
+                    observaciones=f"Concepto no encontrado en base de datos ni diccionario legacy",
+                    fecha_calculo=datetime.now().isoformat(),
+                    puede_liquidar=False,
+                    mensajes_error=[f"Concepto '{concepto_principal.concepto}' no encontrado"],
+                )
+
         valor_retencion = valor_base * tarifa_concepto
-        
+
         # 🆕 NUEVA ESTRUCTURA: Crear detalle del concepto extranjero (tarifa estándar)
         detalle_concepto_estandar = DetalleConcepto(
             concepto=concepto_principal.concepto,
             tarifa_retencion=tarifa_concepto,
             base_gravable=valor_base,
-            valor_retencion=valor_retencion
+            valor_retencion=valor_retencion,
+            codigo_concepto=codigo_concepto_extranjero
         )
         
         # Generar resumen descriptivo
@@ -1406,22 +1515,26 @@ class LiquidadorRetencion:
             logger.info(f"Iniciando liquidación segura de retefuente para NIT: {nit_administrativo}")
 
             # VERIFICAR ESTRUCTURA Y EXTRAER ANÁLISIS
+            es_facturacion_exterior = False  # Default
             if isinstance(analisis_retefuente, dict):
                 if "analisis" in analisis_retefuente:
-                    # Estructura: {"analisis": {...}, "timestamp": ..., etc}
+                    # Estructura: {"analisis": {...}, "timestamp": ..., "es_facturacion_exterior": ...}
                     datos_analisis = analisis_retefuente["analisis"]
-                    logger.info("Extrayendo análisis desde estructura JSON con clave 'analisis'")
+                    es_facturacion_exterior = analisis_retefuente.get("es_facturacion_exterior", False)
+                    logger.info(f"Extrayendo análisis desde estructura JSON con clave 'analisis', es_facturacion_exterior={es_facturacion_exterior}")
                 else:
-                    # Estructura directa: {"es_facturacion_exterior": ..., etc}
+                    # Estructura directa: {"conceptos_identificados": ..., etc}
                     datos_analisis = analisis_retefuente
-                    logger.info("Usando estructura directa de análisis")
+                    # En estructura directa, es_facturacion_exterior vendría en datos_analisis si existiera
+                    es_facturacion_exterior = datos_analisis.get("es_facturacion_exterior", False)
+                    logger.info(f"Usando estructura directa de análisis, es_facturacion_exterior={es_facturacion_exterior}")
             else:
                 # Ya es un objeto, usar directamente
                 datos_analisis = analisis_retefuente
                 logger.info("Usando objeto AnalisisFactura directamente")
 
-            # VERIFICAR CAMPOS REQUERIDOS
-            campos_requeridos = ["es_facturacion_exterior", "conceptos_identificados", "naturaleza_tercero"]
+            # VERIFICAR CAMPOS REQUERIDOS (ya no incluye es_facturacion_exterior)
+            campos_requeridos = ["conceptos_identificados", "naturaleza_tercero"]
             campos_faltantes = []
 
             for campo in campos_requeridos:
@@ -1441,7 +1554,8 @@ class LiquidadorRetencion:
                         "Error en estructura de datos del análisis",
                         f"Faltan campos: {', '.join(campos_faltantes)}",
                         "Revise el análisis de Gemini"
-                    ]
+                    ],
+                    "estado": "Preliquidacion sin finalizar"  # NUEVO: Error en estructura
                 }
 
             # CREAR OBJETO ANALYSISFACTURA MANUALMENTE
@@ -1459,11 +1573,11 @@ class LiquidadorRetencion:
                 if isinstance(concepto_data, dict):
                     concepto_obj = ConceptoIdentificado(
                         concepto=concepto_data.get("concepto", ""),
-                        tarifa_retencion=concepto_data.get("tarifa_retencion", 0.0),
-                        base_gravable=concepto_data.get("base_gravable", None)
+                        base_gravable=concepto_data.get("base_gravable", None),
+                        concepto_index=concepto_data.get("concepto_index", None)
                     )
                     conceptos.append(concepto_obj)
-                    logger.info(f"Concepto convertido: {concepto_obj.concepto} - {concepto_obj.tarifa_retencion}%")
+                    logger.info(f"Concepto convertido: {concepto_obj.concepto} (index: {concepto_obj.concepto_index})")
 
             # Convertir naturaleza del tercero
             naturaleza_data = datos_analisis.get("naturaleza_tercero", {})
@@ -1480,13 +1594,11 @@ class LiquidadorRetencion:
 
             # Crear objeto completo
             analisis_obj = AnalisisFactura(
-                aplica_retencion=datos_analisis.get("aplica_retencion", True),
                 conceptos_identificados=conceptos,
                 naturaleza_tercero=naturaleza_obj,
                 articulo_383=datos_analisis.get("articulo_383", None),
-                es_facturacion_exterior=datos_analisis.get("es_facturacion_exterior", False),
+                es_facturacion_exterior=es_facturacion_exterior,  # Usar valor extraído del nivel superior
                 valor_total=datos_analisis.get("valor_total", None),
-                iva=datos_analisis.get("iva", None),
                 observaciones=datos_analisis.get("observaciones", [])
             )
 
@@ -1506,6 +1618,7 @@ class LiquidadorRetencion:
                 # NUEVOS CAMPOS CON ESTRUCTURA MEJORADA:
                 "conceptos_aplicados": [concepto.dict() for concepto in resultado.conceptos_aplicados] if resultado.conceptos_aplicados else [],
                 "resumen_conceptos": resultado.resumen_conceptos,
+                "estado": resultado.estado,  # NUEVO: Incluir estado en respuesta
             }
 
             if resultado.puede_liquidar:
@@ -1522,7 +1635,8 @@ class LiquidadorRetencion:
                 "aplica": False,
                 "error": error_msg,
                 "valor_retencion": 0.0,
-                "observaciones": ["Error importando módulos de análisis", "Revise la configuración del sistema"]
+                "observaciones": ["Error importando módulos de análisis", "Revise la configuración del sistema"],
+                "estado": "Preliquidacion sin finalizar"  # NUEVO: Error de importación
             }
 
         except Exception as e:
@@ -1548,5 +1662,6 @@ class LiquidadorRetencion:
                     "Error en liquidación de retefuente",
                     "Revise estructura de datos",
                     f"Error técnico: {str(e)}"
-                ]
+                ],
+                "estado": "Preliquidacion sin finalizar"  # NUEVO: Error general
             }

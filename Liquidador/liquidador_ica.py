@@ -320,8 +320,11 @@ class LiquidadorICA:
                     f"- {len(response.data)} registros encontrados. Usando primer registro."
                 )
 
+                # Convertir tarifa manejando formato con coma decimal (5,0 -> 5.0)
+                tarifa_convertida = float(str(tarifa_primer_registro).replace(',', '.')) if tarifa_primer_registro is not None else 0.0
+
                 return {
-                    "tarifa": float(tarifa_primer_registro),
+                    "tarifa": tarifa_convertida,
                     "observacion": observacion
                 }
 
@@ -334,8 +337,11 @@ class LiquidadorICA:
                 f"(cod: {codigo_actividad}, ubic: {codigo_ubicacion})"
             )
 
+            # Convertir tarifa manejando formato con coma decimal (5,0 -> 5.0)
+            tarifa_convertida = float(str(tarifa).replace(',', '.')) if tarifa is not None else 0.0
+
             return {
-                "tarifa": float(tarifa),
+                "tarifa": tarifa_convertida,
                 "observacion": None
             }
 

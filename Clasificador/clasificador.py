@@ -55,8 +55,8 @@ from .prompt_clasificador import (
 
 class ConceptoIdentificado(BaseModel):
     concepto: str
-    tarifa_retencion: float
     base_gravable: Optional[float] = None
+    concepto_index: Optional[int] = None
 
 class NaturalezaTercero(BaseModel):
     es_persona_natural: Optional[bool] = None
@@ -133,9 +133,8 @@ class AnalisisFactura(BaseModel):
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
     articulo_383: Optional[InformacionArticulo383] = None  #  NUEVO CAMPO SINCRONIZADO
-    es_facturacion_exterior: bool
+    es_facturacion_exterior: bool = False  # Default False, se obtiene de clasificación inicial
     valor_total: Optional[float]
-    iva: Optional[float]
     observaciones: List[str]
 
 # ===============================
@@ -145,29 +144,35 @@ class AnalisisFactura(BaseModel):
 class ProcesadorGemini:
     """Maneja las llamadas a la API de Gemini para clasificación y análisis"""
     
-    def __init__(self):
-        """Inicializa el procesador con configuración de Gemini"""
+    def __init__(self, estructura_contable: int = None, db_manager = None):
+        """
+        Inicializa el procesador con configuración de Gemini
+
+        Args:
+            estructura_contable: Código de estructura contable para consultas de conceptos
+            db_manager: Instancia de DatabaseManager para consultas a BD
+        """
         # Cargar API key desde variables de entorno
         from dotenv import load_dotenv
         load_dotenv()
-        
+
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY no está configurada en el archivo .env")
-        
+
         # Configurar Gemini
         genai.configure(api_key=self.api_key)
-        
+
         # Configurar modelo con configuración estándar
         self.modelo = genai.GenerativeModel(
             'gemini-2.5-flash-preview-09-2025',
             generation_config=genai.types.GenerationConfig(
                 temperature=0.4,
                 max_output_tokens=65536,
-                candidate_count=1       
+                candidate_count=1
                 )
         )
-        
+
         # Configuración especial para consorcios (más tokens)
         self.modelo_consorcio = genai.GenerativeModel(
             'gemini-2.5-flash',
@@ -176,7 +181,11 @@ class ProcesadorGemini:
                 max_output_tokens=65536,  # 4x más tokens para consorcios grandescandidate_count=1
             )
         )
-        
+
+        # Nuevos parámetros para consultas BD
+        self.estructura_contable = estructura_contable
+        self.db_manager = db_manager
+
         logger.info("ProcesadorGemini inicializado correctamente")
 
         # v3.1.2: Procesador de consorcios removido - Nueva arquitectura SOLID con liquidador_consorcios.py
@@ -2092,7 +2101,8 @@ class ProcesadorGemini:
             conceptos_identificados=[
                 ConceptoIdentificado(
                     concepto="CONCEPTO_NO_IDENTIFICADO",
-                    tarifa_retencion=0.0
+                    base_gravable=None,
+                    concepto_index=None
                 )
             ],
             naturaleza_tercero=NaturalezaTercero(
@@ -2100,7 +2110,6 @@ class ProcesadorGemini:
             ),
             es_facturacion_exterior=False,
             valor_total=None,
-            iva=None,
             observaciones=[
                 "Error procesando con Gemini - No se pudo extraer información",
                 "Por favor revise manualmente los documentos",
@@ -2110,52 +2119,53 @@ class ProcesadorGemini:
     
     def _obtener_conceptos_retefuente(self) -> dict:
         """
-        Obtiene los conceptos de retefuente desde el config global.
-        
+        Obtiene los conceptos de retefuente desde la base de datos.
+
         Returns:
-            dict: Conceptos formateados para Gemini
+            dict: Conceptos formateados para Gemini con estructura {descripcion_concepto: index}
         """
         try:
-            # ✅ OPCIÓN A: Importar directamente CONCEPTOS_RETEFUENTE desde config.py
-            from config import CONCEPTOS_RETEFUENTE
-            
+            # Verificar que tenemos db_manager y estructura_contable
+            if not self.db_manager or self.estructura_contable is None:
+                logger.warning("db_manager o estructura_contable no configurados, usando fallback")
+                return self._conceptos_hardcodeados()
+
+            # Consultar BD para obtener conceptos
+            logger.info(f"Consultando conceptos desde BD para estructura_contable={self.estructura_contable}")
+            resultado = self.db_manager.obtener_conceptos_retefuente(self.estructura_contable)
+
+            if not resultado['success']:
+                logger.warning(f"No se encontraron conceptos en BD: {resultado['message']}")
+                return self._conceptos_hardcodeados()
+
+            # Formatear para Gemini: {descripcion_concepto: index}
             conceptos_dict = {}
-            for concepto, datos in CONCEPTOS_RETEFUENTE.items():
-                conceptos_dict[concepto] = {
-                    "base_minima_pesos": datos["base_pesos"],
-                    "tarifa_retencion_porcentaje": datos["tarifa_retencion"] * 100  # Convertir a porcentaje
-                }
-            
-            logger.info(f" CONCEPTOS_RETEFUENTE importados exitosamente desde confi.py: {len(conceptos_dict)} conceptos")
+            for concepto in resultado['data']:
+                descripcion = concepto['descripcion_concepto']
+                index = concepto['index']
+                conceptos_dict[descripcion] = index
+
+            logger.info(f"CONCEPTOS_RETEFUENTE obtenidos desde BD: {len(conceptos_dict)} conceptos")
             return conceptos_dict
-                
-        except ImportError as e:
-            logger.warning(f" No se pudo importar desde config.py: {e}")
-            # Fallback: usar conceptos hardcodeados
-            logger.warning(" Usando conceptos hardcodeados como fallback")
-            return self._conceptos_hardcodeados()
+
         except Exception as e:
-            logger.error(f"Error obteniendo conceptos: {e}")
+            logger.error(f"Error obteniendo conceptos desde BD: {e}")
             return self._conceptos_hardcodeados()
     
     def _conceptos_hardcodeados(self) -> dict:
         """
-        Conceptos de emergencia si no se puede acceder al config global.
-        
+        Conceptos de emergencia si no se puede acceder a la BD.
+
         Returns:
-            dict: Conceptos básicos hardcodeados
+            dict: Conceptos básicos hardcodeados con formato {descripcion: index}
         """
-        # Importar conceptos desde el archivo principal si es posible
-        # Por ahora, retornar diccionario básico
+        # Retornar diccionario básico con formato nuevo: descripcion -> index
         return {
-            "Servicios generales (declarantes)": {
-                "base_minima_pesos": 100000,
-                "tarifa_retencion_porcentaje": 4.0
-            },
-            "Honorarios y comisiones por servicios (declarantes)": {
-                "base_minima_pesos": 0,
-                "tarifa_retencion_porcentaje": 11.0
-            }
+            "Servicios generales (declarantes)": 1,
+            "Honorarios y comisiones por servicios (declarantes)": 2,
+            "Compras": 3,
+            "Arrendamiento de bienes inmuebles": 4,
+            "Arrendamiento de bienes muebles": 5
         }
     
     async def _guardar_respuesta(self, nombre_archivo: str, contenido: dict):

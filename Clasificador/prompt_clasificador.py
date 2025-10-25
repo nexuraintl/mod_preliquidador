@@ -203,6 +203,8 @@ FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO)
 • Las evidencias deben ser CITAS TEXTUALES copiadas del documento
 • Si no hay información clara, usa false o ( null para los items de analisis fuente ingreso)
 • Clasifica TODOS los documentos listados
+• Si hay solo UN DOCUMENTO con múltiples funciones → clasifícalo OBLIGATORIAMENTE como FACTURA
+
 """
 def _formatear_archivos_directos(nombres_archivos_directos: List[str]) -> str:
     """
@@ -372,18 +374,22 @@ Buscar TEXTUALMENTE en el RUT:
 ├─ Si encuentras texto "ES AUTORRETENEDOR" → es_autorretenedor: true
 └─ Si NO encuentras esa frase → es_autorretenedor: false
 
- PASO 3: IDENTIFICACIÓN DE CONCEPTOS 
+ PASO 3: IDENTIFICACIÓN DE CONCEPTOS
 
  REGLAS DE IDENTIFICACIÓN:
-1. Buscar PRIMERO en la factura principal
-2. Si la factura no tiene detalle, buscar en ANEXOS
-3. Comparar texto encontrado con nombres en CONCEPTOS VÁLIDOS
+1. Buscar SOLO en la FACTURA los conceptos EXACTOS facturados "concepto_facturado"
+2. IMPORTANTE: IDENTIFICA LA FACTURA BUSCANDO EXPLICITAMENTE EL DOCUMENTO QUE DIGA "FACTURA" O "FACTURA ELECTRÓNICA DE VENTA"
+3. RELACIONA los conceptos facturados encontrados con los nombres en CONCEPTOS VÁLIDOS
+4. IMPORTANTE: Solo puedes relacionar un concepto facturado con UN concepto del diccionario
+5. IMPORTANTE: El diccionario CONCEPTOS VÁLIDOS tiene formato {{descripcion: index}}
+
 
  MATCHING DE CONCEPTOS - ESTRICTO:
-├─ Si encuentras coincidencia EXACTA → usar ese concepto
-├─ Si encuentras coincidencia PARCIAL clara → usar el concepto más específico
-├─ Si NO hay coincidencia clara → "CONCEPTO_NO_IDENTIFICADO"
-└─ NUNCA inventes un concepto que no esté en la lista
+├─ Si encuentras coincidencia EXACTA → usar ese concepto + su index del diccionario
+├─ Si encuentras coincidencia PARCIAL clara → usar el concepto más específico + su index
+├─ Si NO hay coincidencia clara → "CONCEPTO_NO_IDENTIFICADO" con concepto_index: 0
+├─  NUNCA inventes un concepto que no esté en la lista
+└─ REVISA TODA LA LISTA DE CONCEPTOS VALIDOS ANTES DE ASIGNARLO
 
  EXTRACCIÓN DE VALORES:
 ├─ Usar SOLO valores numéricos presentes en documentos
@@ -405,15 +411,16 @@ Buscar TEXTUALMENTE en el RUT:
  NO calcules valores no mostrados
  NO deduzcas el régimen tributario por el tipo de empresa
  NO asumas que alguien es autorretenedor sin confirmación explícita
-
+ NO  extraigas conceptos facturados de documentos que NO sean la FACTURA
 ═══════════════════════════════════════════════════════════════════
  FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO):
 ═══════════════════════════════════════════════════════════════════
 {{
     "conceptos_identificados": [
         {{
-            "concepto": "Nombre exacto del diccionario o CONCEPTO_NO_IDENTIFICADO",
-            "tarifa_retencion": número o 0.0,
+            "concepto_facturado": "Nombre exacto del concepto facturado",
+            "concepto": "Nombre exacto relacionado del diccionario o CONCEPTO_NO_IDENTIFICADO",
+            "concepto_index": número del index del diccionario o 0,
             "base_gravable": número encontrado o 0.0
         }}
     ],
@@ -422,9 +429,7 @@ Buscar TEXTUALMENTE en el RUT:
         "regimen_tributario": "SIMPLE" | "ORDINARIO" | "ESPECIAL" | null,
         "es_autorretenedor": true | false
     }},
-    "es_facturacion_exterior": boolean,
     "valor_total": número encontrado o 0.0,
-    "iva": número encontrado o 0.0,
     "observaciones": ["Lista de observaciones relevantes"]
 }}
 
@@ -837,14 +842,15 @@ Verificar si aplica alguna condición de exclusión:
 
  PASO D: IDENTIFICAR CONCEPTOS (UNA VEZ, APLICA A TODOS)
 Los conceptos de retención son los MISMOS para todos los consorciados:
-├─ Identificar los servicios/bienes facturados y extraer el nombre exacto 
+├─ Identificar los servicios/bienes facturados y extraer el nombre exacto
 ├─ Buscar coincidencias en CONCEPTOS VÁLIDOS
+├─ IMPORTANTE: El diccionario CONCEPTOS VÁLIDOS tiene formato {{descripcion: index}}
 └─ Estos conceptos se aplican a TODOS por igual
 
  MATCHING DE CONCEPTOS - ESTRICTO:
-├─ Si encuentras coincidencia EXACTA → usar ese concepto
-├─ Si encuentras coincidencia PARCIAL clara → usar el concepto más específico
-├─ Si NO hay coincidencia clara → "CONCEPTO_NO_IDENTIFICADO"
+├─ Si encuentras coincidencia EXACTA → usar ese concepto + su index del diccionario
+├─ Si encuentras coincidencia PARCIAL clara → usar el concepto más específico + su index
+├─ Si NO hay coincidencia clara → "CONCEPTO_NO_IDENTIFICADO" con concepto_index: 0
 └─ NUNCA inventes un concepto que no esté en la lista
 
 
@@ -876,6 +882,7 @@ FORMATO SI ES CONSORCIO/UNIÓN TEMPORAL:
         {{
             "nombre_concepto": "Texto LITERAL del concepto extraido",
             "concepto": "Nombre MAPEADO del diccionario o CONCEPTO_NO_IDENTIFICADO",
+            "concepto_index": número del index del diccionario o 0,
             "tarifa_retencion": número o 0.0,
             "base_gravable": número extraido de la factura o 0.0
         }}

@@ -334,8 +334,13 @@ class LiquidadorSobretasaBomberil:
                 f"'{nombre_ubicacion}' (código: {codigo_ubicacion})"
             )
 
+            # Convertir tarifa manejando formato con coma decimal (0,5 -> 0.5)
+            tarifa_convertida = None
+            if tarifa is not None:
+                tarifa_convertida = float(str(tarifa).replace(',', '.'))
+
             return {
-                "tarifa": float(tarifa) if tarifa is not None else None,
+                "tarifa": tarifa_convertida,
                 "nombre_ubicacion": nombre_ubicacion,
                 "error": False,
                 "mensaje": "Tarifa obtenida exitosamente"

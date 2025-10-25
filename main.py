@@ -432,8 +432,8 @@ class DocumentoClasificado(BaseModel):
 
 class ConceptoIdentificado(BaseModel):
     concepto: str
-    tarifa_retencion: float
     base_gravable: Optional[float] = None
+    concepto_index: Optional[int] = None
 
 class NaturalezaTercero(BaseModel):
     es_persona_natural: Optional[bool] = None
@@ -517,13 +517,11 @@ class InformacionArticulo383(BaseModel):
     deducciones_identificadas: DeduccionesArticulo383 = DeduccionesArticulo383()
     
 class AnalisisFactura(BaseModel):
-    aplica_retencion: bool  #  CAMPO SINCRONIZADO AGREGADO
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
     articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
-    es_facturacion_exterior: bool
+    es_facturacion_exterior: bool = False  # Default False, se obtiene de clasificación inicial
     valor_total: Optional[float]
-    iva: Optional[float]
     observaciones: List[str]
 
 
@@ -569,6 +567,7 @@ async def procesar_facturas_integrado(
     codigo_del_negocio: int = Form(...),
     proveedor: str = Form(...),
     nit_proveedor: str = Form(...),
+    estructura_contable: int = Form(...),
     observaciones_tp: Optional[str] = Form(None),
     genera_presupuesto: Optional[str] = Form(None),
     rubro: Optional[str] = Form(None),
@@ -747,9 +746,9 @@ async def procesar_facturas_integrado(
         # =================================
         # PASO 3: CLASIFICACIÓN HÍBRIDA CON MULTIMODALIDAD
         # =================================
-        
+
         # Clasificar documentos usando enfoque híbrido multimodal
-        clasificador = ProcesadorGemini()
+        clasificador = ProcesadorGemini(estructura_contable=estructura_contable, db_manager=db_manager)
         logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
         logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
@@ -1011,7 +1010,7 @@ async def procesar_facturas_integrado(
             try:
                 if es_consorcio:
                     # Usar nuevo liquidador de consorcios con validaciones manuales
-                    liquidador_consorcio = LiquidadorConsorcios()
+                    liquidador_consorcio = LiquidadorConsorcios(estructura_contable=estructura_contable, db_manager=db_manager)
                     analisis_consorcio_gemini = resultados_analisis["retefuente"]  # Solo extracción de Gemini
 
                     # Liquidar con validaciones manuales de Python (con caché de archivos)
@@ -1033,6 +1032,7 @@ async def procesar_facturas_integrado(
                         "timestamp": datetime.now().isoformat(),
                         "tipo_analisis": "retefuente_paralelo",
                         "nit_administrativo": nit_administrativo,
+                        "es_facturacion_exterior": es_facturacion_extranjera,  # Pasar desde clasificación
                         "analisis": analisis_factura.dict() if hasattr(analisis_factura, 'dict') else analisis_factura
                     }
                     
@@ -1040,7 +1040,7 @@ async def procesar_facturas_integrado(
                     guardar_archivo_json(analisis_retefuente_data, "analisis_retefuente_paralelo")
 
                     # Liquidar con método seguro de la clase
-                    liquidador_retencion = LiquidadorRetencion()
+                    liquidador_retencion = LiquidadorRetencion(estructura_contable=estructura_contable, db_manager=db_manager)
                     resultado_retefuente_dict = liquidador_retencion.liquidar_retefuente_seguro(
                         analisis_retefuente_data, nit_administrativo
                     )
@@ -1065,8 +1065,9 @@ async def procesar_facturas_integrado(
                             'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
                             'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
                             'mensajes_error': resultado_retefuente_dict.get("observaciones", []),
-                            'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A")
-                      
+                            'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A"),
+                            'estado': resultado_retefuente_dict.get("estado", "Preliquidado")  # NUEVO
+
                         })()
                     else:
                         # Solo registrar como error si realmente hay un error técnico
@@ -1081,7 +1082,8 @@ async def procesar_facturas_integrado(
                             'valor_base_retencion': 0.0,
                             'fecha_calculo': datetime.now().isoformat(),
                             'mensajes_error': [error_msg],
-                            'resumen_conceptos': 'N/A'
+                            'resumen_conceptos': 'N/A',
+                            'estado': 'Preliquidacion sin finalizar'  # NUEVO: Error técnico
                         })()
                 
                 #  ESTRUCTURA FINAL CONSOLIDADA
@@ -1093,6 +1095,7 @@ async def procesar_facturas_integrado(
                     "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
                     "mensajes_error": resultado_retefuente_dict.get("observaciones", []),
                     "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
+                    "estado": resultado_retefuente_dict.get("estado", "Preliquidacion sin finalizar")  # NUEVO
                     }
                     logger.info(f" Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0.0):,.2f}")
 
