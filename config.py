@@ -1041,7 +1041,7 @@ def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
 
 # NITs de la fiduciaria que aplican IVA y ReteIVA
 NITS_IVA_RETEIVA = {
-    "8001781488": {
+    "800178148": {
         "nombre": "Fiduciaria Colombiana de Comercio Exterior S.A.",
         "aplica_iva": True,
         "aplica_reteiva": True
