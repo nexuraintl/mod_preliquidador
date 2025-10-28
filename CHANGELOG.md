@@ -1,5 +1,176 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.0.9 - Mejoras: Validaciones y Transparencia] - 2025-10-27
+
+### MEJORA: CAMPO CONCEPTO_FACTURADO EN RESPUESTA FINAL
+
+#### DESCRIPCIÓN
+Agregado campo `concepto_facturado` en la respuesta final de retención en la fuente normal para mayor transparencia y trazabilidad de los conceptos extraídos de los documentos.
+
+##### CAMBIOS EN MODELOS
+
+**Modelos actualizados** (`clasificador.py` y `liquidador.py`):
+```python
+class ConceptoIdentificado(BaseModel):
+    concepto: str
+    concepto_facturado: Optional[str] = None  # NUEVO
+    base_gravable: Optional[float] = None
+    concepto_index: Optional[int] = None
+
+class DetalleConcepto(BaseModel):
+    concepto: str
+    concepto_facturado: Optional[str] = None  # NUEVO
+    tarifa_retencion: float
+    base_gravable: float
+    valor_retencion: float
+    codigo_concepto: Optional[str] = None
+```
+
+##### RESPUESTA JSON MEJORADA
+```json
+{
+  "conceptos_aplicados": [
+    {
+      "concepto": "Servicios generales (declarantes)",
+      "concepto_facturado": "SERVICIOS DE ASEO Y LIMPIEZA",
+      "tarifa_retencion": 4.0,
+      "base_gravable": 1000000,
+      "valor_retencion": 40000,
+      "codigo_concepto": "1234"
+    }
+  ]
+}
+```
+
+##### VENTAJAS
+- **Transparencia**: Muestra el concepto literal extraído de la factura
+- **Trazabilidad**: Facilita auditoría y verificación
+- **Debugging**: Permite identificar errores de clasificación
+
+---
+
+### MEJORA: VALIDACIÓN OBLIGATORIA DE CONCEPTOS FACTURADOS
+
+#### DESCRIPCIÓN
+Nueva validación ESTRICTA que verifica que todos los conceptos tengan `concepto_facturado` válido antes de proceder con la liquidación.
+
+##### NUEVA VALIDACIÓN 1 EN `liquidador.py`
+
+**Reemplaza validación anterior de facturación exterior**:
+```python
+# VALIDACIÓN 1: Conceptos facturados en documentos
+conceptos_sin_facturar = [
+    c for c in analisis.conceptos_identificados
+    if not c.concepto_facturado or c.concepto_facturado.strip() == ""
+]
+
+if conceptos_sin_facturar:
+    mensajes_error.append("No se identificaron conceptos facturados en los documentos")
+    mensajes_error.append(f"Se encontraron {len(conceptos_sin_facturar)} concepto(s) sin concepto facturado")
+    logger.error(f"Conceptos sin concepto_facturado: {len(conceptos_sin_facturar)}")
+    return self._crear_resultado_no_liquidable(
+        mensajes_error,
+        estado="Preliquidacion sin finalizar"
+    )
+```
+
+##### COMPORTAMIENTO
+- **Validación estricta**: Si ALGÚN concepto tiene `concepto_facturado` vacío, detiene TODA la liquidación
+- **Estado**: "Preliquidacion sin finalizar"
+- **Mensaje claro**: Informa cuántos conceptos no tienen concepto_facturado
+
+##### VENTAJAS
+- **Calidad de datos**: Garantiza información completa antes de liquidar
+- **Prevención de errores**: Evita liquidaciones con datos incompletos
+- **Feedback claro**: Mensaje específico sobre el problema
+
+---
+
+### MEJORA: SIMPLIFICACIÓN DE FLUJO DE CONSORCIOS
+
+#### DESCRIPCIÓN
+Eliminado flujo de consorcios extranjeros que no existe en el análisis. Los consorcios ahora SIEMPRE usan el prompt nacional.
+
+##### CAMBIOS EN `clasificador.py` (líneas 1082-1094)
+
+**ANTES** (lógica compleja con validación extranjera):
+```python
+if es_facturacion_extranjera:
+    # Usar PROMPT_ANALISIS_CONSORCIO_EXTRANJERO
+    logger.info("Usando prompt especializado para consorcio extranjero")
+    conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
+    # ... 10+ líneas más
+else:
+    # Usar PROMPT_ANALISIS_CONSORCIO (nacional)
+    logger.info("Usando prompt para consorcio nacional")
+    # ... código nacional
+```
+
+**AHORA** (lógica simplificada):
+```python
+# Flujo único para consorcios (siempre nacional)
+logger.info("Usando prompt para consorcio nacional")
+conceptos_dict = self._obtener_conceptos_retefuente()
+
+prompt = PROMPT_ANALISIS_CONSORCIO(
+    factura_texto, rut_texto, anexos_texto,
+    cotizaciones_texto, anexo_contrato, conceptos_dict,
+    nombres_archivos_directos=nombres_archivos_directos,
+    proveedor=proveedor
+)
+```
+
+##### VENTAJAS
+- **Simplicidad**: Eliminada validación innecesaria
+- **Mantenibilidad**: Código más fácil de mantener
+- **Consistencia**: Todos los consorcios se procesan igual
+- **Menos código**: ~15 líneas eliminadas
+
+---
+
+### LIMPIEZA: CAMPOS RESIDUALES ARTÍCULO 383 EN CONSORCIOS
+
+#### DESCRIPCIÓN
+Eliminados campos residuales del Artículo 383 en `liquidador_consorcios.py` que ya no se utilizan.
+
+##### CAMPOS ELIMINADOS
+
+**En `ConsorciadoLiquidado` dataclass** (líneas 64-66):
+```python
+# ELIMINADO:
+# metodo_calculo: Optional[str] = None
+# observaciones_art383: Optional[List[str]] = None
+```
+
+**En `convertir_resultado_a_dict` función** (líneas 890-895):
+```python
+# ELIMINADO:
+# if hasattr(consorciado, 'metodo_calculo') and consorciado.metodo_calculo:
+#     consorciado_dict["metodo_calculo"] = consorciado.metodo_calculo
+#
+# if hasattr(consorciado, 'observaciones_art383') and consorciado.observaciones_art383:
+#     consorciado_dict["observaciones_art383"] = consorciado.observaciones_art383
+```
+
+##### VENTAJAS
+- **Código limpio**: Sin referencias residuales
+- **Mantenibilidad**: Más fácil entender el código
+- **Consistencia**: Refleja la eliminación del Art 383 para consorcios
+
+---
+
+### RESUMEN DE CAMBIOS v3.0.9
+
+| Archivo | Cambio | Impacto |
+|---------|--------|---------|
+| `clasificador.py` | Agregado `concepto_facturado` a modelo | ✅ Mayor transparencia |
+| `liquidador.py` | Agregado `concepto_facturado` a modelos y respuesta | ✅ Trazabilidad completa |
+| `liquidador.py` | Nueva VALIDACIÓN 1: concepto_facturado vacío | ✅ Calidad de datos |
+| `clasificador.py` | Simplificado flujo de consorcios | ✅ Menos complejidad |
+| `liquidador_consorcios.py` | Eliminados campos Art 383 | ✅ Código más limpio |
+
+---
+
 ## [3.0.8 - Mejora: Cache de Archivos en Timbre] - 2025-10-18
 
 ### MEJORA: SOPORTE PARA CACHE DE ARCHIVOS EN PROCESAMIENTO PARALELO

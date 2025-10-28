@@ -1045,57 +1045,54 @@ async def procesar_facturas_integrado(
                         analisis_retefuente_data, nit_administrativo
                     )
                     
-                    #  FIX: Manejar casos válidos sin retención correctamente
-                    if resultado_retefuente_dict.get("calculo_exitoso", False) or not resultado_retefuente_dict.get("error"):
-                        # Caso exitoso O caso válido sin retención
-                       
-                        valor_retencion = resultado_retefuente_dict.get('valor_retencion', 0.0)
-                        
+                    # Verificar solo si hay error técnico (excepción de liquidador)
+                    if "error" in resultado_retefuente_dict:
+                        # Error técnico - excepción durante liquidación
+                        error_msg = resultado_retefuente_dict.get('error')
+                        logger.error(f"Error técnico en liquidación: {error_msg}")
 
-                        if valor_retencion > 0:
-                            logger.info(f" Retefuente paralela liquidada: ${valor_retencion:,.2f}")
-                        else:
-                            logger.info(f"Retefuente procesada (no aplica retención)")
-                        
-                        # Crear objeto mock que simula ResultadoLiquidacion
                         resultado_retefuente = type('ResultadoLiquidacion', (object,), {
-                            'puede_liquidar': resultado_retefuente_dict.get("aplica", False),
+                            'aplica': False,
+                            'valor_retencion': 0.0,
+                            'valor_factura_sin_iva': 0.0,
+                            'conceptos_aplicados': [],
+                            'valor_base_retencion': 0.0,
+                            'fecha_calculo': datetime.now().isoformat(),
+                            'mensajes_error': [error_msg],
+                            'resumen_conceptos': 'Error técnico',
+                            'estado': 'Preliquidacion sin finalizar'
+                        })()
+                    else:
+                        # Caso normal - confiar en liquidador.py
+                        resultado_retefuente = type('ResultadoLiquidacion', (object,), {
+                            'aplica': resultado_retefuente_dict.get("aplica", False),
                             'valor_retencion': resultado_retefuente_dict.get('valor_retencion', 0.0),
+                            'valor_factura_sin_iva': resultado_retefuente_dict.get('valor_factura_sin_iva', 0.0),
                             'conceptos_aplicados': resultado_retefuente_dict.get("conceptos_aplicados", []),
                             'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
                             'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
                             'mensajes_error': resultado_retefuente_dict.get("observaciones", []),
                             'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A"),
-                            'estado': resultado_retefuente_dict.get("estado", "Preliquidado")  # NUEVO
+                            'estado': resultado_retefuente_dict.get("estado", "Preliquidado")
+                        })()
 
-                        })()
-                    else:
-                        # Solo registrar como error si realmente hay un error técnico
-                        error_msg = resultado_retefuente_dict.get('error', 'Error técnico en liquidación')
-                        logger.error(f" Error técnico en liquidación paralela: {error_msg}")
-                        
-                        # Crear objeto con valores por defecto para errores técnicos
-                        resultado_retefuente = type('ResultadoLiquidacion', (object,), {
-                            'puede_liquidar': False,
-                            'valor_retencion': 0.0,
-                            'conceptos_aplicados': ["Error técnico en liquidación"],
-                            'valor_base_retencion': 0.0,
-                            'fecha_calculo': datetime.now().isoformat(),
-                            'mensajes_error': [error_msg],
-                            'resumen_conceptos': 'N/A',
-                            'estado': 'Preliquidacion sin finalizar'  # NUEVO: Error técnico
-                        })()
+                        # Log apropiado según resultado
+                        if resultado_retefuente.valor_retencion > 0:
+                            logger.info(f"Retefuente liquidada: ${resultado_retefuente.valor_retencion:,.2f}")
+                        else:
+                            logger.info(f"Retefuente procesada - Estado: {resultado_retefuente.estado}")
                 
                 #  ESTRUCTURA FINAL CONSOLIDADA
                 if hasattr(resultado_retefuente, 'valor_retencion'):
                     
                     resultado_final["impuestos"]["retefuente"] = {
                     "aplica": resultado_retefuente_dict.get("aplica", False),
+                    "estado": resultado_retefuente_dict.get("estado", "Preliquidacion sin finalizar"), 
+                    "valor_factura_sin_iva": resultado_retefuente_dict.get("valor_factura_sin_iva", 0.0),
                     "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
                     "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
-                    "mensajes_error": resultado_retefuente_dict.get("observaciones", []),
                     "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
-                    "estado": resultado_retefuente_dict.get("estado", "Preliquidacion sin finalizar")  # NUEVO
+                    "observaciones": resultado_retefuente_dict.get("observaciones", []),
                     }
                     logger.info(f" Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0.0):,.2f}")
 

@@ -1,6 +1,6 @@
-# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v3.0.0
+# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v3.0.9
 
-> 🏗️ **NUEVA ARQUITECTURA SOLID v3.0.0**: Sistema rediseñado siguiendo principios SOLID obligatorios
+> 🏗️ **ARQUITECTURA SOLID v3.0.9**: Sistema con principios SOLID + Validaciones Mejoradas
 
 > **Sistema automatizado de liquidación tributaria con Inteligencia Artificial y Arquitectura Profesional**  
 > API REST con diseño SOLID para procesar facturas y calcular múltiples impuestos colombianos usando Google Gemini AI
@@ -115,6 +115,53 @@ if self.config.aplica_rete_ica(nit):
 - **📈 Escalabilidad**: Preparado para crecimiento exponencial
 - **👥 Legibilidad**: Código más claro y comprensible para desarrolladores
 - **🔄 Reutilización**: Componentes reutilizables en diferentes contextos
+
+---
+
+### 🆕 **VERSIÓN v3.0.9 (2025-10-27) - Validaciones y Transparencia**
+
+**📊 NUEVO CAMPO: CONCEPTO_FACTURADO EN RESPUESTA FINAL**
+- ✅ **Mayor transparencia**: Ahora se incluye el concepto literal extraído de la factura
+- ✅ **Trazabilidad completa**: Facilita auditoría y verificación de clasificación
+- ✅ **Debugging mejorado**: Identifica rápidamente errores de clasificación
+- 📝 **Ejemplo de respuesta**:
+  ```json
+  {
+    "conceptos_aplicados": [
+      {
+        "concepto": "Servicios generales (declarantes)",
+        "concepto_facturado": "SERVICIOS DE ASEO Y LIMPIEZA",
+        "tarifa_retencion": 4.0,
+        "base_gravable": 1000000,
+        "valor_retencion": 40000
+      }
+    ]
+  }
+  ```
+
+**🔒 NUEVA VALIDACIÓN: CONCEPTOS FACTURADOS OBLIGATORIOS**
+- ✅ **Validación estricta**: Verifica que todos los conceptos tengan `concepto_facturado` válido
+- ✅ **Calidad garantizada**: Detiene liquidación si falta información
+- ✅ **Feedback claro**: Mensaje específico sobre conceptos sin identificar
+- ⚠️ **Comportamiento**: Si ALGÚN concepto tiene `concepto_facturado` vacío, se detiene la liquidación
+- 📋 **Estado**: "Preliquidacion sin finalizar"
+
+**🧹 SIMPLIFICACIÓN: FLUJO DE CONSORCIOS UNIFICADO**
+- ✅ **Eliminado**: Flujo de consorcios extranjeros (no existe en análisis)
+- ✅ **Unificado**: Todos los consorcios usan prompt nacional
+- ✅ **Más simple**: ~15 líneas de código eliminadas
+- ✅ **Más mantenible**: Código más claro y fácil de entender
+
+**🧼 LIMPIEZA: CAMPOS RESIDUALES ELIMINADOS**
+- ✅ **Removido**: Campos del Artículo 383 en `liquidador_consorcios.py`
+- ✅ **Código limpio**: Sin referencias residuales no utilizadas
+- ✅ **Consistencia**: Refleja arquitectura actual del sistema
+
+**📈 IMPACTO GENERAL**
+- 🎯 **Mayor confiabilidad**: Validaciones más estrictas
+- 🔍 **Mayor visibilidad**: Trazabilidad completa de conceptos
+- 🚀 **Mejor mantenibilidad**: Código más limpio y simple
+- ✅ **Sin breaking changes**: Compatibilidad total con versiones anteriores
 
 ---
 

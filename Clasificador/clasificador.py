@@ -37,13 +37,14 @@ logger = logging.getLogger(__name__)
 
 # Importar prompts
 from .prompt_clasificador import (
-    PROMPT_CLASIFICACION, 
-    PROMPT_ANALISIS_FACTURA, 
+    PROMPT_CLASIFICACION,
+    PROMPT_ANALISIS_FACTURA,
     PROMPT_ANALISIS_CONSORCIO,
+    PROMPT_EXTRACCION_CONSORCIO,  # NUEVO: Primera llamada extraccion
+    PROMPT_MATCHING_CONCEPTOS,    # NUEVO: Segunda llamada matching
     PROMPT_ANALISIS_FACTURA_EXTRANJERA,
-    PROMPT_ANALISIS_CONSORCIO_EXTRANJERO,
-    PROMPT_ANALISIS_IVA,  # ✅ NUEVO PROMPT IVA
-    PROMPT_ANALISIS_ESTAMPILLAS_GENERALES  # 🆕 NUEVO PROMPT ESTAMPILLAS GENERALES
+    PROMPT_ANALISIS_IVA,  #  NUEVO PROMPT IVA
+    PROMPT_ANALISIS_ESTAMPILLAS_GENERALES  # NUEVO PROMPT ESTAMPILLAS GENERALES
 )
 
 # v3.1.2: Procesador de consorcios removido - Se usa liquidador_consorcios.py directamente
@@ -55,6 +56,7 @@ from .prompt_clasificador import (
 
 class ConceptoIdentificado(BaseModel):
     concepto: str
+    concepto_facturado: Optional[str] = None
     base_gravable: Optional[float] = None
     concepto_index: Optional[int] = None
 
@@ -1079,71 +1081,151 @@ class ProcesadorGemini:
                 nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
                 
         try:
-            if es_facturacion_extranjera:
-                # NUEVA FUNCIONALIDAD: Usar prompts especializados para consorcios extranjeros
-                logger.info("Usando prompt especializado para consorcio extranjero")
-                conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
-                paises_convenio = self._obtener_paises_convenio()
-                preguntas_fuente = self._obtener_preguntas_fuente_nacional()
+            # NUEVO FLUJO v3.0.10: Dos llamadas separadas para mayor precision
+            logger.info("=== INICIANDO ANALISIS DE CONSORCIO CON DOS LLAMADAS ===")
 
-                prompt = PROMPT_ANALISIS_CONSORCIO_EXTRANJERO(
-                    factura_texto, rut_texto, anexos_texto,
-                    cotizaciones_texto, anexo_contrato,
-                    conceptos_extranjeros_dict, paises_convenio, preguntas_fuente,
-                    nombres_archivos_directos=nombres_archivos_directos,
-                    proveedor=proveedor  #  v3.0: Nombre del consorcio
-                )
-            else:
-                # Flujo original para consorcios nacionales
-                logger.info("Usando prompt para consorcio nacional")
-                conceptos_dict = self._obtener_conceptos_retefuente()
+            # ==========================================
+            # LLAMADA 1: EXTRACCION DE DATOS CRUDOS
+            # ==========================================
+            logger.info("LLAMADA 1: Extrayendo datos crudos del consorcio...")
 
-                prompt = PROMPT_ANALISIS_CONSORCIO(
-                    factura_texto, rut_texto, anexos_texto,
-                    cotizaciones_texto, anexo_contrato, conceptos_dict,
-                    nombres_archivos_directos=nombres_archivos_directos,
-                    proveedor=proveedor  #  v3.0: Nombre del consorcio
-                )
-            
-            # Llamar a Gemini con modelo especial para consorcios
-            respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos=archivos_directos)
-            logger.info(f"Respuesta análisis consorcio: {respuesta}...")
+            prompt_extraccion = PROMPT_EXTRACCION_CONSORCIO(
+                factura_texto, rut_texto, anexos_texto,
+                cotizaciones_texto, anexo_contrato,
+                nombres_archivos_directos=nombres_archivos_directos,
+                proveedor=proveedor
+            )
 
+            respuesta_extraccion = await self._llamar_gemini_hibrido_factura(
+                prompt_extraccion,
+                archivos_directos=archivos_directos
+            )
+            logger.info(f"Respuesta extraccion recibida (primeros 200 chars): {respuesta_extraccion[:200]}...")
 
-            # Limpiar respuesta
-            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
+            # Limpiar y parsear respuesta de extraccion
+            respuesta_extraccion_limpia = self._limpiar_respuesta_json(respuesta_extraccion)
 
-            # Parsear JSON con auto-reparación
             try:
-                resultado = json.loads(respuesta_limpia)
+                datos_extraidos = json.loads(respuesta_extraccion_limpia)
             except json.JSONDecodeError as first_error:
-                logger.warning(f"JSON malformado detectado, intentando reparar: {first_error}")
-                # Intentar reparar JSON automáticamente
-                respuesta_reparada = self._reparar_json_malformado(respuesta_limpia)
-                resultado = json.loads(respuesta_reparada)
-            
-            # Guardar respuesta de análisis en Results
+                logger.warning(f"JSON de extraccion malformado, intentando reparar: {first_error}")
+                respuesta_reparada = self._reparar_json_malformado(respuesta_extraccion_limpia)
+                datos_extraidos = json.loads(respuesta_reparada)
+
+            # Guardar resultado de extraccion
+
+            logger.info(f"Extraccion exitosa: {len(datos_extraidos.get('consorciados', []))} consorciados identificados")
+            logger.info(f"Conceptos literales extraidos: {len(datos_extraidos.get('conceptos_literales', []))}")
+
+            # ==========================================
+            # LLAMADA 2: MATCHING DE CONCEPTOS
+            # ==========================================
+            conceptos_literales = datos_extraidos.get("conceptos_literales", [])
+
+            if not conceptos_literales:
+                logger.warning("No se extrajeron conceptos literales, usando concepto no identificado")
+                conceptos_mapeados = {
+                    "conceptos_mapeados": [{
+                        "nombre_concepto": "CONCEPTO_NO_IDENTIFICADO",
+                        "concepto": "CONCEPTO_NO_IDENTIFICADO",
+                        "concepto_index": 0,
+                        "justificacion": "No se identificaron conceptos en la primera llamada"
+                    }]
+                }
+            else:
+                logger.info("LLAMADA 2: Haciendo matching de conceptos con base de datos...")
+
+                conceptos_dict = self._obtener_conceptos_retefuente()
+                prompt_matching = PROMPT_MATCHING_CONCEPTOS(conceptos_literales, conceptos_dict)
+
+                respuesta_matching = await self._llamar_gemini(
+                    prompt_matching,
+                    usar_modelo_consorcio=False  # Matching es mas simple, no necesita modelo grande
+                )
+                logger.info(f"Respuesta matching recibida (primeros 200 chars): {respuesta_matching[:200]}...")
+
+                # Limpiar y parsear respuesta de matching
+                respuesta_matching_limpia = self._limpiar_respuesta_json(respuesta_matching)
+
+                try:
+                    conceptos_mapeados = json.loads(respuesta_matching_limpia)
+                except json.JSONDecodeError as matching_error:
+                    logger.warning(f"JSON de matching malformado, intentando reparar: {matching_error}")
+                    respuesta_reparada = self._reparar_json_malformado(respuesta_matching_limpia)
+                    conceptos_mapeados = json.loads(respuesta_reparada)
+
+                
+                logger.info(f"Matching exitoso: {len(conceptos_mapeados.get('conceptos_mapeados', []))} conceptos mapeados")
+
+            # ==========================================
+            # MERGE: COMBINAR RESULTADOS
+            # ==========================================
+            logger.info("MERGE: Combinando resultados de ambas llamadas...")
+
+            # Crear estructura final compatible con el formato actual
+            conceptos_identificados = []
+            conceptos_mapeados_list = conceptos_mapeados.get("conceptos_mapeados", [])
+
+            for concepto_mapeado in conceptos_mapeados_list:
+                # Buscar base_gravable del concepto literal correspondiente
+                nombre_concepto = concepto_mapeado.get("nombre_concepto", "")
+                base_gravable = 0.0
+
+                for concepto_literal in conceptos_literales:
+                    if concepto_literal.get("nombre_concepto") == nombre_concepto:
+                        base_gravable = concepto_literal.get("base_gravable", 0.0)
+                        break
+
+                # Construir objeto en formato esperado
+                # NOTA: tarifa_retencion NO se incluye aqui porque se obtiene de la BD
+                # usando concepto_index en liquidador_consorcios.py
+                concepto_identificado = {
+                    "nombre_concepto": nombre_concepto,
+                    "concepto": concepto_mapeado.get("concepto", "CONCEPTO_NO_IDENTIFICADO"),
+                    "concepto_index": concepto_mapeado.get("concepto_index", 0),
+                    "base_gravable": base_gravable
+                }
+                conceptos_identificados.append(concepto_identificado)
+
+            # Construir resultado final con misma estructura que antes
+            resultado = {
+                "es_consorcio": datos_extraidos.get("es_consorcio", True),
+                "nombre_consorcio": datos_extraidos.get("nombre_consorcio", ""),
+                "conceptos_identificados": conceptos_identificados,
+                "consorciados": datos_extraidos.get("consorciados", []),
+                "valor_total": datos_extraidos.get("valor_total", 0.0),
+                "observaciones": datos_extraidos.get("observaciones", [])
+            }
+
+            # Agregar observacion sobre el nuevo metodo
+            if "observaciones" not in resultado:
+                resultado["observaciones"] = []
+            resultado["observaciones"].append("Analisis realizado con metodo de dos llamadas (extraccion + matching)")
+
+            # Guardar resultado final consolidado
             await self._guardar_respuesta("analisis_consorcio.json", resultado)
-            
-            # NUEVO FLUJO v3.1.2: Solo extracción de datos por Gemini
-            # La validación y cálculo se realizará en liquidador_consorcios.py
 
             # Validar cantidad de consorciados
             if 'consorciados' in resultado and len(resultado['consorciados']) > 20:
                 logger.warning(f"Consorcio muy grande ({len(resultado['consorciados'])} consorciados), puede requerir procesamiento especial")
 
-            # Retornar resultado directo de Gemini para el nuevo liquidador
-            logger.info(f"Análisis de consorcio exitoso: {len(resultado.get('consorciados', []))} consorciados identificados")
-            logger.info("✅ Datos extraídos por Gemini - Validaciones y cálculos serán realizados por liquidador_consorcios.py")
+            # Log final
+            logger.info(f"=== ANALISIS COMPLETO ===")
+            logger.info(f"Consorciados identificados: {len(resultado.get('consorciados', []))}")
+            logger.info(f"Conceptos mapeados: {len(conceptos_identificados)}")
+            logger.info(f"Valor total: ${resultado.get('valor_total', 0):,.2f}")
+            logger.info("Datos extraidos por Gemini - Validaciones y calculos seran realizados por liquidador_consorcios.py")
 
             return resultado
             
         except json.JSONDecodeError as e:
-            logger.error(f"Error parseando JSON de consorcio: {e}")
-            logger.error(f"Respuesta problemática: {respuesta}")
+            logger.error(f"Error parseando JSON de consorcio (dos llamadas): {e}")
+            logger.error("JSON malformado en extraccion o matching")
             return self._consorcio_fallback()
         except Exception as e:
-            logger.error(f"Error en análisis de consorcio: {e}")
+            logger.error(f"Error en analisis de consorcio (dos llamadas): {e}")
+            import traceback
+            logger.error(f"Traceback completo: {traceback.format_exc()}")
             return self._consorcio_fallback(str(e))
 
     async def analizar_estampilla(self, documentos_clasificados: Dict[str, Dict], archivos_directos: List[str] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:

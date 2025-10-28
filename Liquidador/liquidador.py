@@ -10,7 +10,7 @@ Autor: Miguel Angel Jaramillo Durango
 
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel
 
 # Configuración de logging
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class ConceptoIdentificado(BaseModel):
     concepto: str
+    concepto_facturado: Optional[str] = None
     base_gravable: Optional[float] = None
     concepto_index: Optional[int] = None
 
@@ -29,6 +30,7 @@ class ConceptoIdentificado(BaseModel):
 class DetalleConcepto(BaseModel):
     """Detalle individual de cada concepto liquidado"""
     concepto: str
+    concepto_facturado: Optional[str] = None
     tarifa_retencion: float
     base_gravable: float
     valor_retencion: float
@@ -116,6 +118,7 @@ class AnalisisFactura(BaseModel):
 class ResultadoLiquidacion(BaseModel):
     valor_base_retencion: float
     valor_retencion: float
+    valor_factura_sin_iva: float  # NUEVO: Valor total de la factura sin IVA (de Gemini)
     conceptos_aplicados: List[DetalleConcepto]  #  NUEVO: Detalles por concepto
     resumen_conceptos: str  #  NUEVO: Resumen descriptivo - Puede que no sea necesario
     fecha_calculo: str
@@ -162,18 +165,30 @@ class LiquidadorRetencion:
         
         mensajes_error = []
         puede_liquidar = True
-        
-        # VALIDACIÓN 1: Facturación exterior - Usar función especializada
-        if analisis.es_facturacion_exterior:
-            logger.info("Facturación exterior detectada - Redirigiendo a función especializada")
-            return self.liquidar_factura_extranjera(analisis)
-        
+
+        # VALIDACIÓN 1: Conceptos facturados en documentos
+        conceptos_sin_facturar = [
+            c for c in analisis.conceptos_identificados
+            if not c.concepto_facturado or c.concepto_facturado.strip() == ""
+        ]
+
+        if conceptos_sin_facturar:
+            mensajes_error.append("No se identificaron conceptos facturados en los documentos")
+            mensajes_error.append(f"Se encontraron {len(conceptos_sin_facturar)} concepto(s) sin concepto facturado")
+            logger.error(f"Conceptos sin concepto_facturado: {len(conceptos_sin_facturar)}")
+            return self._crear_resultado_no_liquidable(
+                mensajes_error,
+                estado="Preliquidacion sin finalizar",
+                valor_factura_sin_iva=analisis.valor_total or 0
+            )
+
         # VALIDACIÓN 2: Naturaleza del tercero
         resultado_validacion = self._validar_naturaleza_tercero(analisis.naturaleza_tercero)
         if not resultado_validacion["puede_continuar"]:
             return self._crear_resultado_no_liquidable(
                 resultado_validacion["mensajes"],
-                estado=resultado_validacion.get("estado", "Preliquidacion sin finalizar")  # NUEVO: Pasar estado
+                estado=resultado_validacion.get("estado", "Preliquidacion sin finalizar"),
+                valor_factura_sin_iva=analisis.valor_total or 0
             )
         
         # Agregar advertencias de naturaleza del tercero (si las hay)
@@ -204,7 +219,8 @@ class LiquidadorRetencion:
         if not puede_liquidar:
             return self._crear_resultado_no_liquidable(
                 mensajes_error,
-                estado="Preliquidacion sin finalizar"  # NUEVO: Conceptos no identificados
+                estado="Preliquidacion sin finalizar",
+                valor_factura_sin_iva=analisis.valor_total or 0
             )
         
         #  VALIDACIÓN SEPARADA: ARTÍCULO 383 PARA PERSONAS NATURALES
@@ -234,14 +250,43 @@ class LiquidadorRetencion:
         # Obtener conceptos de retefuente
         conceptos_retefuente = self._obtener_conceptos_retefuente()
         
-        valor_base_total = analisis.valor_total or 0
+        valor_base_total = analisis.valor_total or 0 # valor de la factura SIN IVA
         valor_retencion_total = 0
         conceptos_aplicados = []
         tarifas_aplicadas = []
         detalles_calculo = []
         
-        #  CORRECCIÓN CRÍTICA: Validar bases individuales por concepto
-        conceptos_con_bases = self._validar_bases_individuales_conceptos(conceptos_identificados, valor_base_total)
+        # CORRECCIÓN CRÍTICA: Validar bases individuales por concepto
+        conceptos_con_bases, conceptos_sin_base = self._validar_bases_individuales_conceptos(conceptos_identificados, valor_base_total)
+
+        # Validar si hay conceptos sin base gravable
+        if conceptos_sin_base:
+            mensajes_error.append("No se extrajo la base gravable de los siguientes conceptos:")
+            for concepto in conceptos_sin_base:
+                mensajes_error.append(f"  • {concepto}")
+            logger.error(f"Liquidación detenida: {len(conceptos_sin_base)} concepto(s) sin base gravable")
+            return self._crear_resultado_no_liquidable(
+                mensajes_error,
+                estado="Preliquidacion sin finalizar",
+                valor_factura_sin_iva=analisis.valor_total or 0
+            )
+
+        # VALIDACIÓN: Sumatoria de bases gravables debe coincidir con valor total
+        suma_bases_gravables = sum(c.base_gravable for c in conceptos_con_bases)
+        tolerancia = 1.0  # Tolerancia de $1 peso por redondeos
+
+        if abs(suma_bases_gravables - valor_base_total) > tolerancia:
+            diferencia = suma_bases_gravables - valor_base_total
+            mensajes_error.append("Error: La sumatoria de las bases gravables no coincide con el valor total de la factura")
+            mensajes_error.append(f"  • Suma de bases gravables: ${suma_bases_gravables:,.2f}")
+            mensajes_error.append(f"  • Valor total factura (sin IVA): ${valor_base_total:,.2f}")
+            mensajes_error.append(f"  • Diferencia: ${diferencia:,.2f}")
+            logger.error(f"Liquidación detenida: Suma bases (${suma_bases_gravables:,.2f}) != Valor total (${valor_base_total:,.2f})")
+            return self._crear_resultado_no_liquidable(
+                mensajes_error,
+                estado="Preliquidacion sin finalizar",
+                valor_factura_sin_iva=analisis.valor_total or 0
+            )
 
         for concepto_item in conceptos_con_bases:
             logger.info(f" Procesando concepto: {concepto_item.concepto} - Base: ${concepto_item.base_gravable:,.2f}")
@@ -270,7 +315,8 @@ class LiquidadorRetencion:
         if not puede_liquidar:
             return self._crear_resultado_no_liquidable(
                 mensajes_error,
-                estado="Preliquidacion sin finalizar"  # NUEVO: No se pudo calcular retención
+                estado="No aplica impuesto",
+                valor_factura_sin_iva=analisis.valor_total or 0
             )
         
         #  PREPARAR RESULTADO FINAL CON ESTRUCTURA MEJORADA
@@ -291,6 +337,7 @@ class LiquidadorRetencion:
                 # Crear objeto DetalleConcepto para nueva estructura
                 detalle_concepto = DetalleConcepto(
                     concepto=detalle['concepto'],
+                    concepto_facturado=detalle.get('concepto_facturado', None),
                     tarifa_retencion=detalle['tarifa'],
                     base_gravable=detalle['base_gravable'],
                     valor_retencion=detalle['valor_retencion'],
@@ -308,6 +355,7 @@ class LiquidadorRetencion:
         resultado = ResultadoLiquidacion(
             valor_base_retencion=valor_base_total,
             valor_retencion=valor_retencion_total,
+            valor_factura_sin_iva=analisis.valor_total or 0,  # NUEVO: Valor total de la factura
             conceptos_aplicados=detalles_conceptos,  #  NUEVO: Lista de conceptos individuales
             resumen_conceptos=resumen_descriptivo,   #  NUEVO: Resumen descriptivo
             fecha_calculo=datetime.now().isoformat(),
@@ -715,7 +763,7 @@ class LiquidadorRetencion:
                         deducciones_aplicables["intereses_vivienda"] = min(valor_mensual, limite_uvt)
                         logger.info(f" Intereses vivienda aplicados: ${deducciones_aplicables['intereses_vivienda']:,.2f}")
                     elif intereses_corrientes > 0.0 and not certificado_bancario:
-                        mensajes_error.append("⚠️ Intereses vivienda identificados pero falta certificado bancario")
+                        mensajes_error.append(" Intereses vivienda identificados pero falta certificado bancario")
                 
                 # VALIDACIÓN 6.2: Dependientes económicos
                 if hasattr(deducciones, 'dependientes_economicos'):
@@ -992,9 +1040,9 @@ class LiquidadorRetencion:
             mensajes_error.append(" Aplicando tarifas convencionales de retefuente")
             logger.info(f" Art. 383 no aplica: {', '.join(razones_no_aplica)}")
     
-    def _validar_bases_individuales_conceptos(self, conceptos_identificados: List[ConceptoIdentificado], valor_base_total: float) -> List[ConceptoIdentificado]:
+    def _validar_bases_individuales_conceptos(self, conceptos_identificados: List[ConceptoIdentificado], valor_base_total: float) -> Tuple[List[ConceptoIdentificado], List[str]]:
         """
-        SRP: SOLO valida que TODOS los conceptos tengan base gravable.
+        SRP: SOLO valida que conceptos tengan base gravable.
 
         La responsabilidad de obtener tarifa y base mínima está en _calcular_retencion_concepto.
 
@@ -1003,42 +1051,25 @@ class LiquidadorRetencion:
             valor_base_total: Valor total de la factura para validaciones
 
         Returns:
-            List[ConceptoIdentificado]: Conceptos validados con bases gravables
-
-        Raises:
-            ValueError: Si algún concepto no tiene base gravable definida
+            Tuple[List[ConceptoIdentificado], List[str]]:
+                - conceptos_validos: Conceptos con base gravable válida
+                - conceptos_sin_base: Nombres de conceptos sin base (para mensajes)
         """
 
-        #  VALIDACIÓN CRÍTICA: Todos los conceptos DEBEN tener base gravable
+        # VALIDACIÓN: Identificar conceptos con y sin base gravable
         conceptos_sin_base = []
         conceptos_validos = []
 
         for concepto in conceptos_identificados:
             if not concepto.base_gravable or concepto.base_gravable <= 0:
                 conceptos_sin_base.append(concepto.concepto)
-                logger.error(f" Concepto sin base gravable: {concepto.concepto}")
+                logger.error(f"Concepto sin base gravable: {concepto.concepto}")
             else:
                 conceptos_validos.append(concepto)
-                logger.info(f" Concepto válido: {concepto.concepto} = ${concepto.base_gravable:,.2f}")
+                logger.info(f"Concepto válido: {concepto.concepto} = ${concepto.base_gravable:,.2f}")
 
-        #  SI HAY CONCEPTOS SIN BASE ENTONCES PARAR LIQUIDACIÓN
-        if conceptos_sin_base:
-            error_msg = f""" ERROR EN ANÁLISIS DE CONCEPTOS 
-            Los siguientes conceptos no tienen base gravable definida:
-            {chr(10).join(f'• {concepto}' for concepto in conceptos_sin_base)}
-            ACCIÓN REQUERIDA:
-            - Revisar el análisis de la IA (Gemini)
-            - Verificar que el documento contenga valores específicos para cada concepto
-            - Mejorar la extracción de texto si es necesario
-
-            LIQUIDACIÓN DETENIDA - No se puede proceder sin bases gravables válidas
-            """
-            logger.error(error_msg)
-            raise ValueError(f"Conceptos sin base gravable: {', '.join(conceptos_sin_base)}")
-        
-
-        
-        return conceptos_validos
+        # Retornar ambas listas para que el llamador decida qué hacer
+        return conceptos_validos, conceptos_sin_base
     
     
     
@@ -1199,6 +1230,7 @@ class LiquidadorRetencion:
             "codigo_concepto": codigo_concepto,  # Código del concepto desde BD
             "detalle": {
                 "concepto": concepto_aplicado,
+                "concepto_facturado": concepto_item.concepto_facturado,
                 "base_gravable": base_concepto,
                 "tarifa": tarifa,
                 "valor_retencion": valor_retencion_concepto,
@@ -1268,13 +1300,14 @@ class LiquidadorRetencion:
             }
         }
     
-    def _crear_resultado_no_liquidable(self, mensajes_error: List[str], estado: str = None) -> ResultadoLiquidacion:
+    def _crear_resultado_no_liquidable(self, mensajes_error: List[str], estado: str = None, valor_factura_sin_iva: float = 0) -> ResultadoLiquidacion:
         """
         Crea un resultado cuando no se puede liquidar retención.
 
         Args:
             mensajes_error: Lista de mensajes explicando por qué no se puede liquidar
             estado: Estado específico a asignar (si no se proporciona, se determina automáticamente)
+            valor_factura_sin_iva: Valor total de la factura sin IVA (de Gemini)
 
         Returns:
             ResultadoLiquidacion: Resultado con valores en cero y explicación
@@ -1294,13 +1327,13 @@ class LiquidadorRetencion:
                 concepto_descriptivo = "No aplica - tercero es autorretenedor"
                 estado = "No aplica impuesto"
             elif "simple" in primer_mensaje:
-                concepto_descriptivo = "No aplica - régimen simple de tributación"
+                concepto_descriptivo = "No aplica - régimen simple de tributación y persona jurídica"
                 estado = "No aplica impuesto"
             elif "extranjera" in primer_mensaje or "exterior" in primer_mensaje:
                 concepto_descriptivo = "No aplica - facturación extranjera"
             elif "base" in primer_mensaje and "mínimo" in primer_mensaje:
                 concepto_descriptivo = "No aplica - base inferior al mínimo"
-                estado = "Preliquidacion sin finalizar"
+                estado = "No aplica impuesto"
             elif "concepto" in primer_mensaje and "identificado" in primer_mensaje:
                 concepto_descriptivo = "No aplica - conceptos no identificados"
                 estado = "Preliquidacion sin finalizar"
@@ -1312,6 +1345,7 @@ class LiquidadorRetencion:
         return ResultadoLiquidacion(
             valor_base_retencion=0,
             valor_retencion=0,
+            valor_factura_sin_iva=valor_factura_sin_iva,  # NUEVO: Valor total de la factura
             conceptos_aplicados=[],  # 🆕 NUEVO: Lista vacía para casos sin retención
             resumen_conceptos=concepto_descriptivo,  # 🆕 NUEVO: Descripción clara del motivo
             fecha_calculo=datetime.now().isoformat(),
@@ -1573,6 +1607,7 @@ class LiquidadorRetencion:
                 if isinstance(concepto_data, dict):
                     concepto_obj = ConceptoIdentificado(
                         concepto=concepto_data.get("concepto", ""),
+                        concepto_facturado=concepto_data.get("concepto_facturado", None),
                         base_gravable=concepto_data.get("base_gravable", None),
                         concepto_index=concepto_data.get("concepto_index", None)
                     )
@@ -1610,6 +1645,8 @@ class LiquidadorRetencion:
             # CONVERTIR RESULTADO CON NUEVA ESTRUCTURA
             resultado_dict = {
                 "aplica": resultado.puede_liquidar,
+                "estado": resultado.estado,
+                "valor_factura_sin_iva": resultado.valor_factura_sin_iva,
                 "valor_retencion": resultado.valor_retencion,
                 "base_gravable": resultado.valor_base_retencion,
                 "fecha_calculo": resultado.fecha_calculo,
@@ -1618,7 +1655,7 @@ class LiquidadorRetencion:
                 # NUEVOS CAMPOS CON ESTRUCTURA MEJORADA:
                 "conceptos_aplicados": [concepto.dict() for concepto in resultado.conceptos_aplicados] if resultado.conceptos_aplicados else [],
                 "resumen_conceptos": resultado.resumen_conceptos,
-                "estado": resultado.estado,  # NUEVO: Incluir estado en respuesta
+                  # NUEVO: Incluir estado en respuesta
             }
 
             if resultado.puede_liquidar:
