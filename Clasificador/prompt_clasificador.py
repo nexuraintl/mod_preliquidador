@@ -129,7 +129,21 @@ PASO 3: DETECCIÓN DE CONSORCIO
 Si no encuentras estas palabras EXACTAS → es_consorcio = false
 
 ═══════════════════════════════════════════════════════════════════════
-PASO 4: DETERMINACIÓN DE FUENTE DE INGRESO (NACIONAL vs EXTRANJERA)
+PASO 4: DETERMINACIÓN DE UBICACION DEL PROVEEDOR 
+═══════════════════════════════════════════════════════════════════════
+ 
+ Para determinar si el proveedor esta fuera de colombia, debes extraer la ubicacion del proveedor buscando TEXTUALMENTE en la FACTURA.
+    Buscar texto similar a Direccion, Ciudad, Pais, Domicilio, Sede Principal, Sucursal, Oficina, Establecimiento.
+    
+ "ubicacion_proveedor": "Texto exacto de la ubicación extraido de la factura" o ""
+ 
+ Si la ubicacion indica que el proveedor esta fuera de colombia, entonces:
+ "es_fuera_colombia": true
+Si la ubicacion indica que el proveedor esta en colombia, entonces:
+ "es_fuera_colombia": false
+
+═══════════════════════════════════════════════════════════════════════
+PASO 5: DETERMINACIÓN DE FUENTE DE INGRESO (NACIONAL vs EXTRANJERA)
 ═══════════════════════════════════════════════════════════════════════
 
  DOCUMENTOS A REVISAR: TODOS los documentos listados
@@ -186,6 +200,8 @@ FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO)
     "rut_identificado": true/false,
     "es_consorcio": true/false,
     "indicadores_consorcio": ["cita textual exacta del RUT o FACTURA"],
+    "ubicacion_proveedor": "Texto exacto de la ubicación extraido de la factura" o "",
+    "es_fuera_colombia": true/false,
     "analisis_fuente_ingreso": {{
         "servicio_uso_colombia": true/false/null,
         "evidencias_uso_encontradas": ["cita textual"],
@@ -195,7 +211,7 @@ FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO)
         "evidencias_asistencia_encontradas": ["cita textual"],
         "bien_ubicado_colombia": true/false/null,
         "evidencias_bien_encontradas": ["cita textual"]
-    }},
+    }}
 }}
 
  RECORDATORIOS FINALES:
@@ -1248,11 +1264,14 @@ EJEMPLO DE RESPUESTA:
 
 def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexos_texto: str,
                                        cotizaciones_texto: str, anexo_contrato: str,
-                                       conceptos_extranjeros_dict: dict, paises_convenio: list,
-                                       preguntas_fuente: list, nombres_archivos_directos: List[str] = None,
+                                       conceptos_extranjeros_simplificado: dict,
+                                       nombres_archivos_directos: List[str] = None,
                                        proveedor: str = None) -> str:
     """
-    Genera el prompt para analizar factura extranjera y determinar retenciones.
+    Genera prompt para análisis de factura extranjera - SOLO EXTRACCIÓN (sin cálculos).
+
+    RESPONSABILIDAD: Gemini solo identifica y mapea conceptos.
+    Los cálculos, validaciones y tarifas se manejan en Python (liquidador.py).
 
     Args:
         factura_texto: Texto extraído de la factura principal
@@ -1260,164 +1279,140 @@ def PROMPT_ANALISIS_FACTURA_EXTRANJERA(factura_texto: str, rut_texto: str, anexo
         anexos_texto: Texto de anexos adicionales
         cotizaciones_texto: Texto de cotizaciones
         anexo_contrato: Texto del anexo de concepto de contrato
-        conceptos_extranjeros_dict: Diccionario de conceptos extranjeros con tarifas
-        paises_convenio: Lista de países con convenio de doble tributación
-        preguntas_fuente: Lista de preguntas para determinar fuente nacional
+        conceptos_extranjeros_simplificado: Diccionario {index: nombre_concepto}
         nombres_archivos_directos: Lista de nombres de archivos directos
-        proveedor: Nombre del proveedor extranjero (v3.0)
+        proveedor: Nombre del proveedor extranjero
 
     Returns:
         str: Prompt formateado para enviar a Gemini
     """
 
-    # Contexto de proveedor para validación
+    # Contexto de proveedor
     contexto_proveedor = ""
     if proveedor:
         contexto_proveedor = f"""
 ═══════════════════════════════════════════════════════════════════
- INFORMACIÓN DEL PROVEEDOR EXTRANJERO (VALIDACIÓN OBLIGATORIA)
+INFORMACIÓN DEL PROVEEDOR ESPERADO
 ═══════════════════════════════════════════════════════════════════
 
-**PROVEEDOR ESPERADO:** {proveedor}
+**PROVEEDOR:** {proveedor}
 
- VALIDACIONES OBLIGATORIAS PARA PROVEEDOR EXTRANJERO:
-
-1. VALIDACIÓN DE IDENTIDAD:
-   - Verifica que el nombre del proveedor en FACTURA coincida con el esperado
-   - Si hay RUT extranjero disponible, verifica coherencia de datos
-   - Si hay discrepancias, repórtalas en "observaciones"
-
-2. VALIDACIÓN DE PAÍS DE ORIGEN:
-   - Verifica el país de domicilio del proveedor en la FACTURA
-   - Cruza con información del RUT si está disponible
-   - Confirma si el país tiene convenio de doble tributación
-
-3. VALIDACIÓN DE COHERENCIA:
-   - El proveedor esperado debe corresponder con los datos de FACTURA
-   - Verifica que todos los documentos se refieran al mismo tercero extranjero
-   - Reporta si hay inconsistencias en nombres, país o datos tributarios
-
-4. REPORTE DE INCONSISTENCIAS:
-   - Si nombre en FACTURA ≠ proveedor esperado → agregar a observaciones
-   - Si país en FACTURA ≠ país en RUT → agregar a observaciones
-   - Si faltan datos críticos del proveedor → agregar a observaciones
+VALIDACIONES:
+- Verifica coherencia entre nombre en FACTURA y proveedor esperado
+- Si hay discrepancias, repórtalas en "observaciones"
 
 """
 
     return f"""
-    Eres un experto contador colombiano especializado en retención en la fuente para PAGOS AL EXTERIOR.
+    Eres un experto contador colombiano especializado en EXTRACCIÓN DE DATOS para pagos al exterior.
 {contexto_proveedor}
-    
-    CONCEPTOS DE RETEFUENTE PARA PAGOS AL EXTERIOR (con tarifas normal y convenio):
-    {json.dumps(conceptos_extranjeros_dict, indent=2, ensure_ascii=False)}
-    
-    PAÍSES CON CONVENIO DE DOBLE TRIBUTACIÓN:
-    {json.dumps(paises_convenio, indent=2, ensure_ascii=False)}
-    
+
+    DICCIONARIO DE CONCEPTOS (index: nombre):
+    {json.dumps(conceptos_extranjeros_simplificado, indent=2, ensure_ascii=False)}
+
     DOCUMENTOS DISPONIBLES:
-    
+
     FACTURA (DOCUMENTO PRINCIPAL):
     {factura_texto}
-    
+
     RUT (si está disponible):
     {rut_texto if rut_texto else "NO DISPONIBLE"}
-    
-    ANEXOS (DETALLES ADICIONALES):
+
+    ANEXOS:
     {anexos_texto if anexos_texto else "NO DISPONIBLES"}
-    
-    COTIZACIONES (PROPUESTAS COMERCIALES):
+
+    COTIZACIONES:
     {cotizaciones_texto if cotizaciones_texto else "NO DISPONIBLES"}
-    
-    ANEXO CONCEPTO CONTRATO (OBJETO DEL CONTRATO):
+
+    ANEXO CONCEPTO CONTRATO:
     {anexo_contrato if anexo_contrato else "NO DISPONIBLES"}
-    
-    INSTRUCCIONES CRÍTICAS PARA FACTURACIÓN EXTRANJERA:
-    
-    1. **VALIDACIÓN DE FUENTE NACIONAL** (RESPONDE SÍ/NO A CADA PREGUNTA):
-    {chr(10).join([f'   - {pregunta}' for pregunta in preguntas_fuente])}
-    
-       **IMPORTANTE**: Si CUALQUIERA de estas respuestas es SÍ, se considera FUENTE NACIONAL
-       y debe aplicarse la tarifa correspondiente. Si TODAS son NO, es fuente extranjera.
-    
-    2. **IDENTIFICACIÓN DEL PAÍS DE ORIGEN**:
-       - Identifica el país donde está domiciliado el proveedor
-       - Verifica si está en la lista de países con convenio
-       - Incluye Comunidad Andina: Perú, Ecuador, Bolivia
-    
-    3. **IDENTIFICACIÓN DE CONCEPTOS**:
-       - Usa el NOMBRE EXACTO del concepto como aparece en el diccionario de conceptos extranjeros
-       - Si encuentras servicios específicos, mapea al concepto más cercano
-       - NO inventes o modifiques nombres de conceptos
-       - Si no encuentras coincidencia exacta: "CONCEPTO_NO_IDENTIFICADO"
-    
-    4. **APLICACIÓN DE TARIFAS**:
-       - Si el país TIENE convenio: usa "tarifa_convenio"
-       - Si el país NO TIENE convenio: usa "tarifa_normal"
-       - Las bases mínimas para conceptos extranjeros son 0 (sin base mínima)
-    
-    5. **VALORES MONETARIOS**:
-       - Extrae valores en la moneda original
-       - Si hay conversión a pesos, especifica la tasa de cambio
-       - Identifica si hay IVA aplicado
-    
-    EJEMPLOS DE ANÁLISIS:
-    
-    Ejemplo 1 - Fuente Nacional:
-    - Servicio: "Consultoría técnica para proyecto en Bogotá"
-    - Pregunta "uso en Colombia": SÍ → ES FUENTE NACIONAL
-    - Resultado: Aplicar retención según normativa colombiana
-    
-    Ejemplo 2 - Fuente Extranjera con Convenio:
-    - Servicio: "Licencia de software usado en España"
-    - Todas las preguntas: NO → ES FUENTE EXTRANJERA
-    - País: España (TIENE convenio)
-    - Resultado: Aplicar tarifa_convenio del concepto correspondiente
-    
-    Ejemplo 3 - Fuente Extranjera sin Convenio:
-    - Servicio: "Honorarios por servicios en Estados Unidos"
-    - Todas las preguntas: NO → ES FUENTE EXTRANJERA
-    - País: Estados Unidos (NO TIENE convenio)
-    - Resultado: Aplicar tarifa_normal del concepto correspondiente
-    
+
+    ═══════════════════════════════════════════════════════════════════
+    INSTRUCCIONES - SOLO EXTRACCIÓN E IDENTIFICACIÓN
+    ═══════════════════════════════════════════════════════════════════
+
+    TU ÚNICA RESPONSABILIDAD: Extraer datos e identificar conceptos.
+
+    NO hagas cálculos, NO apliques tarifas, NO determines si aplica retención.
+    Eso lo hará Python después con validaciones manuales.
+
+    1. **IDENTIFICAR PAÍS DEL PROVEEDOR**:
+       - Busca TEXTUALMENTE en la FACTURA el país del proveedor
+       - Busca en: dirección, domicilio, sede, país de origen
+       - Si lo encuentras, guarda en "pais_proveedor" en minúsculas, sin tildes y traducido al español
+       - Ejemplo: "Estados Unidos" → "estados unidos"
+       - Guarda el TEXTO LITERAL extraido del documento en "pais_proveedor_literal"
+     
+       - Si no encuentras, deja vacío ""
+
+    2. **IDENTIFICAR CONCEPTOS FACTURADOS**:
+       - Extrae el TEXTO LITERAL del concepto/servicio facturado
+       - Ejemplo: "Servicios profesionales de consultoría"
+       - Guarda en "concepto_facturado"
+
+    3. **MAPEAR CON DICCIONARIO**:
+       - Relaciona el concepto_facturado con el diccionario recibido
+       - Usa el NOMBRE EXACTO que aparece en el diccionario
+       - Guarda en "concepto" y su "concepto_index"
+       - Si NO encuentras coincidencia: concepto="" y concepto_index=0
+
+    4. **EXTRAER BASE GRAVABLE**:
+       - Por cada concepto, extrae el valor base
+       - Si hay múltiples conceptos, sepáralos individualmente
+
+    5. **EXTRAER VALOR TOTAL**:
+       - Extrae el valor total de la factura sin IVA
+       - Si no puedes determinarlo, usa 0.0
+
+    6. **OBSERVACIONES**:
+       - Reporta cualquier inconsistencia o dato faltante
+       - NO hagas interpretaciones fiscales
+       
     IMPORTANTE:
-    - Si NO puedes identificar un concepto específico, indica "CONCEPTO_NO_IDENTIFICADO"
-    - Si no puedes determinar el país, marca como null
-    - Especifica claramente si aplica retención y por qué
-    - Para conceptos extranjeros NO hay base mínima (base_pesos = 0)
-    
+    - EL NOMBRE DEL PAIS DEBE ESTAR EN ESPAÑOL, minúsculas y sin tildes en "pais_proveedor"
+
+    EJEMPLOS:
+
+    Ejemplo 1:
+    - Factura dice: "Servicios de consultoría técnica - $5,000 USD"
+    - País en factura: "Estados Unidos"
+    - En diccionario encuentras: index 101 → "Servicios técnicos y de consultoría"
+    - Respuesta:
+      {{
+        "pais_proveedor": "estados unidos",
+        "pais_proveedor_literal": "United States",
+        "concepto_facturado": "Servicios de consultoría técnica",
+        "concepto": "Servicios técnicos y de consultoría",
+        "concepto_index": 101,
+        "base_gravable": 5000.0
+      }}
+
+    Ejemplo 2 - No se encuentra concepto:
+    - Factura dice: "Regalías por marca"
+    - No hay coincidencia en diccionario
+    - Respuesta:
+      {{
+        "pais_proveedor": "españa",
+        "pais_proveedor_literal": "Spain",
+        "concepto_facturado": "Regalías por marca",
+        "concepto": "",
+        "concepto_index": 0,
+        "base_gravable": 10000.0
+      }}
+
     RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
     {{
-        "es_facturacion_extranjera": true,
-        "pais_proveedor": "string o null",
-        "tiene_convenio_doble_tributacion": false,
-        "validacion_fuente_nacional": {{
-            "pregunta_1_uso_beneficio_colombia": false,
-            "pregunta_2_actividad_en_colombia": false,
-            "pregunta_3_asistencia_tecnica_colombia": false,
-            "pregunta_4_bien_ubicado_colombia": false,
-            "es_fuente_nacional": false,
-            "justificacion": "string"
-        }},
+        "pais_proveedor": "string o empty string",
         "conceptos_identificados": [
             {{
-                "concepto": "nombre exacto del concepto o CONCEPTO_NO_IDENTIFICADO",
-                "tarifa_normal": 0.0,
-                "tarifa_convenio": 0.0,
-                "tarifa_aplicada": 0.0,
+                "concepto_facturado": "Texto literal de la factura",
+                "concepto": "Nombre del diccionario o empty string",
+                "concepto_index": 123,
                 "base_gravable": 0.0
             }}
         ],
-        "calculo_retencion": {{
-            "aplica_retencion": false,
-            "valor_retencion": 0.0,
-            "tarifa_aplicada_porcentaje": 0.0,
-            "razon_aplicacion": "string"
-        }},
         "valor_total": 0.0,
-        "moneda_original": "string",
-        "tasa_cambio": null,
-        "iva": 0.0,
-        "observaciones": ["observación 1", "observación 2"]
+        "observaciones": ["observación 1"]
     }}
     """
 

@@ -46,6 +46,16 @@ class DatabaseInterface(ABC):
         """Obtiene los datos completos de un concepto por su index"""
         pass
 
+    @abstractmethod
+    def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+        """Obtiene los conceptos de retención para pagos al exterior"""
+        pass
+
+    @abstractmethod
+    def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+        """Obtiene la lista de países con convenio de doble tributación"""
+        pass
+
 
 # ================================
 #  IMPLEMENTACIÓN SUPABASE
@@ -370,6 +380,122 @@ class SupabaseDatabase(DatabaseInterface):
                 'message': f'Error al consultar concepto por index: {e}'
             }
 
+    def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+        """
+        Obtiene todos los conceptos de retención para pagos al exterior.
+
+        SRP: Solo consulta la tabla conceptos_extranjeros (Data Access Layer)
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo:
+            - index: Índice del concepto
+            - nombre_concepto: Descripción del concepto
+            - base_pesos: Base mínima en pesos
+            - tarifa_normal: Tarifa para países sin convenio
+            - tarifa_convenio: Tarifa para países con convenio
+        """
+        try:
+            response = self.supabase.table('conceptos_extranjeros').select(
+                'index, nombre_concepto, base_pesos, tarifa_normal, tarifa_convenio'
+            ).execute()
+
+            if response.data and len(response.data) > 0:
+                conceptos = []
+                for concepto_raw in response.data:
+                    try:
+                        # Convertir tarifas a float manejando formato con coma
+                        tarifa_normal = concepto_raw.get('tarifa_normal', 0.0)
+                        tarifa_convenio = concepto_raw.get('tarifa_convenio', 0.0)
+                        base_pesos = concepto_raw.get('base_pesos', 0.0)
+
+                        if tarifa_normal is not None:
+                            tarifa_normal = float(str(tarifa_normal).replace(',', '.'))
+                        else:
+                            tarifa_normal = 0.0
+
+                        if tarifa_convenio is not None:
+                            tarifa_convenio = float(str(tarifa_convenio).replace(',', '.'))
+                        else:
+                            tarifa_convenio = 0.0
+
+                        if base_pesos is not None:
+                            base_pesos = float(str(base_pesos).replace(',', '.'))
+                        else:
+                            base_pesos = 0.0
+
+                        conceptos.append({
+                            'index': concepto_raw.get('index'),
+                            'nombre_concepto': concepto_raw.get('nombre_concepto'),
+                            'base_pesos': base_pesos,
+                            'tarifa_normal': tarifa_normal,
+                            'tarifa_convenio': tarifa_convenio
+                        })
+                    except (ValueError, TypeError) as e:
+                        print(f"[WARNING] Error convirtiendo datos de concepto extranjero: {e}")
+                        continue
+
+                return {
+                    'success': True,
+                    'data': conceptos,
+                    'count': len(conceptos),
+                    'message': f'{len(conceptos)} conceptos extranjeros encontrados'
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron conceptos extranjeros'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': [],
+                'error': str(e),
+                'message': f'Error al consultar conceptos extranjeros: {e}'
+            }
+
+    def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+        """
+        Obtiene la lista de países con convenio de doble tributación.
+
+        SRP: Solo consulta la tabla paises_convenio_tributacion (Data Access Layer)
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo:
+            - paises: Lista de nombres de países con convenio
+        """
+        try:
+            response = self.supabase.table('paises_convenio_tributacion').select(
+                'nombre_pais'
+            ).execute()
+
+            if response.data and len(response.data) > 0:
+                paises = [row.get('nombre_pais') for row in response.data if row.get('nombre_pais')]
+
+                return {
+                    'success': True,
+                    'data': paises,
+                    'count': len(paises),
+                    'message': f'{len(paises)} países con convenio encontrados'
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron países con convenio'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': [],
+                'error': str(e),
+                'message': f'Error al consultar países con convenio: {e}'
+            }
+
     def health_check(self) -> bool:
         """
         Verifica si la conexión a Supabase funciona
@@ -477,6 +603,29 @@ class DatabaseManager:
             Dict con resultado de la consulta incluyendo base, porcentaje y descripción
         """
         return self.db_connection.obtener_concepto_por_index(index, estructura_contable)
+
+    def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+        """
+        Obtiene los conceptos de retención para pagos al exterior.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Returns:
+            Dict con resultado de la consulta incluyendo:
+            - index, nombre_concepto, base_pesos, tarifa_normal, tarifa_convenio
+        """
+        return self.db_connection.obtener_conceptos_extranjeros()
+
+    def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+        """
+        Obtiene la lista de países con convenio de doble tributación.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Returns:
+            Dict con resultado de la consulta incluyendo lista de nombres de países
+        """
+        return self.db_connection.obtener_paises_con_convenio()
 
 
 def ejecutar_pruebas_completas(db_manager: DatabaseManager):

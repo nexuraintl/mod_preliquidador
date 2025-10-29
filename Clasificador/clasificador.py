@@ -138,6 +138,7 @@ class AnalisisFactura(BaseModel):
     es_facturacion_exterior: bool = False  # Default False, se obtiene de clasificación inicial
     valor_total: Optional[float]
     observaciones: List[str]
+    pais_proveedor: Optional[str] = None  # v3.0: País del proveedor para facturación extranjera
 
 # ===============================
 # PROCESADOR GEMINI
@@ -198,7 +199,7 @@ class ProcesadorGemini:
         archivos_directos: List[UploadFile] = None,  #  NUEVO: Archivos directos
         textos_preprocesados: Dict[str, str] = None,  #  NUEVO: Textos preprocesados
         proveedor: str = None  #  v3.0: Nombre del proveedor para mejor identificacion
-    ) -> Tuple[Dict[str, str], bool, bool]:
+    ) -> Tuple[Dict[str, str], bool, bool, bool]:
         """
          FUNCIÓN HÍBRIDA CON COMPATIBILIDAD: Clasificación con archivos directos + textos preprocesados.
         
@@ -356,9 +357,12 @@ class ProcesadorGemini:
             # NUEVO v3.1.2: Detectar consorcio directamente del resultado de Gemini
             es_consorcio = resultado.get("es_consorcio", False)
 
-            # Detectar facturación extranjera usando validación manual (SRP)
-            es_facturacion_extranjera = self._evaluar_facturacion_extranjera(resultado)
+            # Detectar tipo recurso extranjero usando validación manual (SRP)
+            es_recurso_extranjero = self._evaluar_tipo_recurso(resultado)
             indicadores_extranjera = resultado.get("indicadores_extranjera", [])
+
+            # Determinar facturación extranjera basada en ubicación del proveedor
+            es_facturacion_extranjera = self._determinar_facturacion_extranjera(resultado)
             
             # PASO 6: Guardar respuesta con metadatos del procesamiento híbrido
             clasificacion_data_hibrida = {
@@ -379,8 +383,9 @@ class ProcesadorGemini:
             logger.info(f"factura_identificada: {factura_identificada}, rut_identificado: {rut_identificado}")
             logger.info(f" Clasificación híbrida exitosa: {len(clasificacion)} documentos clasificados")
             logger.info(f" Consorcio detectado: {es_consorcio}")
+            logger.info(f" Tipo recurso extranjero detectado: {es_recurso_extranjero}")
             logger.info(f" Facturación extranjera detectada: {es_facturacion_extranjera}")
-            if es_facturacion_extranjera and indicadores_extranjera:
+            if es_recurso_extranjero and indicadores_extranjera:
                 logger.info(f" Indicadores extranjera: {indicadores_extranjera}")
             
             # PASO 8: Logging detallado por archivo
@@ -388,7 +393,7 @@ class ProcesadorGemini:
                 origen = "DIRECTO" if nombre_archivo in nombres_archivos_directos else "PREPROCESADO"
                 logger.info(f" {nombre_archivo} → {categoria} ({origen})")
             
-            return clasificacion, es_consorcio, es_facturacion_extranjera
+            return clasificacion, es_consorcio, es_recurso_extranjero, es_facturacion_extranjera
             
         except json.JSONDecodeError as e:
             logger.error(f" Error parseando JSON híbrido de Gemini: {e}")
@@ -672,15 +677,13 @@ class ProcesadorGemini:
                 
                 # GENERAR PROMPT HÍBRIDO
                 if es_facturacion_extranjera:
-                    logger.info(" Prompt híbrido para facturación extranjera")
-                    conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
-                    paises_convenio = self._obtener_paises_convenio()
-                    preguntas_fuente = self._obtener_preguntas_fuente_nacional()
+                    logger.info(" Prompt híbrido para facturación extranjera (v3.0 - SOLO IDENTIFICACIÓN)")
+                    conceptos_extranjeros_simplificado = self._obtener_conceptos_extranjeros_simplificado()
 
                     prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
                         factura_texto, rut_texto, anexos_texto,
                         cotizaciones_texto, anexo_contrato,
-                        conceptos_extranjeros_dict, paises_convenio, preguntas_fuente,
+                        conceptos_extranjeros_simplificado,  # v3.0: Solo {index: nombre}
                         nombres_archivos_directos,  #  NUEVO PARÁMETRO
                         proveedor  #  v3.0: Nombre del proveedor
                     )
@@ -703,15 +706,13 @@ class ProcesadorGemini:
                 logger.info(" Usando análisis TRADICIONAL con solo textos preprocesados")
 
                 if es_facturacion_extranjera:
-                    logger.info("Usando prompt especializado para facturación extranjera")
-                    conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
-                    paises_convenio = self._obtener_paises_convenio()
-                    preguntas_fuente = self._obtener_preguntas_fuente_nacional()
+                    logger.info("Usando prompt especializado para facturación extranjera (v3.0 - SOLO IDENTIFICACIÓN)")
+                    conceptos_extranjeros_simplificado = self._obtener_conceptos_extranjeros_simplificado()
 
                     prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
                         factura_texto, rut_texto, anexos_texto,
                         cotizaciones_texto, anexo_contrato,
-                        conceptos_extranjeros_dict, paises_convenio, preguntas_fuente,
+                        conceptos_extranjeros_simplificado,  # v3.0: Solo {index: nombre}
                         None,  # nombres_archivos_directos (no hay en modo tradicional)
                         proveedor  #  v3.0: Nombre del proveedor
                     )
@@ -794,7 +795,12 @@ class ProcesadorGemini:
                     "razon": "No es persona natural o no se pudo determinar"
                 }
                 logger.info(" NO es persona natural - Artículo 383 no aplica - no aplica retefuente")
-            
+
+            # CORRECCIÓN v3.0: Para facturación extranjera, agregar naturaleza_tercero como None si no existe
+            if es_facturacion_extranjera and "naturaleza_tercero" not in resultado:
+                resultado["naturaleza_tercero"] = None
+                logger.info(" Facturación extranjera: naturaleza_tercero establecido en None")
+
             # Crear objeto AnalisisFactura
             analisis = AnalisisFactura(**resultado)
             logger.info(f"Análisis exitoso: {len(analisis.conceptos_identificados)} conceptos identificados")
@@ -1917,16 +1923,16 @@ class ProcesadorGemini:
             logger.error(f" Error llamando a Gemini: {e}")
             raise ValueError(f"Error de Gemini: {str(e)}")
 
-    def _evaluar_facturacion_extranjera(self, resultado: Dict[str, Any]) -> bool:
+    def _evaluar_tipo_recurso(self, resultado: Dict[str, Any]) -> bool:
         """
-        Evalua si es facturacion extranjera basado en analisis_fuente_ingreso.
+        Evalua si es tipo de recurso extranjero basado en analisis_fuente_ingreso.
 
-        SRP: Unica responsabilidad - determinar facturacion extranjera segun reglas de negocio.
+        SRP: Unica responsabilidad - determinar tipo de recurso extranjero segun reglas de negocio.
 
         REGLA DE DECISION:
-        - Si TODAS las respuestas son false (con evidencia) -> es_facturacion_extranjera = true
-        - Si ALGUNA respuesta es true -> es_facturacion_extranjera = false
-        - Si alguna respuesta es null (sin info clara) -> es_facturacion_extranjera = false
+        - Si TODAS las respuestas son false (con evidencia) -> es_recurso_extranjero = true
+        - Si ALGUNA respuesta es true -> es_recurso_extranjero = false
+        - Si alguna respuesta es null (sin info clara) -> es_recurso_extranjero = false
 
         Campos evaluados de analisis_fuente_ingreso:
         - servicio_uso_colombia: Servicio usado en Colombia
@@ -1988,19 +1994,19 @@ class ProcesadorGemini:
 
         criterios = [servicio_uso, ejecutado, asistencia, bien_ubicado]
 
-        # REGLA 1: Si ALGUNO es true -> NO es facturacion extranjera
+        # REGLA 1: Si ALGUNO es true -> NO es recurso extranjero
         if any(criterio is True for criterio in criterios):
-            logger.info(" Facturacion NACIONAL detectada: al menos un criterio es true")
+            logger.info(" recurso NACIONAL detectada: al menos un criterio es true")
             return False
 
-        # REGLA 2: Si ALGUNO es null -> NO es facturacion extranjera (enfoque conservador)
+        # REGLA 2: Si ALGUNO es null -> NO es recurso extranjero (enfoque conservador)
         if any(criterio is None for criterio in criterios):
-            logger.info(" Facturacion NACIONAL por defecto: informacion incompleta (null detectado)")
+            logger.info(" recurso NACIONAL por defecto: informacion incompleta (null detectado)")
             return False
 
-        # REGLA 3: Si TODOS son false -> ES facturacion extranjera
+        # REGLA 3: Si TODOS son false -> ES recurso extranjero  
         if all(criterio is False for criterio in criterios):
-            logger.info(" Facturacion EXTRANJERA confirmada: todos los criterios son false")
+            logger.info(" recurso EXTRANJERO confirmada: todos los criterios son false")
             logger.info(f" Evidencias: servicio_uso={servicio_uso}, ejecutado={ejecutado}, "
                        f"asistencia={asistencia}, bien_ubicado={bien_ubicado}")
             return True
@@ -2008,6 +2014,36 @@ class ProcesadorGemini:
         # Fallback: No deberia llegar aqui, pero por seguridad retornar False
         logger.warning(" Caso no contemplado en evaluacion, retornando False por defecto")
         return False
+
+    def _determinar_facturacion_extranjera(self, resultado: Dict[str, Any]) -> bool:
+        """
+        Determina si es facturación extranjera basándose en la ubicación del proveedor.
+
+        SRP: Responsabilidad única - evaluar si el proveedor está fuera de Colombia.
+
+        Args:
+            resultado: Resultado completo de Gemini con ubicacion_proveedor y es_fuera_colombia
+
+        Returns:
+            bool: True si es facturación extranjera, False en caso contrario
+        """
+        # Extraer campos de ubicación del proveedor
+        ubicacion_proveedor = resultado.get("ubicacion_proveedor", "")
+        es_fuera_colombia = resultado.get("es_fuera_colombia", False)
+
+        # Mostrar ubicación en logs
+        if ubicacion_proveedor:
+            logger.info(f" Ubicación proveedor: {ubicacion_proveedor}")
+        else:
+            logger.info(" Ubicación proveedor: No especificada")
+
+        # Determinar si es facturación extranjera
+        if es_fuera_colombia:
+            logger.info("🌍 Facturación extranjera detectada: Proveedor fuera de Colombia")
+            return True
+        else:
+            logger.info("🇨🇴 Facturación nacional: Proveedor en Colombia")
+            return False
 
     def _limpiar_respuesta_json(self, respuesta: str) -> str:
         """
@@ -2345,10 +2381,65 @@ class ProcesadorGemini:
             logger.error(f"Error obteniendo conceptos extranjeros: {e}")
             return self._conceptos_extranjeros_hardcodeados()
     
+    def _obtener_conceptos_extranjeros_simplificado(self) -> dict:
+        """
+        Obtiene conceptos extranjeros SIMPLIFICADOS (solo index y nombre) desde la BD.
+
+        v3.0: Gemini SOLO identifica, NO calcula. Solo necesita {index: nombre}.
+
+        Returns:
+            dict: {index: nombre_concepto} para identificación en Gemini
+        """
+        try:
+            if not self.db_manager:
+                logger.warning("DatabaseManager no disponible, usando conceptos hardcodeados simplificados")
+                return self._conceptos_extranjeros_simplificados_hardcodeados()
+
+            # Obtener conceptos desde BD
+            resultado = self.db_manager.obtener_conceptos_extranjeros()
+
+            if not resultado.get("success", False):
+                logger.error(f"Error consultando conceptos extranjeros: {resultado.get('error')}")
+                return self._conceptos_extranjeros_simplificados_hardcodeados()
+
+            # Crear diccionario simplificado: {index: nombre_concepto}
+            conceptos_simplificados = {}
+            for concepto in resultado.get("data", []):
+                index = concepto.get("index")
+                nombre = concepto.get("nombre_concepto")
+                if index is not None and nombre:
+                    conceptos_simplificados[index] = nombre
+
+            logger.info(f"Conceptos extranjeros simplificados obtenidos de BD: {len(conceptos_simplificados)}")
+            return conceptos_simplificados
+
+        except Exception as e:
+            logger.error(f"Error obteniendo conceptos simplificados: {e}")
+            return self._conceptos_extranjeros_simplificados_hardcodeados()
+
+    def _conceptos_extranjeros_simplificados_hardcodeados(self) -> dict:
+        """
+        Fallback: Conceptos extranjeros simplificados hardcodeados.
+
+        Returns:
+            dict: {index: nombre_concepto}
+        """
+        logger.warning("Usando conceptos extranjeros simplificados hardcodeados")
+        return {
+            1: "Dividendos y participaciones",
+            2: "Intereses",
+            3: "Regalías",
+            4: "Consultorías, servicios técnicos y de asistencia técnica",
+            5: "Arrendamiento de equipos industriales, comerciales o científicos",
+            6: "Honorarios",
+            7: "Compensación por servicios personales",
+            8: "Otros ingresos",
+        }
+
     def _obtener_paises_convenio(self) -> list:
         """
         Obtiene la lista de países con convenio de doble tributación.
-        
+
         Returns:
             list: Lista de países con convenio
         """

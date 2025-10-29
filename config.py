@@ -1621,6 +1621,60 @@ def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
     }
 
 # ===============================
+# FUNCIONES HELPER PARA RECURSOS EXTRANJEROS
+# ===============================
+
+def crear_resultado_recurso_extranjero_retefuente() -> object:
+    """
+    Crea estructura de retefuente para recurso de fuente extranjera.
+
+    SRP: Responsabilidad única - generar estructura vacía con mensaje apropiado.
+    Se usa cuando es_recurso_extranjero == True para evitar cálculo innecesario.
+
+    Returns:
+        object: Estructura compatible con resultado de liquidación retefuente
+    """
+    from datetime import datetime
+
+    return type('ResultadoLiquidacion', (object,), {
+        'aplica': False,
+        'valor_retencion': 0.0,
+        'valor_factura_sin_iva': 0.0,
+        'conceptos_aplicados': [],
+        'valor_base_retencion': 0.0,
+        'fecha_calculo': datetime.now().isoformat(),
+        'mensajes_error': ["Recurso de fuente extranjera - No aplica retención en la fuente"],
+        'resumen_conceptos': 'N/A',
+        'estado': 'No aplica'
+    })()
+
+def crear_resultado_recurso_extranjero_iva() -> Dict[str, Any]:
+    """
+    Crea estructura de IVA/ReteIVA para recurso de fuente extranjera.
+
+    SRP: Responsabilidad única - generar estructura vacía con mensaje apropiado.
+    Se usa cuando es_recurso_extranjero == True para evitar cálculo innecesario.
+
+    Returns:
+        Dict: Estructura compatible con resultado de liquidación IVA/ReteIVA
+    """
+    return {
+        "iva_reteiva": {
+            "aplica": False,
+            "valor_iva_identificado": 0.0,
+            "valor_subtotal_sin_iva": 0.0,
+            "valor_reteiva": 0.0,
+            "porcentaje_iva": 0.0,
+            "tarifa_reteiva": 0.0,
+            "es_fuente_nacional": False,
+            "estado_liquidacion": "No aplica",
+            "es_responsable_iva": None,
+            "observaciones": ["Recurso de fuente extranjera - No aplica IVA ni ReteIVA"],
+            "calculo_exitoso": True
+        }
+    }
+
+# ===============================
 # INICIALIZACIÓN AUTOMÁTICA
 # ===============================
 

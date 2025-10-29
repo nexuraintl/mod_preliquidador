@@ -1355,9 +1355,600 @@ class LiquidadorRetencion:
         )
     
     # ===============================
+    # VALIDACIONES MANUALES PARA FACTURACIÓN EXTRANJERA
+    # ===============================
+
+    def _validar_pais_proveedor_extranjera(self, analisis_extranjera: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        SRP: SOLO valida que el pais_proveedor no sea vacío.
+
+        Args:
+            analisis_extranjera: Resultado del análisis de Gemini para factura extranjera
+
+        Returns:
+            Dict con puede_continuar, pais_proveedor, mensajes
+        """
+        pais_proveedor = analisis_extranjera.get("pais_proveedor", "").strip()
+
+        if not pais_proveedor:
+            logger.error("Validación pais_proveedor: No se pudo identificar el país del proveedor")
+            return {
+                "puede_continuar": False,
+                "pais_proveedor": "",
+                "mensajes": ["No se pudo identificar el país del proveedor"]
+            }
+
+        logger.info(f"Validación pais_proveedor: {pais_proveedor}")
+        return {
+            "puede_continuar": True,
+            "pais_proveedor": pais_proveedor,
+            "mensajes": []
+        }
+
+    def _validar_concepto_facturado_extranjera(self, analisis_extranjera: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        SRP: SOLO valida que se haya extraído al menos un concepto_facturado.
+
+        Args:
+            analisis_extranjera: Resultado del análisis de Gemini
+
+        Returns:
+            Dict con puede_continuar, conceptos_identificados, mensajes
+        """
+        conceptos_identificados = analisis_extranjera.get("conceptos_identificados", [])
+
+        if not conceptos_identificados:
+            logger.error("Validación concepto_facturado: No se extrajo ningún concepto facturado")
+            return {
+                "puede_continuar": False,
+                "conceptos_identificados": [],
+                "mensajes": ["No se pudo extraer un concepto facturado"]
+            }
+
+        # Verificar que al menos un concepto tenga concepto_facturado válido
+        conceptos_validos = [
+            c for c in conceptos_identificados
+            if c.get("concepto_facturado", "").strip() != ""
+        ]
+
+        if not conceptos_validos:
+            logger.error("Validación concepto_facturado: Ningún concepto tiene concepto_facturado válido")
+            return {
+                "puede_continuar": False,
+                "conceptos_identificados": [],
+                "mensajes": ["No se pudo extraer un concepto facturado"]
+            }
+
+        logger.info(f"Validación concepto_facturado: {len(conceptos_validos)} concepto(s) válido(s)")
+        return {
+            "puede_continuar": True,
+            "conceptos_identificados": conceptos_validos,
+            "mensajes": []
+        }
+
+    def _validar_concepto_mapeado_extranjera(self, conceptos_identificados: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        SRP: SOLO valida que al menos un concepto esté mapeado a la base de datos.
+
+        Args:
+            conceptos_identificados: Lista de conceptos extraídos por Gemini
+
+        Returns:
+            Dict con puede_continuar, conceptos_mapeados, mensajes
+        """
+        # Verificar que al menos un concepto tenga "concepto" válido (mapeado al diccionario)
+        conceptos_mapeados = [
+            c for c in conceptos_identificados
+            if c.get("concepto", "").strip() != "" and c.get("concepto_index") is not None
+        ]
+
+        if not conceptos_mapeados:
+            logger.error("Validación concepto_mapeado: Los conceptos facturados no aplican para retención en la fuente extranjera")
+            return {
+                "puede_continuar": False,
+                "conceptos_mapeados": [],
+                "mensajes": ["Los conceptos facturados no aplican para retención en la fuente extranjera"]
+            }
+
+        logger.info(f"Validación concepto_mapeado: {len(conceptos_mapeados)} concepto(s) mapeado(s)")
+        return {
+            "puede_continuar": True,
+            "conceptos_mapeados": conceptos_mapeados,
+            "mensajes": []
+        }
+
+    def _validar_base_gravable_extranjera(self, conceptos_mapeados: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        SRP: SOLO valida que los conceptos tengan base_gravable > 0.
+
+        Args:
+            conceptos_mapeados: Lista de conceptos mapeados
+
+        Returns:
+            Dict con puede_continuar, conceptos_con_base, mensajes
+        """
+        conceptos_con_base = [
+            c for c in conceptos_mapeados
+            if c.get("base_gravable", 0) > 0
+        ]
+
+        if not conceptos_con_base:
+            logger.error("Validación base_gravable: No se pudo extraer la base gravable del concepto")
+            return {
+                "puede_continuar": False,
+                "conceptos_con_base": [],
+                "mensajes": ["No se pudo extraer la base gravable del concepto"]
+            }
+
+        logger.info(f"Validación base_gravable: {len(conceptos_con_base)} concepto(s) con base válida")
+        return {
+            "puede_continuar": True,
+            "conceptos_con_base": conceptos_con_base,
+            "mensajes": []
+        }
+
+    def _validar_valor_total_extranjera(self, analisis_extranjera: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        SRP: SOLO valida que el valor_total > 0.
+
+        Args:
+            analisis_extranjera: Resultado del análisis de Gemini
+
+        Returns:
+            Dict con puede_continuar, valor_total, mensajes
+        """
+        valor_total = analisis_extranjera.get("valor_total", 0.0)
+
+        if valor_total <= 0:
+            logger.error("Validación valor_total: No se pudo extraer el valor total de la factura")
+            return {
+                "puede_continuar": False,
+                "valor_total": 0.0,
+                "mensajes": ["No se pudo extraer el valor total de la factura"]
+            }
+
+        logger.info(f"Validación valor_total: ${valor_total:,.2f}")
+        return {
+            "puede_continuar": True,
+            "valor_total": valor_total,
+            "mensajes": []
+        }
+
+    def _obtener_tarifa_aplicable_extranjera(self, concepto_index: int, pais_proveedor: str) -> Dict[str, Any]:
+        """
+        SRP: SOLO obtiene la tarifa aplicable (convenio o normal) consultando la BD.
+
+        Args:
+            concepto_index: Index del concepto en la tabla conceptos_extranjeros
+            pais_proveedor: País del proveedor extranjero
+
+        Returns:
+            Dict con puede_continuar, tarifa_aplicable, tiene_convenio, datos_concepto, mensajes
+        """
+        if not self.db_manager:
+            logger.error("DatabaseManager no inicializado")
+            return {
+                "puede_continuar": False,
+                "tarifa_aplicable": 0.0,
+                "tiene_convenio": False,
+                "datos_concepto": None,
+                "mensajes": ["Error: DatabaseManager no inicializado"]
+            }
+
+        try:
+            # PASO 1: Obtener datos del concepto desde conceptos_extranjeros
+            logger.info(f"Consultando concepto_index={concepto_index} en conceptos_extranjeros")
+            resultado_conceptos = self.db_manager.obtener_conceptos_extranjeros()
+
+            if not resultado_conceptos.get("success", False):
+                logger.error(f"Error consultando conceptos_extranjeros: {resultado_conceptos.get('error')}")
+                return {
+                    "puede_continuar": False,
+                    "tarifa_aplicable": 0.0,
+                    "tiene_convenio": False,
+                    "datos_concepto": None,
+                    "mensajes": ["Error consultando conceptos extranjeros en la base de datos"]
+                }
+
+            # Buscar el concepto específico por index
+            conceptos = resultado_conceptos.get("data", [])
+            concepto_encontrado = None
+
+            for concepto_bd in conceptos:
+                if concepto_bd.get("index") == concepto_index:
+                    concepto_encontrado = concepto_bd
+                    break
+
+            if not concepto_encontrado:
+                logger.error(f"Concepto con index={concepto_index} no encontrado en la BD")
+                return {
+                    "puede_continuar": False,
+                    "tarifa_aplicable": 0.0,
+                    "tiene_convenio": False,
+                    "datos_concepto": None,
+                    "mensajes": ["El concepto no se encontró en la base de datos de conceptos extranjeros"]
+                }
+
+            logger.info(f"Concepto encontrado: {concepto_encontrado.get('nombre_concepto')}")
+
+            # PASO 2: Verificar si el país tiene convenio de doble tributación
+            logger.info(f"Verificando convenio para país: {pais_proveedor}")
+            resultado_paises = self.db_manager.obtener_paises_con_convenio()
+
+            if not resultado_paises.get("success", False):
+                logger.warning(f"Error consultando países con convenio: {resultado_paises.get('error')}")
+                # Continuar sin convenio
+                tiene_convenio = False
+            else:
+                paises_convenio = resultado_paises.get("data", [])
+                # Normalizar nombres para comparación
+                paises_convenio_lower = [p.lower() for p in paises_convenio]
+                tiene_convenio = pais_proveedor.lower() in paises_convenio_lower
+
+            # PASO 3: Seleccionar tarifa según convenio
+            if tiene_convenio:
+                tarifa = concepto_encontrado.get("tarifa_convenio", 0.0)
+                logger.info(f"País con convenio - Aplicando tarifa_convenio: {tarifa}%")
+            else:
+                tarifa = concepto_encontrado.get("tarifa_normal", 0.0)
+                logger.info(f"País sin convenio - Aplicando tarifa_normal: {tarifa}%")
+
+            return {
+                "puede_continuar": True,
+                "tarifa_aplicable": tarifa,
+                "tiene_convenio": tiene_convenio,
+                "datos_concepto": concepto_encontrado,
+                "mensajes": []
+            }
+
+        except Exception as e:
+            logger.error(f"Error obteniendo tarifa aplicable: {e}")
+            return {
+                "puede_continuar": False,
+                "tarifa_aplicable": 0.0,
+                "tiene_convenio": False,
+                "datos_concepto": None,
+                "mensajes": [f"Error consultando tarifas: {str(e)}"]
+            }
+
+    def _validar_base_minima_extranjera(self, base_gravable: float, datos_concepto: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        SRP: SOLO valida que la base_gravable supere la base_minima del concepto.
+
+        Args:
+            base_gravable: Base gravable del concepto
+            datos_concepto: Datos del concepto desde BD
+
+        Returns:
+            Dict con puede_continuar, mensajes
+        """
+        base_minima = datos_concepto.get("base_pesos", 0.0)
+
+        if base_gravable < base_minima:
+            logger.warning(f"Base gravable ${base_gravable:,.2f} no supera base mínima ${base_minima:,.2f}")
+            return {
+                "puede_continuar": False,
+                "mensajes": [f"La base gravable (${base_gravable:,.0f}) no supera la base mínima de ${base_minima:,.0f}"]
+            }
+
+        logger.info(f"Base gravable ${base_gravable:,.2f} supera base mínima ${base_minima:,.2f}")
+        return {
+            "puede_continuar": True,
+            "mensajes": []
+        }
+
+    def _calcular_retencion_extranjera(self, base_gravable: float, tarifa_aplicable: float) -> Dict[str, Any]:
+        """
+        SRP: SOLO calcula la retención = base_gravable * tarifa.
+
+        Args:
+            base_gravable: Base gravable del concepto
+            tarifa_aplicable: Tarifa a aplicar (porcentaje, ej: 15.0 para 15%)
+
+        Returns:
+            Dict con valor_retencion
+        """
+        # Tarifa viene como porcentaje directo (ej: 15.0 = 15%)
+        valor_retencion = base_gravable * (tarifa_aplicable / 100)
+
+        logger.info(f"Cálculo retención: ${base_gravable:,.2f} x {tarifa_aplicable}% = ${valor_retencion:,.2f}")
+
+        return {
+            "valor_retencion": valor_retencion
+        }
+
+    def _crear_resultado_extranjera_error(self, mensajes: List[str], valor_total: float = 0.0,
+                                          pais_proveedor: str = "") -> ResultadoLiquidacion:
+        """
+        SRP: SOLO crea ResultadoLiquidacion para errores de validación en facturación extranjera.
+
+        SIEMPRE agrega "Facturación extranjera" al final de las observaciones.
+
+        Args:
+            mensajes: Lista de mensajes de error
+            valor_total: Valor total de la factura (si está disponible)
+            pais_proveedor: País del proveedor (si está disponible)
+
+        Returns:
+            ResultadoLiquidacion con estado de error y valores en cero
+        """
+        observaciones_finales = mensajes.copy() if mensajes else []
+
+        if pais_proveedor:
+            observaciones_finales.insert(0, f"País proveedor: {pais_proveedor}")
+
+        # OBLIGATORIO: Siempre al final
+        observaciones_finales.append("Facturación extranjera")
+
+        logger.warning(f"Resultado extranjera con error: {mensajes[0] if mensajes else 'Error desconocido'}")
+
+        return ResultadoLiquidacion(
+            valor_base_retencion=0.0,
+            valor_retencion=0.0,
+            valor_factura_sin_iva=valor_total,
+            conceptos_aplicados=[],
+            resumen_conceptos="No aplica retención - Error en validación",
+            fecha_calculo=datetime.now().isoformat(),
+            puede_liquidar=False,
+            mensajes_error=observaciones_finales,
+            estado="Preliquidacion sin finalizar"
+        )
+
+    def _crear_resultado_extranjera(self, conceptos_procesados: List[Dict[str, Any]],
+                                    valor_total: float, pais_proveedor: str,
+                                    tiene_convenio: bool, mensajes: List[str]) -> ResultadoLiquidacion:
+        """
+        SRP: SOLO crea el objeto ResultadoLiquidacion para factura extranjera con múltiples conceptos.
+
+        SIEMPRE agrega "Facturación extranjera" a las observaciones.
+
+        Args:
+            conceptos_procesados: Lista de conceptos procesados, cada uno con:
+                - datos_concepto: Datos del concepto desde BD
+                - base_gravable: Base gravable
+                - tarifa_aplicable: Tarifa aplicada
+                - valor_retencion: Valor retención individual
+            valor_total: Valor total de la factura
+            pais_proveedor: País del proveedor
+            tiene_convenio: Si el país tiene convenio de doble tributación
+            mensajes: Mensajes adicionales
+
+        Returns:
+            ResultadoLiquidacion con estructura completa
+        """
+        # Crear detalles de todos los conceptos
+        detalles_conceptos = []
+        resumenes = []
+        valor_retencion_total = 0.0
+        base_gravable_total = 0.0
+
+        for concepto_proc in conceptos_procesados:
+            datos = concepto_proc["datos_concepto"]
+            base = concepto_proc["base_gravable"]
+            tarifa = concepto_proc["tarifa_aplicable"]
+            valor_ret = concepto_proc["valor_retencion"]
+
+            # Acumular totales
+            valor_retencion_total += valor_ret
+            base_gravable_total += base
+
+            # Crear detalle individual
+            detalle = DetalleConcepto(
+                concepto=datos.get("nombre_concepto", "Concepto extranjero"),
+                concepto_facturado=datos.get("concepto_facturado", None),
+                tarifa_retencion=tarifa,
+                base_gravable=base,
+                valor_retencion=valor_ret,
+                codigo_concepto=None  # Conceptos extranjeros no tienen código interno
+            )
+            detalles_conceptos.append(detalle)
+
+            # Crear resumen individual
+            tipo_tarifa = "convenio" if tiene_convenio else "normal"
+            resumenes.append(f"{datos.get('nombre_concepto', 'Concepto extranjero')} ({tarifa:.1f}% - {tipo_tarifa})")
+
+        # Generar resumen descriptivo completo
+        resumen_completo = " + ".join(resumenes) if resumenes else "No aplica retención"
+
+        # Preparar observaciones
+        observaciones_finales = mensajes.copy() if mensajes else []
+        observaciones_finales.extend([
+            f"País proveedor: {pais_proveedor}",
+            f"Convenio de doble tributación: {'Sí' if tiene_convenio else 'No'}",
+            f"Total conceptos procesados: {len(conceptos_procesados)}",
+            "Facturación extranjera"  # OBLIGATORIO: Siempre al final
+        ])
+
+        logger.info(f"Resultado extranjera creado: {len(conceptos_procesados)} concepto(s), retención total: ${valor_retencion_total:,.2f}")
+
+        return ResultadoLiquidacion(
+            valor_base_retencion=base_gravable_total,
+            valor_retencion=valor_retencion_total,
+            valor_factura_sin_iva=valor_total,
+            conceptos_aplicados=detalles_conceptos,
+            resumen_conceptos=resumen_completo,
+            fecha_calculo=datetime.now().isoformat(),
+            puede_liquidar=True,
+            mensajes_error=observaciones_finales,
+            estado="Preliquidado"
+        )
+
+    def liquidar_factura_extranjera_con_validaciones(self, analisis_extranjera: Dict[str, Any]) -> ResultadoLiquidacion:
+        """
+        FUNCIÓN PRINCIPAL: Liquida factura extranjera con validaciones secuenciales para TODOS los conceptos.
+
+        Arquitectura v3.0: Gemini SOLO identifica datos, Python valida y calcula.
+
+        Flujo de validaciones (se detiene en el primer error crítico):
+        1. Validar país proveedor no vacío
+        2. Validar concepto facturado extraído
+        3. Validar concepto mapeado a BD
+        4. Validar base gravable > 0
+        5. Validar valor total > 0
+        6. Para cada concepto:
+           - Obtener tarifa aplicable (convenio o normal)
+           - Validar base mínima
+           - Calcular retención
+        7. Crear resultado final con todos los conceptos
+
+        Args:
+            analisis_extranjera: Análisis de Gemini con estructura:
+                {
+                    "pais_proveedor": "...",
+                    "conceptos_identificados": [...],
+                    "valor_total": 0.0,
+                    "observaciones": [...]
+                }
+
+        Returns:
+            ResultadoLiquidacion con estructura completa
+        """
+        logger.info("Iniciando liquidación factura extranjera con validaciones manuales para TODOS los conceptos")
+
+        # VALIDACIÓN 1: País proveedor
+        logger.info("Validación 1/5: País proveedor...")
+        resultado_pais = self._validar_pais_proveedor_extranjera(analisis_extranjera)
+        if not resultado_pais["puede_continuar"]:
+            return self._crear_resultado_extranjera_error(
+                resultado_pais["mensajes"],
+                valor_total=analisis_extranjera.get("valor_total", 0.0)
+            )
+        pais_proveedor = resultado_pais["pais_proveedor"]
+
+        # VALIDACIÓN 2: Concepto facturado
+        logger.info("Validación 2/5: Concepto facturado...")
+        resultado_concepto_fact = self._validar_concepto_facturado_extranjera(analisis_extranjera)
+        if not resultado_concepto_fact["puede_continuar"]:
+            return self._crear_resultado_extranjera_error(
+                resultado_concepto_fact["mensajes"],
+                valor_total=analisis_extranjera.get("valor_total", 0.0),
+                pais_proveedor=pais_proveedor
+            )
+        conceptos_identificados = resultado_concepto_fact["conceptos_identificados"]
+
+        # VALIDACIÓN 3: Concepto mapeado a BD
+        logger.info("Validación 3/5: Concepto mapeado a BD...")
+        resultado_mapeado = self._validar_concepto_mapeado_extranjera(conceptos_identificados)
+        if not resultado_mapeado["puede_continuar"]:
+            return self._crear_resultado_extranjera_error(
+                resultado_mapeado["mensajes"],
+                valor_total=analisis_extranjera.get("valor_total", 0.0),
+                pais_proveedor=pais_proveedor
+            )
+        conceptos_mapeados = resultado_mapeado["conceptos_mapeados"]
+
+        # VALIDACIÓN 4: Base gravable > 0
+        logger.info("Validación 4/5: Base gravable...")
+        resultado_base = self._validar_base_gravable_extranjera(conceptos_mapeados)
+        if not resultado_base["puede_continuar"]:
+            return self._crear_resultado_extranjera_error(
+                resultado_base["mensajes"],
+                valor_total=analisis_extranjera.get("valor_total", 0.0),
+                pais_proveedor=pais_proveedor
+            )
+        conceptos_con_base = resultado_base["conceptos_con_base"]
+
+        # VALIDACIÓN 5: Valor total > 0
+        logger.info("Validación 5/5: Valor total...")
+        resultado_total = self._validar_valor_total_extranjera(analisis_extranjera)
+        if not resultado_total["puede_continuar"]:
+            return self._crear_resultado_extranjera_error(
+                resultado_total["mensajes"],
+                valor_total=0.0,
+                pais_proveedor=pais_proveedor
+            )
+        valor_total = resultado_total["valor_total"]
+
+        # PROCESAMIENTO: Iterar sobre TODOS los conceptos
+        logger.info(f"Procesando {len(conceptos_con_base)} concepto(s) extranjero(s)...")
+
+        conceptos_procesados = []
+        advertencias = []
+        tiene_convenio = None  # Se determinará en el primer concepto
+
+        for idx, concepto_item in enumerate(conceptos_con_base, 1):
+            concepto_index = concepto_item.get("concepto_index")
+            base_gravable = concepto_item.get("base_gravable")
+            concepto_facturado = concepto_item.get("concepto_facturado", "")
+
+            logger.info(f"Procesando concepto {idx}/{len(conceptos_con_base)}: {concepto_facturado}")
+
+            # PASO 6.1: Obtener tarifa aplicable (convenio o normal)
+            resultado_tarifa = self._obtener_tarifa_aplicable_extranjera(concepto_index, pais_proveedor)
+            if not resultado_tarifa["puede_continuar"]:
+                advertencias.append(f"Concepto '{concepto_facturado}': {resultado_tarifa['mensajes'][0]}")
+                logger.warning(f"Concepto {idx} falló obtención de tarifa, saltando...")
+                continue
+
+            tarifa_aplicable = resultado_tarifa["tarifa_aplicable"]
+            tiene_convenio_concepto = resultado_tarifa["tiene_convenio"]
+            datos_concepto = resultado_tarifa["datos_concepto"]
+
+            # Establecer tiene_convenio del país (mismo para todos los conceptos)
+            if tiene_convenio is None:
+                tiene_convenio = tiene_convenio_concepto
+
+            # PASO 6.2: Validar base mínima
+            resultado_base_min = self._validar_base_minima_extranjera(base_gravable, datos_concepto)
+            if not resultado_base_min["puede_continuar"]:
+                advertencias.append(f"Concepto '{concepto_facturado}': {resultado_base_min['mensajes'][0]}")
+                logger.warning(f"Concepto {idx} no supera base mínima, saltando...")
+                continue
+
+            # PASO 6.3: Calcular retención
+            resultado_calculo = self._calcular_retencion_extranjera(base_gravable, tarifa_aplicable)
+            valor_retencion = resultado_calculo["valor_retencion"]
+
+            # Agregar concepto_facturado a datos_concepto
+            datos_concepto_completo = datos_concepto.copy()
+            datos_concepto_completo["concepto_facturado"] = concepto_facturado
+
+            # Agregar a lista de procesados
+            conceptos_procesados.append({
+                "datos_concepto": datos_concepto_completo,
+                "base_gravable": base_gravable,
+                "tarifa_aplicable": tarifa_aplicable,
+                "valor_retencion": valor_retencion
+            })
+
+            logger.info(f"Concepto {idx} procesado exitosamente: ${valor_retencion:,.2f}")
+
+        # Verificar si se procesó al menos un concepto
+        if not conceptos_procesados:
+            mensajes_error = ["No se pudo procesar ningún concepto para retención extranjera"]
+            if advertencias:
+                mensajes_error.extend(advertencias)
+            return self._crear_resultado_extranjera_error(
+                mensajes_error,
+                valor_total=valor_total,
+                pais_proveedor=pais_proveedor
+            )
+
+        # PASO 7: Crear resultado final con todos los conceptos procesados
+        logger.info(f"Creando resultado final con {len(conceptos_procesados)} concepto(s) procesado(s)...")
+
+        # Recopilar observaciones de Gemini si existen
+        observaciones_gemini = analisis_extranjera.get("observaciones", [])
+
+        # Agregar advertencias si las hay
+        if advertencias:
+            observaciones_gemini.extend(advertencias)
+
+        resultado_final = self._crear_resultado_extranjera(
+            conceptos_procesados=conceptos_procesados,
+            valor_total=valor_total,
+            pais_proveedor=pais_proveedor,
+            tiene_convenio=tiene_convenio if tiene_convenio is not None else False,
+            mensajes=observaciones_gemini
+        )
+
+        logger.info(f"Factura extranjera liquidada exitosamente: {len(conceptos_procesados)} concepto(s), retención total: ${resultado_final.valor_retencion:,.2f}")
+        return resultado_final
+
+    # ===============================
     # FUNCIONES PÚBLICAS PARA MAIN.PY
     # ===============================
-    
+
     def liquidar_factura(self, analisis_factura: AnalisisFactura, nit_administrativo: str) -> ResultadoLiquidacion:
         """
         Función pública para liquidar facturas nacionales.
@@ -1639,8 +2230,15 @@ class LiquidadorRetencion:
 
             logger.info(f"Objeto AnalisisFactura creado: {len(conceptos)} conceptos, facturación_exterior={analisis_obj.es_facturacion_exterior}")
 
-            # LIQUIDAR CON OBJETO VÁLIDO
-            resultado = self.liquidar_factura(analisis_obj, nit_administrativo)
+            # DECIDIR FLUJO: Extranjera (v3.0 validaciones) o Nacional (flujo normal)
+            if es_facturacion_exterior:
+                logger.info("Detectada facturación extranjera - Usando liquidar_factura_extranjera_con_validaciones (v3.0)")
+                # Para facturación extranjera, usar datos_analisis (dict) con validaciones manuales
+                resultado = self.liquidar_factura_extranjera_con_validaciones(datos_analisis)
+            else:
+                logger.info("Detectada facturación nacional - Usando liquidar_factura (flujo normal)")
+                # Para facturación nacional, usar objeto AnalisisFactura
+                resultado = self.liquidar_factura(analisis_obj, nit_administrativo)
 
             # CONVERTIR RESULTADO CON NUEVA ESTRUCTURA
             resultado_dict = {
@@ -1655,8 +2253,13 @@ class LiquidadorRetencion:
                 # NUEVOS CAMPOS CON ESTRUCTURA MEJORADA:
                 "conceptos_aplicados": [concepto.dict() for concepto in resultado.conceptos_aplicados] if resultado.conceptos_aplicados else [],
                 "resumen_conceptos": resultado.resumen_conceptos,
-                  # NUEVO: Incluir estado en respuesta
             }
+
+            # AGREGAR pais_proveedor si es facturación extranjera
+            if es_facturacion_exterior:
+                pais_proveedor = datos_analisis.get("pais_proveedor", "")
+                resultado_dict["pais_proveedor"] = pais_proveedor
+                logger.info(f"Agregado pais_proveedor al resultado: {pais_proveedor}")
 
             if resultado.puede_liquidar:
                 logger.info(f"Retefuente liquidada exitosamente: ${resultado.valor_retencion:,.2f}")

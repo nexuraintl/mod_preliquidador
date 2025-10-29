@@ -103,6 +103,8 @@ from config import (
     nit_aplica_tasa_prodeporte,  #  NUEVA IMPORTACIÓN TASA PRODEPORTE
     nit_aplica_timbre,  #  NUEVA IMPORTACIÓN TIMBRE
     detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
+    crear_resultado_recurso_extranjero_retefuente,  #  HELPER RECURSO EXTRANJERO
+    crear_resultado_recurso_extranjero_iva,  #  HELPER RECURSO EXTRANJERO
 
 )
 
@@ -752,8 +754,8 @@ async def procesar_facturas_integrado(
         logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
         logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
-        
-        clasificacion, es_consorcio, es_facturacion_extranjera = await clasificador.clasificar_documentos(
+
+        clasificacion, es_consorcio, es_recurso_extranjero, es_facturacion_extranjera = await clasificador.clasificar_documentos(
             archivos_directos=archivos_directos,
             textos_preprocesados=textos_preprocesados,
             proveedor=proveedor
@@ -788,6 +790,7 @@ async def procesar_facturas_integrado(
             "clasificacion": clasificacion,
             "es_consorcio": es_consorcio,
             "es_facturacion_extranjera": es_facturacion_extranjera,
+            "es_recurso_extranjero": es_recurso_extranjero,
             "impuestos_aplicables": impuestos_a_procesar,
             "procesamiento_hibrido": {
                 "multimodalidad_activa": True,
@@ -814,8 +817,8 @@ async def procesar_facturas_integrado(
         logger.info(" Preparando cache para solucionar concurrencia en workers paralelos")
         cache_archivos = await clasificador.preparar_archivos_para_workers_paralelos(archivos_directos)
 
-        # Tarea 1: Análisis de Retefuente (si aplica)
-        if aplica_retencion:
+        # Tarea 1: Análisis de Retefuente (si aplica y no es recurso extranjero)
+        if aplica_retencion and not es_recurso_extranjero:
             if es_consorcio:
                 tarea_retefuente = clasificador.analizar_consorcio(
                     documentos_clasificados,
@@ -834,16 +837,20 @@ async def procesar_facturas_integrado(
                     proveedor=proveedor
                 )
             tareas_analisis.append(("retefuente", tarea_retefuente))
+        elif aplica_retencion and es_recurso_extranjero:
+            logger.info(" Retefuente: No se procesará - Recurso de fuente extranjera detectado")
         
         # Tarea 2: Análisis de Impuestos Especiales (si aplican)
         if aplica_estampilla or aplica_obra_publica:
             tarea_impuestos_especiales = clasificador.analizar_estampilla(documentos_clasificados, None, cache_archivos)
             tareas_analisis.append(("impuestos_especiales", tarea_impuestos_especiales))
         
-        # Tarea 3: Análisis de IVA (si aplica) - NUEVA TAREA
-        if aplica_iva:
+        # Tarea 3: Análisis de IVA (si aplica y no es recurso extranjero) - NUEVA TAREA
+        if aplica_iva and not es_recurso_extranjero:
             tarea_iva = clasificador.analizar_iva(documentos_clasificados, None, cache_archivos)
             tareas_analisis.append(("iva_reteiva", tarea_iva))
+        elif aplica_iva and es_recurso_extranjero:
+            logger.info(" IVA/ReteIVA: No se procesará - Recurso de fuente extranjera detectado")
         
         # Tarea 4: Análisis de Estampillas Generales -  NUEVA FUNCIONALIDAD
         # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
@@ -1084,16 +1091,22 @@ async def procesar_facturas_integrado(
                 
                 #  ESTRUCTURA FINAL CONSOLIDADA
                 if hasattr(resultado_retefuente, 'valor_retencion'):
-                    
+
                     resultado_final["impuestos"]["retefuente"] = {
                     "aplica": resultado_retefuente_dict.get("aplica", False),
-                    "estado": resultado_retefuente_dict.get("estado", "Preliquidacion sin finalizar"), 
+                    "estado": resultado_retefuente_dict.get("estado", "Preliquidacion sin finalizar"),
                     "valor_factura_sin_iva": resultado_retefuente_dict.get("valor_factura_sin_iva", 0.0),
                     "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
                     "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
                     "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
                     "observaciones": resultado_retefuente_dict.get("observaciones", []),
                     }
+
+                    # Agregar pais_proveedor si es facturación extranjera
+                    if es_facturacion_extranjera and "pais_proveedor" in resultado_retefuente_dict:
+                        resultado_final["impuestos"]["retefuente"]["pais_proveedor"] = resultado_retefuente_dict.get("pais_proveedor", "")
+                        logger.info(f" País proveedor: {resultado_retefuente_dict.get('pais_proveedor')}")
+
                     logger.info(f" Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0.0):,.2f}")
 
                 else:
@@ -1103,6 +1116,22 @@ async def procesar_facturas_integrado(
             except Exception as e:
                 logger.error(f" Error liquidando retefuente: {e}")
                 resultado_final["impuestos"]["retefuente"] = {"error": str(e), "aplica": False}
+
+        elif aplica_retencion and es_recurso_extranjero:
+            # Recurso extranjero: crear estructura vacía sin procesamiento
+            logger.info(" Retefuente: Aplicando estructura de recurso extranjero")
+            resultado_retefuente = crear_resultado_recurso_extranjero_retefuente()
+
+            resultado_final["impuestos"]["retefuente"] = {
+                "aplica": resultado_retefuente.aplica,
+                "estado": resultado_retefuente.estado,
+                "valor_factura_sin_iva": resultado_retefuente.valor_factura_sin_iva,
+                "valor_retencion": resultado_retefuente.valor_retencion,
+                "valor_base": resultado_retefuente.valor_base_retencion,
+                "conceptos_aplicados": resultado_retefuente.conceptos_aplicados,
+                "observaciones": resultado_retefuente.mensajes_error,
+            }
+            logger.info(" Retefuente: No aplica (Recurso de fuente extranjera)")
 
         # Liquidar Impuestos Especiales (Estampilla Pro Universidad Nacional + Obra Pública)
         if "impuestos_especiales" in resultados_analisis and (aplica_estampilla or aplica_obra_publica):
@@ -1162,7 +1191,15 @@ async def procesar_facturas_integrado(
             except Exception as e:
                 logger.error(f" Error liquidando IVA/ReteIVA: {e}")
                 resultado_final["impuestos"]["iva_reteiva"] = {"error": str(e), "aplica": False}
-        
+
+        elif aplica_iva and es_recurso_extranjero:
+            # Recurso extranjero: crear estructura vacía sin procesamiento
+            logger.info(" IVA/ReteIVA: Aplicando estructura de recurso extranjero")
+            resultado_iva = crear_resultado_recurso_extranjero_iva()
+
+            resultado_final["impuestos"]["iva_reteiva"] = resultado_iva.get("iva_reteiva", {})
+            logger.info(" IVA/ReteIVA: No aplica (Recurso de fuente extranjera)")
+
         # Liquidar Estampillas Generales - NUEVA LIQUIDACIÓN
         if "estampillas_generales" in resultados_analisis:
             try:
