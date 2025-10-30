@@ -1,5 +1,838 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.0.12 - REFACTOR: ICA v3.0 - Formato Optimizado de Actividades] - 2025-10-29
+
+### 🔄 MÓDULO ICA (INDUSTRIA Y COMERCIO) v3.0.0
+
+#### DESCRIPCIÓN GENERAL
+Refactorización completa del módulo ICA para optimizar el análisis de actividades facturadas y su relación con actividades de la base de datos. El nuevo formato simplifica la estructura de datos, elimina redundancia y facilita el cálculo de ICA por ubicación.
+
+**Cambio arquitectónico fundamental**:
+- ✅ **Formato Anterior**: Cada actividad facturada tenía su propia base gravable y actividades relacionadas anidadas
+- ✅ **Formato Nuevo v3.0**: Todas las actividades facturadas se relacionan con una lista única de actividades de BD, usando un solo `valor_factura_sin_iva` como base
+
+---
+
+### 🆕 AÑADIDO
+
+#### Campo `base_gravable_ubicacion`
+**Archivo**: `Liquidador/liquidador_ica.py`
+
+**Descripción**: Nueva propiedad en el resultado de liquidación que representa la base gravable específica para cada ubicación.
+
+**Cálculo**:
+```python
+base_gravable_ubicacion = valor_factura_sin_iva * (porcentaje_ubicacion / 100)
+```
+
+**Beneficio**: Transparencia total en el cálculo distribuido por ubicación.
+
+---
+
+### 🔧 CAMBIADO
+
+#### 1. Prompt de Gemini - Segunda Llamada
+**Archivo**: `Clasificador/prompt_ica.py` (líneas 238-473)
+**Función**: `crear_prompt_relacionar_actividades()`
+
+**FORMATO JSON ANTERIOR**:
+```json
+{
+  "actividades_facturadas": [
+    {
+      "nombre_actividad": "Servicios de consultoría",
+      "base_gravable": 5000000.0,
+      "actividades_relacionadas": [
+        {
+          "nombre_act_rel": "Servicios de consultoría en informática",
+          "codigo_actividad": 620100,
+          "codigo_ubicacion": 1
+        }
+      ]
+    }
+  ]
+}
+```
+
+**FORMATO JSON NUEVO v3.0**:
+```json
+{
+  "actividades_facturadas": ["Servicios de consultoría", "Soporte técnico"],
+  "actividades_relacionadas": [
+    {
+      "nombre_act_rel": "Servicios de consultoría en informática",
+      "codigo_actividad": 620100,
+      "codigo_ubicacion": 1
+    }
+  ],
+  "valor_factura_sin_iva": 5000000.0
+}
+```
+
+**Cambios clave**:
+- `actividades_facturadas`: Lista simple de strings (antes: objetos complejos)
+- `actividades_relacionadas`: Lista única no anidada (antes: anidada por actividad)
+- `valor_factura_sin_iva`: Nuevo campo con valor único para todas las actividades
+
+---
+
+#### 2. Validaciones Manuales
+**Archivo**: `Clasificador/clasificador_ica.py` (líneas 827-924)
+**Función**: `_validar_actividades_manualmente()`
+
+**Reescritura completa con 5 nuevas validaciones**:
+
+1. **Validación actividades_facturadas vacía**
+   - Estado: "Preliquidacion sin finalizar"
+   - Observación: "No se pudo identificar las actividades facturadas en la documentación"
+
+2. **Validación valor_factura_sin_iva > 0**
+   - Estado: "Preliquidacion sin finalizar"
+   - Observación: "No se pudo identificar el valor de la factura sin IVA"
+
+3. **Validación nombre_act_rel no vacío**
+   - Estado: "No aplica impuesto"
+   - Observación: "Las actividades facturadas: [lista] no se encontró relación con la BD"
+
+4. **Validación codigo_actividad y codigo_ubicacion > 0**
+   - Estado: "Preliquidacion sin finalizar"
+   - Observación: "No se pudo relacionar correctamente la actividad {nombre_act_rel}"
+
+5. **Validación códigos de ubicación únicos**
+   - Estado: "Preliquidacion sin finalizar"
+   - Observación: Error del análisis (múltiples actividades con mismo codigo_ubicacion)
+
+**Nueva firma**:
+```python
+def _validar_actividades_manualmente(
+    self,
+    actividades_facturadas: List[str],  # Antes: List[Dict]
+    actividades_relacionadas: List[Dict[str, Any]],  # Nuevo parámetro
+    valor_factura_sin_iva: float,  # Nuevo parámetro
+    ubicaciones_identificadas: List[Dict[str, Any]]
+) -> Dict[str, Any]
+```
+
+---
+
+#### 3. Parseo de Respuesta Gemini
+**Archivo**: `Clasificador/clasificador_ica.py` (PASO 6, líneas 240-270)
+**Función**: `analizar_ica()` y `_relacionar_actividades_gemini()`
+
+**Cambios en retorno**:
+```python
+# Antes
+return actividades_facturadas  # List[Dict]
+
+# Ahora
+return {
+    "actividades_facturadas": actividades_facturadas,  # List[str]
+    "actividades_relacionadas": actividades_relacionadas,  # List[Dict]
+    "valor_factura_sin_iva": valor_factura_sin_iva  # float
+}
+```
+
+**Datos pasados al liquidador (PASO 8)**:
+```python
+resultado_base["actividades_facturadas"] = actividades_facturadas
+resultado_base["actividades_relacionadas"] = actividades_relacionadas
+resultado_base["valor_factura_sin_iva"] = valor_factura_sin_iva
+```
+
+---
+
+#### 4. Liquidación de ICA
+**Archivo**: `Liquidador/liquidador_ica.py` (líneas 55-169)
+**Función**: `liquidar_ica()`
+
+**Cambios en extracción de datos**:
+```python
+# Extraer datos validados (NUEVO FORMATO v3.0)
+actividades_facturadas = analisis_clasificador.get("actividades_facturadas", [])  # List[str]
+actividades_relacionadas = analisis_clasificador.get("actividades_relacionadas", [])  # List[Dict]
+valor_factura_sin_iva = analisis_clasificador.get("valor_factura_sin_iva", 0.0)  # float
+```
+
+**Cambios en procesamiento**:
+```python
+# Antes: Procesar cada actividad facturada
+for act_fact in actividades_facturadas:
+    actividad_liquidada = self._liquidar_actividad_facturada(act_fact, ubicaciones_identificadas)
+
+# Ahora: Procesar cada actividad relacionada directamente
+for act_rel in actividades_relacionadas:
+    actividad_liquidada = self._liquidar_actividad_facturada(
+        act_rel, valor_factura_sin_iva, ubicaciones_identificadas
+    )
+```
+
+---
+
+#### 5. Cálculo de Valores
+**Archivo**: `Liquidador/liquidador_ica.py` (líneas 171-285)
+**Función**: `_liquidar_actividad_facturada()`
+
+**Reescritura completa de la lógica**:
+
+**Nueva firma**:
+```python
+def _liquidar_actividad_facturada(
+    self,
+    actividad_relacionada: Dict[str, Any],  # Antes: actividad_facturada
+    valor_factura_sin_iva: float,  # NUEVO parámetro
+    ubicaciones_identificadas: List[Dict[str, Any]]
+) -> Dict[str, Any]
+```
+
+**Nuevo flujo de cálculo**:
+```python
+# PASO 1: Calcular base gravable por ubicación
+base_gravable_ubicacion = valor_factura_sin_iva * (porcentaje_ubicacion / 100.0)
+
+# PASO 2: Obtener tarifa de BD
+resultado_tarifa = self._obtener_tarifa_bd(codigo_ubicacion, codigo_actividad)
+
+# PASO 3: Calcular ICA
+valor_ica = base_gravable_ubicacion * (tarifa / 100.0)
+```
+
+**Antes**:
+```python
+# Base gravable individual por actividad
+base_gravable = actividad_facturada.get("base_gravable", 0.0)
+valor = base_gravable * tarifa * porcentaje_ubicacion
+```
+
+---
+
+#### 6. Estructura de Respuesta Final
+**Archivo**: `Liquidador/liquidador_ica.py`
+
+**ESTRUCTURA ANTERIOR**:
+```json
+{
+  "aplica": true,
+  "estado": "Preliquidado",
+  "valor_total_ica": 45000.0,
+  "actividades_facturadas": [
+    {
+      "nombre_actividad_fact": "Servicios de consultoría",
+      "base_gravable": 5000000.0,
+      "actividades_relacionada": [
+        {
+          "nombre_act_rel": "Servicios de consultoría en informática",
+          "tarifa": 9.66,
+          "valor": 45000.0,
+          "nombre_ubicacion": "BOGOTA D.C.",
+          "codigo_ubicacion": 1,
+          "porcentaje_ubi": 100.0
+        }
+      ]
+    }
+  ]
+}
+```
+
+**ESTRUCTURA NUEVA v3.0**:
+```json
+{
+  "aplica": true,
+  "estado": "Preliquidado",
+  "valor_total_ica": 45000.0,
+  "actividades_facturadas": ["Servicios de consultoría", "Soporte técnico"],
+  "actividades_relacionadas": [
+    {
+      "nombre_act_rel": "Servicios de consultoría en informática",
+      "codigo_actividad": 620100,
+      "codigo_ubicacion": 1,
+      "nombre_ubicacion": "BOGOTA D.C.",
+      "base_gravable_ubicacion": 5000000.0,
+      "tarifa": 9.66,
+      "porc_ubicacion": 100.0,
+      "valor_ica": 483000.0
+    }
+  ],
+  "observaciones": [],
+  "fecha_liquidacion": "2025-10-29T18:15:04.564189"
+}
+```
+
+**Cambios clave**:
+- `actividades_facturadas`: Lista simple de strings
+- `actividades_relacionadas`: Nueva estructura con campos adicionales
+- `base_gravable_ubicacion`: **NUEVO** - Base gravable por ubicación
+- `valor_ica`: Antes `valor`
+- Campos adicionales: `codigo_actividad`, `codigo_ubicacion`
+
+---
+
+### ✅ VENTAJAS ARQUITECTÓNICAS
+
+1. **Eliminación de redundancia**:
+   - Una sola base gravable (`valor_factura_sin_iva`) para todas las actividades
+   - Simplifica el análisis de Gemini
+
+2. **Transparencia en cálculos**:
+   - `base_gravable_ubicacion` muestra distribución por ubicación
+   - Trazabilidad completa del cálculo
+
+3. **Separación de responsabilidades mejorada (SRP)**:
+   - Gemini: Solo identificación de datos
+   - Python: Todos los cálculos y validaciones
+
+4. **Validaciones más robustas**:
+   - 5 validaciones específicas y claras
+   - Mensajes de error más descriptivos
+
+5. **Formato más simple para consumo**:
+   - `actividades_facturadas`: Lista simple
+   - Fácil de leer y procesar
+
+---
+
+### 📊 IMPACTO
+
+**Módulos afectados**: 4
+- `Clasificador/prompt_ica.py`
+- `Clasificador/clasificador_ica.py`
+- `Liquidador/liquidador_ica.py`
+- `Liquidador/liquidador_sobretasa_b.py` (compatibilidad)
+
+**Funciones modificadas**: 7
+- `crear_prompt_relacionar_actividades()`
+- `validar_estructura_actividades()`
+- `_relacionar_actividades_gemini()`
+- `_validar_actividades_manualmente()` (reescrita)
+- `liquidar_ica()`
+- `_liquidar_actividad_facturada()` (reescrita)
+- `_extraer_ubicaciones_ica()` (sobretasa bomberil - compatibilidad)
+
+**Funciones sin cambios**: 7
+- `crear_prompt_identificacion_ubicaciones()` (primera llamada Gemini)
+- `_identificar_ubicaciones_gemini()`
+- `_validar_ubicaciones_manualmente()`
+- `_obtener_ubicaciones_bd()`
+- `_obtener_actividades_por_ubicacion()`
+- `_obtener_tarifa_bd()`
+- `_obtener_porcentaje_ubicacion()`
+
+**Integración con main.py**: ✅ Sin cambios necesarios
+
+**Compatibilidad hacia atrás**: ⚠️ **Breaking change** - Requiere nueva versión de base de datos de prueba
+
+---
+
+### 🔧 COMPATIBILIDAD: Sobretasa Bomberil
+
+#### Función `_extraer_ubicaciones_ica()`
+**Archivo**: `Liquidador/liquidador_sobretasa_b.py` (líneas 220-280)
+
+**PROBLEMA DETECTADO**:
+El código anterior intentaba acceder a la estructura antigua de ICA:
+```python
+# FORMATO ANTIGUO (INCOMPATIBLE)
+actividades_facturadas = resultado_ica.get("actividades_facturadas", [])
+primera_actividad = actividades_facturadas[0]  # Era un dict
+actividades_relacionadas = primera_actividad.get("actividades_relacionada", [])
+valor_ica = act_rel.get("valor", 0.0)  # Campo "valor"
+```
+
+**SOLUCIÓN APLICADA**:
+Adaptación al nuevo formato v3.0:
+```python
+# NUEVO FORMATO v3.0 (COMPATIBLE)
+actividades_relacionadas = resultado_ica.get("actividades_relacionadas", [])  # Directamente
+valor_ica = act_rel.get("valor_ica", 0.0)  # Campo "valor_ica"
+```
+
+**Cambios específicos**:
+1. ✅ Lectura directa de `actividades_relacionadas` (ya no anidado)
+2. ✅ Cambio de campo `"valor"` a `"valor_ica"`
+3. ✅ Eliminación de acceso a `actividades_facturadas[0]`
+
+**Beneficio**: Sobretasa Bomberil ahora es 100% compatible con ICA v3.0
+
+---
+
+### ✅ GARANTÍA DE CALIDAD: Estructura Consistente de Respuesta
+
+#### Problema Identificado
+En versiones anteriores, la estructura de respuesta de ICA no era consistente en todos los casos de error, lo que podía causar problemas en módulos dependientes como Sobretasa Bomberil.
+
+#### Solución Implementada
+
+**1. Resultado Base Completo**
+**Archivos**: `clasificador_ica.py:159-168`, `liquidador_ica.py:76-86`
+
+Todos los campos del formato v3.0 ahora están presentes en `resultado_base`:
+```python
+resultado_base = {
+    "aplica": False,
+    "estado": "No aplica impuesto",
+    "valor_total_ica": 0.0,
+    "actividades_facturadas": [],          # ✅ Siempre presente
+    "actividades_relacionadas": [],        # ✅ NUEVO - Siempre presente
+    "valor_factura_sin_iva": 0.0,         # ✅ NUEVO - Siempre presente
+    "observaciones": [],
+    "fecha_analisis": datetime.now().isoformat()
+}
+```
+
+**2. Preservación en Casos de Error**
+**Archivo**: `clasificador_ica.py:281-284`
+
+Cuando la validación falla, se preservan los datos extraídos:
+```python
+# Preservar estructura completa con datos extraídos
+resultado_base["actividades_facturadas"] = actividades_facturadas
+resultado_base["actividades_relacionadas"] = actividades_relacionadas
+resultado_base["valor_factura_sin_iva"] = valor_factura_sin_iva
+```
+
+**3. Preservación en Retornos Tempranos del Liquidador**
+**Archivo**: `liquidador_ica.py:107-113, 148-156, 158-164`
+
+Todos los retornos tempranos preservan la estructura:
+```python
+# Caso 1: Sin actividades relacionadas
+resultado["actividades_facturadas"] = actividades_facturadas
+resultado["valor_factura_sin_iva"] = valor_factura_sin_iva  # ✅ Preservado
+
+# Caso 2: No se liquidó ninguna actividad
+resultado["actividades_facturadas"] = actividades_facturadas
+resultado["valor_factura_sin_iva"] = valor_factura_sin_iva  # ✅ Preservado
+
+# Caso 3: Éxito
+resultado["valor_factura_sin_iva"] = valor_factura_sin_iva  # ✅ Preservado
+```
+
+**4. Preservación en Manejo de Excepciones**
+**Archivo**: `liquidador_ica.py:169-179`
+
+El bloque `except` preserva datos del clasificador:
+```python
+except Exception as e:
+    resultado["estado"] = "Preliquidacion sin finalizar"
+    resultado["observaciones"].append(f"Error en liquidación: {str(e)}")
+
+    # Preservar estructura completa con datos del clasificador
+    resultado["actividades_facturadas"] = analisis_clasificador.get("actividades_facturadas", [])
+    resultado["actividades_relacionadas"] = analisis_clasificador.get("actividades_relacionadas", [])
+    resultado["valor_factura_sin_iva"] = analisis_clasificador.get("valor_factura_sin_iva", 0.0)
+
+    return resultado
+```
+
+**Clasificador**: El bloque `except` usa `resultado_base` que ya tiene todos los campos inicializados ✅
+
+**Beneficio**:
+- ✅ Estructura JSON **100% consistente** en todos los casos
+- ✅ Compatibilidad garantizada con módulos dependientes
+- ✅ Debugging más fácil (siempre los mismos campos)
+- ✅ Prevención de errores de acceso a campos inexistentes
+
+---
+
+## [3.0.11 - MEJORA: IVA/ReteIVA v2.1 - Facturación Extranjera] - 2025-10-29
+
+### 🔧 MÓDULO IVA/RETEIVA v2.1.0
+
+#### DESCRIPCIÓN GENERAL
+Implementación de flujo diferenciado para facturación extranjera en IVA/ReteIVA, separando la lógica de validación según el origen de la factura.
+
+**Principio arquitectónico**:
+- ✅ **Facturación Nacional**: Validaciones completas (RUT, responsabilidad IVA, categorías)
+- ✅ **Facturación Extranjera**: Validación simplificada + cálculo manual de IVA (19%)
+
+---
+
+### 🆕 AÑADIDO
+
+#### Método `_validar_facturacion_extranjera`
+**Archivo**: `Liquidador/liquidador_iva.py` (líneas 728-785)
+
+**Responsabilidad (SRP)**:
+- Solo validar `valor_subtotal_sin_iva > 0`
+- Calcular IVA manualmente: `valor_iva = valor_subtotal * 0.19`
+- Retornar `ResultadoValidacionIVA` con valores calculados
+
+**Flujo simplificado para facturación extranjera**:
+1. **Validación IVA**: Solo `valor_subtotal_sin_iva > 0`
+   - Si valor = 0 → estado "Preliquidacion sin finalizar"
+   - Si valor > 0 → calcular IVA = `valor_subtotal * 19%`
+2. **Validación ReteIVA**: Solo `valor_iva_calculado > 0`
+   - Si IVA = 0 → no aplica ReteIVA
+   - Si IVA > 0 → calcular ReteIVA con tarifa 100%
+3. **NO se valida**: RUT, responsabilidad IVA, categoría, estado
+
+---
+
+### 🔧 CAMBIADO
+
+#### Función `liquidar_iva_completo`
+**Archivo**: `Liquidador/liquidador_iva.py` (líneas 593-698)
+
+**Modificación en PASO 2**: Bifurcación validación IVA según tipo de facturación
+```python
+if datos_extraccion.es_facturacion_extranjera:
+    # Flujo simplificado para facturación extranjera
+    resultado_validacion = self._validar_facturacion_extranjera(datos_extraccion)
+else:
+    # Flujo normal para facturación nacional
+    resultado_validacion = self.validador_iva.validar_precondiciones(datos_extraccion)
+```
+
+**Modificación en PASO 4**: Bifurcación validación ReteIVA según tipo de facturación
+```python
+if datos_extraccion.es_facturacion_extranjera:
+    # Facturación extranjera: solo validar valor IVA > 0
+    if resultado_validacion.valor_iva_calculado <= 0:
+        return self._crear_respuesta_sin_reteiva(...)
+    # Si IVA > 0, continuar al cálculo con tarifa 100%
+else:
+    # Facturación nacional: validaciones completas
+    debe_aplicar, razon = self.validador_reteiva.debe_aplicar_reteiva(...)
+    # Validaciones: responsable IVA, valor > 0, categoría, estado
+```
+
+**Docstring actualizado**: Documenta ambos flujos completos (nacional vs extranjero)
+
+---
+
+### ✅ VENTAJAS ARQUITECTÓNICAS
+
+1. **Separación de responsabilidades (SRP)**:
+   - Método dedicado para facturación extranjera
+   - No contamina validaciones de facturación nacional
+
+2. **Compatibilidad total**:
+   - Flujo nacional sin cambios
+   - Extensión sin modificación (OCP)
+
+3. **Mantenibilidad**:
+   - Lógica clara y separada
+   - Fácil de testear independientemente
+
+---
+
+### 📊 IMPACTO
+
+**Módulos afectados**: 1
+- `Liquidador/liquidador_iva.py`
+
+**Nuevos métodos**: 1
+- `_validar_facturacion_extranjera()`
+
+**Métodos modificados**: 1
+- `liquidar_iva_completo()`
+
+**Compatibilidad hacia atrás**: ✅ 100% compatible
+
+---
+
+## [3.0.10 - NUEVA FUNCIONALIDAD: Pagos al Exterior v3.0] - 2025-10-29
+
+### 🌍 ARQUITECTURA v3.0: RETENCIÓN EN LA FUENTE PARA PAGOS AL EXTERIOR
+
+#### DESCRIPCIÓN GENERAL
+Implementación completa de retención en la fuente para pagos al exterior con arquitectura revolucionaria que separa totalmente la identificación de IA de las validaciones y cálculos de Python.
+
+**Principio arquitectónico fundamental**:
+- ❌ **Gemini NO calcula**: tarifas, convenios, retenciones
+- ✅ **Gemini SOLO identifica**: país, conceptos facturados, valores
+- ✅ **Python VALIDA Y CALCULA**: todo el resto
+
+---
+
+### 🗄️ FASE 1: CAPA DE BASE DE DATOS
+
+#### ABSTRACT METHODS EN DatabaseInterface
+**Archivo**: `database/database.py` (líneas 49-57)
+
+```python
+@abstractmethod
+def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+    """Obtiene los conceptos de retención para pagos al exterior"""
+    pass
+
+@abstractmethod
+def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+    """Obtiene la lista de países con convenio de doble tributación"""
+    pass
+```
+
+#### IMPLEMENTACIÓN EN SupabaseDatabase
+**Archivo**: `database/database.py` (líneas 383-497)
+
+**Tablas Supabase consultadas**:
+1. **`conceptos_extranjeros`**: 8 conceptos con tarifas normal y convenio
+   - Campos: `index`, `nombre_concepto`, `base_pesos`, `tarifa_normal`, `tarifa_convenio`
+   - Manejo automático de formatos (comas → puntos)
+
+2. **`paises_convenio_tributacion`**: Países con convenio de doble tributación
+   - Campo: `nombre_pais`
+   - Normalización de nombres para comparación
+
+#### WRAPPERS EN DatabaseManager
+**Archivo**: `database/database.py` (líneas 607-628)
+
+```python
+def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+    """Delega a la implementación configurada (Strategy Pattern)"""
+    return self.db_connection.obtener_conceptos_extranjeros()
+
+def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+    """Delega a la implementación configurada (Strategy Pattern)"""
+    return self.db_connection.obtener_paises_con_convenio()
+```
+
+---
+
+### 📝 FASE 2: PROMPT SIMPLIFICADO
+
+#### REFACTORIZACIÓN COMPLETA DE PROMPT_ANALISIS_FACTURA_EXTRANJERA
+**Archivo**: `Clasificador/prompt_clasificador.py` (líneas 1265-1408)
+
+**Cambios críticos**:
+- ❌ **ELIMINADO**: `paises_convenio`, `preguntas_fuente`, cálculo de tarifas
+- ✅ **NUEVO**: `conceptos_extranjeros_simplificado` (solo {index: nombre})
+- ✅ **ENFOQUE**: SOLO extracción e identificación
+
+**Estructura de salida simplificada**:
+```json
+{
+    "pais_proveedor": "string o empty string",
+    "conceptos_identificados": [{
+        "concepto_facturado": "texto literal",
+        "concepto": "nombre del diccionario",
+        "concepto_index": 123,
+        "base_gravable": 0.0
+    }],
+    "valor_total": 0.0,
+    "naturaleza_tercero": null,
+    "observaciones": ["observación 1"]
+}
+```
+
+**Instrucciones al prompt**:
+> "TU ÚNICA RESPONSABILIDAD: Extraer datos e identificar conceptos. NO hagas cálculos, NO apliques tarifas, NO determines si aplica retención. Eso lo hará Python después con validaciones manuales."
+
+---
+
+### 🧮 FASE 3: VALIDACIONES MANUALES EN LIQUIDADOR
+
+#### 8 FUNCIONES PRIVADAS DE VALIDACIÓN (SRP)
+**Archivo**: `Liquidador/liquidador.py` (líneas 1357-1659)
+
+| Función | Responsabilidad | Líneas |
+|---------|----------------|--------|
+| `_validar_pais_proveedor_extranjera()` | Valida país no vacío | 1361-1386 |
+| `_validar_concepto_facturado_extranjera()` | Valida extracción de concepto | 1388-1427 |
+| `_validar_concepto_mapeado_extranjera()` | Valida mapeo a BD | 1429-1458 |
+| `_validar_base_gravable_extranjera()` | Valida base > 0 | 1460-1488 |
+| `_validar_valor_total_extranjera()` | Valida valor total > 0 | 1490-1515 |
+| `_obtener_tarifa_aplicable_extranjera()` | Consulta BD + decide convenio/normal | 1517-1612 |
+| `_validar_base_minima_extranjera()` | Verifica base >= mínimo | 1614-1638 |
+| `_calcular_retencion_extranjera()` | Cálculo: base × tarifa | 1640-1658 |
+
+#### FUNCIONES DE CONSTRUCCIÓN DE RESULTADOS
+**Archivo**: `Liquidador/liquidador.py`
+
+1. **`_crear_resultado_extranjera_error()`** (líneas 1660-1695)
+   - Maneja errores de validación
+   - Siempre agrega "Facturación extranjera" a observaciones
+
+2. **`_crear_resultado_extranjera()`** (líneas 1697-1737)
+   - Procesa múltiples conceptos
+   - Acumula retenciones de todos los conceptos válidos
+   - Genera resumen completo
+
+#### FUNCIÓN PRINCIPAL: liquidar_factura_extranjera_con_validaciones()
+**Archivo**: `Liquidador/liquidador.py` (líneas 1739-1909)
+
+**Flujo de validaciones secuenciales (9 pasos)**:
+1. ✅ Validar país_proveedor no vacío
+2. ✅ Validar concepto_facturado extraído
+3. ✅ Validar concepto mapeado a BD
+4. ✅ Validar base_gravable > 0
+5. ✅ Validar valor_total > 0
+6. 🔄 Para cada concepto:
+   - Obtener tarifa aplicable (convenio o normal)
+   - Validar base mínima
+   - Calcular retención
+7. ✅ Crear resultado final con todos los conceptos
+
+**Características**:
+- Procesa **TODOS** los conceptos en una factura
+- Se detiene en primer error crítico
+- Acumula advertencias para conceptos individuales
+- Siempre agrega "Facturación extranjera" a observaciones
+
+---
+
+### 🔗 FASE 4: INTEGRACIÓN COMPLETA
+
+#### CLASIFICADOR: Método para conceptos simplificados
+**Archivo**: `Clasificador/clasificador.py` (líneas 2382-2435)
+
+```python
+def _obtener_conceptos_extranjeros_simplificado(self) -> dict:
+    """
+    Obtiene conceptos SIMPLIFICADOS (solo index y nombre) desde BD.
+    v3.0: Gemini SOLO identifica, NO calcula.
+    Returns: {index: nombre_concepto}
+    """
+```
+
+**Fallback hardcodeado**: 8 conceptos básicos si BD no disponible
+
+#### CLASIFICADOR: Actualización de llamadas al prompt
+**Archivo**: `Clasificador/clasificador.py`
+
+**ANTES (v2.x)**:
+```python
+conceptos_extranjeros_dict = self._obtener_conceptos_extranjeros()
+paises_convenio = self._obtener_paises_convenio()
+preguntas_fuente = self._obtener_preguntas_fuente_nacional()
+prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(..., conceptos, paises, preguntas, ...)
+```
+
+**AHORA (v3.0)**:
+```python
+conceptos_simplificado = self._obtener_conceptos_extranjeros_simplificado()
+prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(..., conceptos_simplificado, ...)
+```
+
+#### CLASIFICADOR: Corrección modelo AnalisisFactura
+**Archivo**: `Clasificador/clasificador.py` (línea 141)
+
+```python
+class AnalisisFactura(BaseModel):
+    conceptos_identificados: List[ConceptoIdentificado]
+    naturaleza_tercero: Optional[NaturalezaTercero]
+    articulo_383: Optional[InformacionArticulo383] = None
+    es_facturacion_exterior: bool = False
+    valor_total: Optional[float]
+    observaciones: List[str]
+    pais_proveedor: Optional[str] = None  # v3.0: NUEVO CAMPO
+```
+
+**Corrección adicional** (líneas 798-801):
+```python
+# Para facturación extranjera, agregar naturaleza_tercero como None
+if es_facturacion_extranjera and "naturaleza_tercero" not in resultado:
+    resultado["naturaleza_tercero"] = None
+```
+
+#### LIQUIDADOR: Switch de flujo
+**Archivo**: `Liquidador/liquidador.py` (líneas 2196-2204)
+
+```python
+if es_facturacion_exterior:
+    logger.info("Detectada facturación extranjera - Usando liquidar_factura_extranjera_con_validaciones (v3.0)")
+    resultado = self.liquidar_factura_extranjera_con_validaciones(datos_analisis)
+else:
+    logger.info("Detectada facturación nacional - Usando liquidar_factura (flujo normal)")
+    resultado = self.liquidar_factura(analisis_obj, nit_administrativo)
+```
+
+#### LIQUIDADOR: Campo pais_proveedor en resultado
+**Archivo**: `Liquidador/liquidador.py` (líneas 2221-2225)
+
+```python
+if es_facturacion_exterior:
+    pais_proveedor = datos_analisis.get("pais_proveedor", "")
+    resultado_dict["pais_proveedor"] = pais_proveedor
+    logger.info(f"Agregado pais_proveedor al resultado: {pais_proveedor}")
+```
+
+#### MAIN: Respuesta final con pais_proveedor
+**Archivo**: `main.py` (líneas 1105-1108)
+
+```python
+if es_facturacion_extranjera and "pais_proveedor" in resultado_retefuente_dict:
+    resultado_final["impuestos"]["retefuente"]["pais_proveedor"] = resultado_retefuente_dict.get("pais_proveedor", "")
+    logger.info(f"🌍 País proveedor: {resultado_retefuente_dict.get('pais_proveedor')}")
+```
+
+---
+
+### 📊 ESTRUCTURA DE RESPUESTA FINAL
+
+```json
+{
+  "impuestos": {
+    "retefuente": {
+      "aplica": true,
+      "estado": "Preliquidado",
+      "pais_proveedor": "Estados Unidos",
+      "valor_factura_sin_iva": 10000.0,
+      "valor_retencion": 1500.0,
+      "valor_base": 10000.0,
+      "conceptos_aplicados": [
+        {
+          "concepto": "Servicios técnicos y de consultoría",
+          "concepto_facturado": "Technical consulting services",
+          "tarifa_retencion": 15.0,
+          "base_gravable": 10000.0,
+          "valor_retencion": 1500.0,
+          "codigo_concepto": null
+        }
+      ],
+      "observaciones": [
+        "País proveedor: Estados Unidos",
+        "Convenio de doble tributación: No",
+        "Total conceptos procesados: 1",
+        "Facturación extranjera"
+      ]
+    }
+  }
+}
+```
+
+**✨ Campo nuevo**: `pais_proveedor` - Siempre presente en respuesta de pagos al exterior
+
+---
+
+### 🎯 BENEFICIOS DE LA ARQUITECTURA v3.0
+
+1. ✅ **Separación de responsabilidades**: Gemini identifica, Python calcula
+2. ✅ **Escalabilidad**: Fácil agregar nuevos conceptos extranjeros en BD
+3. ✅ **Precisión**: Validaciones manuales garantizan exactitud
+4. ✅ **Mantenibilidad**: Principios SOLID aplicados consistentemente
+5. ✅ **Transparencia**: Estructura de respuesta clara con todos los detalles
+6. ✅ **Flexibilidad**: Soporta múltiples conceptos en una misma factura
+7. ✅ **Trazabilidad**: Siempre indica "Facturación extranjera" en observaciones
+
+---
+
+### 📝 ARCHIVOS MODIFICADOS
+
+| Archivo | Cambios | Líneas |
+|---------|---------|--------|
+| `database/database.py` | Abstract methods + implementación Supabase | 49-57, 383-497, 607-628 |
+| `Clasificador/prompt_clasificador.py` | Refactorización completa del prompt | 1265-1408 |
+| `Clasificador/clasificador.py` | Método simplificado + modelo actualizado | 141, 798-801, 2382-2435 |
+| `Liquidador/liquidador.py` | 8 validaciones + función principal + switch | 1357-1909, 2196-2225 |
+| `main.py` | Integración campo pais_proveedor | 1105-1108 |
+
+---
+
+### ⚠️ BREAKING CHANGES
+
+Ninguno. La funcionalidad es **completamente nueva** y no afecta el flujo de retención nacional existente.
+
+---
+
+### 🔜 PRÓXIMOS PASOS RECOMENDADOS
+
+1. Poblar tablas `conceptos_extranjeros` y `paises_convenio_tributacion` en Supabase
+2. Probar con facturas extranjeras de diferentes países
+3. Validar tarifas convenio vs normal con casos reales
+4. Documentar casos edge detectados en producción
+
+---
+
 ## [3.0.9 - Mejoras: Validaciones y Transparencia] - 2025-10-27
 
 ### MEJORA: CAMPO CONCEPTO_FACTURADO EN RESPUESTA FINAL

@@ -123,6 +123,7 @@ class ClasificadorICA:
         self,
         nit_administrativo: str,
         textos_documentos: Dict[str, str],
+        estructura_contable: int,
         cache_archivos: Optional[Dict[str, bytes]] = None
     ) -> Dict[str, Any]:
         """
@@ -161,6 +162,8 @@ class ClasificadorICA:
             "estado": "No aplica impuesto",
             "valor_total_ica": 0.0,
             "actividades_facturadas": [],
+            "actividades_relacionadas": [],  # NUEVO FORMATO v3.0
+            "valor_factura_sin_iva": 0.0,  # NUEVO FORMATO v3.0
             "observaciones": [],
             "fecha_analisis": datetime.now().isoformat()
         }
@@ -224,7 +227,7 @@ class ClasificadorICA:
 
             # PASO 5: Consultar actividades por ubicación en BD
             actividades_bd_por_ubicacion = self._obtener_actividades_por_ubicacion(
-                ubicaciones_identificadas
+                ubicaciones_identificadas, estructura_contable
             )
 
             if not actividades_bd_por_ubicacion:
@@ -237,8 +240,8 @@ class ClasificadorICA:
 
             logger.info(f"Actividades obtenidas para {len(actividades_bd_por_ubicacion)} ubicaciones")
 
-            # PASO 6: Segunda llamada Gemini - Relacionar actividades (MULTIMODAL)
-            actividades_relacionadas = await self._relacionar_actividades_gemini(
+            # PASO 6: Segunda llamada Gemini - Relacionar actividades (MULTIMODAL - NUEVO FORMATO v3.0)
+            datos_actividades = await self._relacionar_actividades_gemini(
                 ubicaciones_identificadas,
                 actividades_bd_por_ubicacion,
                 textos_documentos,
@@ -246,19 +249,26 @@ class ClasificadorICA:
                 nit_administrativo
             )
 
-            if not actividades_relacionadas:
-                resultado_base["estado"] = "No aplica impuesto"
+            if not datos_actividades:
+                resultado_base["estado"] = "Preliquidacion sin finalizar"
                 resultado_base["observaciones"].append(
-                    "No se pudieron identificar actividades facturadas en la documentación"
+                    "No se pudieron identificar actividades en la documentación"
                 )
-                logger.warning("Gemini no identificó actividades facturadas")
+                logger.warning("Gemini no retornó datos de actividades")
                 return resultado_base
 
-            logger.info(f"Actividades relacionadas por Gemini: {len(actividades_relacionadas)}")
+            # Extraer datos del nuevo formato
+            actividades_facturadas = datos_actividades.get("actividades_facturadas", [])
+            actividades_relacionadas = datos_actividades.get("actividades_relacionadas", [])
+            valor_factura_sin_iva = datos_actividades.get("valor_factura_sin_iva", 0.0)
 
-            # PASO 7: Validaciones manuales de actividades (Python)
+            logger.info(f"Actividades facturadas: {len(actividades_facturadas)}, Actividades relacionadas: {len(actividades_relacionadas)}")
+
+            # PASO 7: Validaciones manuales de actividades (Python - NUEVO FORMATO v3.0)
             validacion_actividades = self._validar_actividades_manualmente(
+                actividades_facturadas,
                 actividades_relacionadas,
+                valor_factura_sin_iva,
                 ubicaciones_identificadas
             )
 
@@ -269,6 +279,10 @@ class ClasificadorICA:
                 else:
                     resultado_base["estado"] = "Preliquidacion sin finalizar"
 
+                # Preservar estructura completa con datos extraídos
+                resultado_base["actividades_facturadas"] = actividades_facturadas
+                resultado_base["actividades_relacionadas"] = actividades_relacionadas
+                resultado_base["valor_factura_sin_iva"] = valor_factura_sin_iva
                 resultado_base["observaciones"].extend(validacion_actividades["errores"])
                 resultado_base["observaciones"].extend(validacion_actividades.get("advertencias", []))
                 logger.warning(f"Validación de actividades falló: {validacion_actividades['errores']}")
@@ -280,11 +294,13 @@ class ClasificadorICA:
 
             logger.info("Validaciones de actividades exitosas - pasando a liquidador")
 
-            # PASO 8: Preparar datos validados para liquidador
+            # PASO 8: Preparar datos validados para liquidador (NUEVO FORMATO v3.0)
             resultado_base["aplica"] = True
             resultado_base["estado"] = "Validado - Listo para liquidación"
             resultado_base["ubicaciones_identificadas"] = ubicaciones_identificadas
-            resultado_base["actividades_facturadas"] = actividades_relacionadas
+            resultado_base["actividades_facturadas"] = actividades_facturadas
+            resultado_base["actividades_relacionadas"] = actividades_relacionadas
+            resultado_base["valor_factura_sin_iva"] = valor_factura_sin_iva
 
             # Aquí el liquidador se encargará del cálculo
             logger.info("Análisis ICA completado exitosamente")
@@ -644,7 +660,8 @@ class ClasificadorICA:
 
     def _obtener_actividades_por_ubicacion(
         self,
-        ubicaciones_identificadas: List[Dict[str, Any]]
+        ubicaciones_identificadas: List[Dict[str, Any]],
+        estructura_contable: int
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Obtiene actividades de la BD para cada ubicación identificada.
@@ -677,7 +694,7 @@ class ClasificadorICA:
                 response = self.database_manager.db_connection.supabase.table("ACTIVIDADES IK").select(
                     "CODIGO_UBICACION, NOMBRE_UBICACION, CODIGO_DE_LA_ACTIVIDAD, "
                     "DESCRIPCION_DE_LA_ACTIVIDAD, PORCENTAJE_ICA, TIPO_DE_ACTIVIDAD"
-                ).eq("CODIGO_UBICACION", codigo_ubicacion).execute()
+                ).eq("CODIGO_UBICACION", codigo_ubicacion).eq("ESTRUCTURA_CONTABLE", estructura_contable).execute()
 
                 if not response.data:
                     logger.warning(f"No se encontraron actividades para ubicación {codigo_ubicacion}")
@@ -790,125 +807,126 @@ class ClasificadorICA:
                 nit_administrativo=nit_administrativo
             )
 
-            # Validar estructura
+            # Validar estructura (NUEVO FORMATO v3.0)
             if not validar_estructura_actividades(data):
                 logger.error("Estructura de JSON de actividades inválida")
-                return []
+                return {}
 
+            # NUEVO FORMATO: Retornar el dict completo con actividades_facturadas, actividades_relacionadas y valor_factura_sin_iva
             actividades_facturadas = data.get("actividades_facturadas", [])
-            logger.info(f"Gemini identificó {len(actividades_facturadas)} actividades facturadas")
-            return actividades_facturadas
+            actividades_relacionadas = data.get("actividades_relacionadas", [])
+            valor_factura_sin_iva = data.get("valor_factura_sin_iva", 0.0)
+
+            logger.info(f"Gemini identificó {len(actividades_facturadas)} actividades facturadas y {len(actividades_relacionadas)} actividades relacionadas")
+
+            return {
+                "actividades_facturadas": actividades_facturadas,
+                "actividades_relacionadas": actividades_relacionadas,
+                "valor_factura_sin_iva": valor_factura_sin_iva
+            }
 
         except json.JSONDecodeError as e:
             logger.error(f"Error parseando JSON de Gemini (actividades): {e}")
-            return []
+            return {}
         except Exception as e:
             logger.error(f"Error en llamada a Gemini (actividades): {e}")
-            return []
+            return {}
 
     def _validar_actividades_manualmente(
         self,
-        actividades_facturadas: List[Dict[str, Any]],
+        actividades_facturadas: List[str],
+        actividades_relacionadas: List[Dict[str, Any]],
+        valor_factura_sin_iva: float,
         ubicaciones_identificadas: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Valida manualmente las actividades identificadas por Gemini.
+        Valida manualmente las actividades identificadas por Gemini (NUEVO FORMATO v3.0).
 
         VALIDACIONES MANUALES (Python):
-        1. Nombre actividad vacío
-        2. Base gravable <= 0
-        3. Actividades relacionadas vacías
-        4. Códigos actividad/ubicación <= 0
-        5. Una sola actividad relacionada por ubicación
+        1. actividades_facturadas no vacía
+        2. valor_factura_sin_iva > 0
+        3. nombre_act_rel no vacío (en cada actividad relacionada)
+        4. codigo_actividad y codigo_ubicacion > 0
+        5. codigos_ubicacion únicos (no puede haber múltiples actividades con mismo codigo_ubicacion)
 
         Args:
-            actividades_facturadas: Actividades de Gemini
+            actividades_facturadas: Lista simple de strings (actividades textuales de factura)
+            actividades_relacionadas: Lista de actividades relacionadas con BD
+            valor_factura_sin_iva: Valor de factura sin IVA
             ubicaciones_identificadas: Ubicaciones validadas
 
         Returns:
-            Dict con validación: {"valido": bool, "errores": List[str], "advertencias": List[str], "todas_no_aplican": bool}
+            Dict con validación: {"valido": bool, "errores": List[str], "advertencias": List[str]}
         """
-        logger.info("Aplicando validaciones manuales a actividades...")
+        logger.info("Aplicando validaciones manuales a actividades (NUEVO FORMATO v3.0)...")
 
         errores = []
         advertencias = []
-        actividades_no_aplican = []
 
-        for act_fact in actividades_facturadas:
-            nombre_actividad = act_fact.get("nombre_actividad", "").strip()
+        # VALIDACIÓN 1: actividades_facturadas no vacía
+        if not actividades_facturadas or len(actividades_facturadas) == 0:
+            errores.append("No se pudo identificar las actividades facturadas en la documentación")
+            logger.warning("Validación 1 fallida: actividades_facturadas vacía")
+            return {"valido": False, "errores": errores, "advertencias": advertencias}
 
-            # VALIDACIÓN 1: Nombre actividad vacío
-            if not nombre_actividad:
-                errores.append(
-                    "No se pudo identificar una actividad facturada de la documentación"
-                )
-                continue
+        logger.info(f"Validación 1 exitosa: {len(actividades_facturadas)} actividades facturadas identificadas")
 
-            # VALIDACIÓN 2: Base gravable <= 0
-            base_gravable = act_fact.get("base_gravable", 0.0)
-            if base_gravable <= 0:
-                errores.append(
-                    f"No se pudo identificar la base gravable para la actividad facturada '{nombre_actividad}'"
-                )
-                continue
+        # VALIDACIÓN 2: valor_factura_sin_iva > 0
+        if valor_factura_sin_iva <= 0:
+            errores.append("No se pudo identificar el valor de la factura sin IVA")
+            logger.warning(f"Validación 2 fallida: valor_factura_sin_iva = {valor_factura_sin_iva}")
+            return {"valido": False, "errores": errores, "advertencias": advertencias}
 
-            # VALIDACIÓN 3: Actividades relacionadas
-            actividades_relacionadas = act_fact.get("actividades_relacionadas", [])
+        logger.info(f"Validación 2 exitosa: valor_factura_sin_iva = ${valor_factura_sin_iva:,.2f}")
 
-            if not actividades_relacionadas or len(actividades_relacionadas) == 0:
-                advertencias.append(f"La actividad facturada '{nombre_actividad}' no tiene actividades relacionadas")
-                actividades_no_aplican.append(nombre_actividad)
-                continue
-
-            # Validar cada actividad relacionada
-            tiene_relacion_valida = False
-            ubicaciones_validadas = set()
-
-            for act_rel in actividades_relacionadas:
-                nombre_act_rel = act_rel.get("nombre_act_rel", "").strip()
-
-                # Si nombre vacío, marcar como no aplica
-                if not nombre_act_rel:
-                    continue
-
-                # VALIDACIÓN 4: Códigos <= 0
-                codigo_actividad = act_rel.get("codigo_actividad", 0)
-                codigo_ubicacion = act_rel.get("codigo_ubicacion", 0)
-
-                if codigo_actividad <= 0 or codigo_ubicacion <= 0:
-                    errores.append(
-                        f"No se pudo relacionar correctamente la actividad '{nombre_act_rel}' "
-                        f"con su código de actividad y código de ubicación"
-                    )
-                    return {"valido": False, "errores": errores, "advertencias": advertencias, "todas_no_aplican": False}
-
-                # VALIDACIÓN 5: Solo una actividad relacionada por ubicación
-                if codigo_ubicacion in ubicaciones_validadas:
-                    errores.append(
-                        f"La actividad '{nombre_actividad}' tiene múltiples actividades relacionadas "
-                        f"para la misma ubicación {codigo_ubicacion}. Solo puede haber UNA por ubicación"
-                    )
-                    return {"valido": False, "errores": errores, "advertencias": advertencias, "todas_no_aplican": False}
-
-                ubicaciones_validadas.add(codigo_ubicacion)
-                tiene_relacion_valida = True
-
-            # Si no tiene ninguna relación válida, marcar como no aplica
-            if not tiene_relacion_valida:
-                actividades_no_aplican.append(nombre_actividad)
-                advertencias.append(f"La actividad facturada '{nombre_actividad}' no aplica ICA")
-
-        # Determinar resultado
-        if errores:
-            logger.warning(f"Validaciones de actividades fallaron: {len(errores)} errores")
-            return {"valido": False, "errores": errores, "advertencias": advertencias, "todas_no_aplican": False}
-
-        # Si todas las actividades no aplican
-        if len(actividades_no_aplican) == len(actividades_facturadas):
+        # VALIDACIÓN 3: actividades_relacionadas no vacías y con nombre_act_rel válido
+        if not actividades_relacionadas or len(actividades_relacionadas) == 0:
             errores.append(
-                f"Las actividades facturadas {', '.join(actividades_no_aplican)} no aplican ICA"
+                f"Las actividades facturadas: {', '.join(actividades_facturadas)} "
+                f"no se encontró relación con las actividades de la base de datos"
             )
+            logger.warning("Validación 3 fallida: actividades_relacionadas vacía")
             return {"valido": False, "errores": errores, "advertencias": advertencias, "todas_no_aplican": True}
 
-        logger.info("Validaciones de actividades exitosas")
-        return {"valido": True, "errores": [], "advertencias": advertencias, "todas_no_aplican": False}
+        # Validar cada actividad relacionada
+        ubicaciones_vistas = {}  # Para validar unicidad de codigo_ubicacion
+
+        for idx, act_rel in enumerate(actividades_relacionadas):
+            nombre_act_rel = act_rel.get("nombre_act_rel", "").strip()
+
+            # VALIDACIÓN 3: nombre_act_rel no vacío
+            if not nombre_act_rel:
+                errores.append(
+                    f"Las actividades facturadas: {', '.join(actividades_facturadas)} "
+                    f"no se encontró relación con las actividades de la base de datos"
+                )
+                logger.warning(f"Validación 3 fallida: nombre_act_rel vacío en actividad {idx+1}")
+                return {"valido": False, "errores": errores, "advertencias": advertencias, "todas_no_aplican": True}
+
+            # VALIDACIÓN 4: codigo_actividad y codigo_ubicacion > 0
+            codigo_actividad = act_rel.get("codigo_actividad", 0)
+            codigo_ubicacion = act_rel.get("codigo_ubicacion", 0)
+
+            if codigo_actividad <= 0 or codigo_ubicacion <= 0:
+                errores.append(
+                    f"No se pudo relacionar correctamente la actividad '{nombre_act_rel}' "
+                    f"(codigo_actividad: {codigo_actividad}, codigo_ubicacion: {codigo_ubicacion})"
+                )
+                logger.warning(f"Validación 4 fallida: códigos inválidos para '{nombre_act_rel}'")
+                return {"valido": False, "errores": errores, "advertencias": advertencias}
+
+            # VALIDACIÓN 5: codigo_ubicacion único (no puede haber múltiples actividades con mismo codigo_ubicacion)
+            if codigo_ubicacion in ubicaciones_vistas:
+                errores.append(
+                    f"Error en el análisis: Se encontraron múltiples actividades relacionadas "
+                    f"para la misma ubicación {codigo_ubicacion}. "
+                    f"Actividades: '{ubicaciones_vistas[codigo_ubicacion]}' y '{nombre_act_rel}'. "
+                    f"Solo puede haber UNA actividad relacionada por ubicación"
+                )
+                logger.warning(f"Validación 5 fallida: codigo_ubicacion {codigo_ubicacion} duplicado")
+                return {"valido": False, "errores": errores, "advertencias": advertencias}
+
+            ubicaciones_vistas[codigo_ubicacion] = nombre_act_rel
+
+        logger.info(f"Todas las validaciones exitosas: {len(actividades_relacionadas)} actividades relacionadas válidas")
+        return {"valido": True, "errores": [], "advertencias": advertencias}

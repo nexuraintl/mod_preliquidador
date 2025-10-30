@@ -1,5 +1,5 @@
 """
-LIQUIDADOR IVA Y RETEIVA v2.0 - ARQUITECTURA SOLID
+LIQUIDADOR IVA Y RETEIVA v2.1 - ARQUITECTURA SOLID
 ===================================================
 
 Módulo refactorizado siguiendo principios SOLID para validación y cálculo
@@ -16,8 +16,12 @@ Responsabilidades separadas:
 - Gemini: Solo extracción e identificación de datos
 - Python: Todas las validaciones y cálculos manuales
 
+Flujos diferenciados:
+- Facturación Nacional: Validaciones completas (RUT, responsabilidad IVA, etc.)
+- Facturación Extranjera: Validación simplificada (solo valor > 0) + cálculo manual IVA 19%
+
 Autor: Miguel Angel Jaramillo Durango
-Versión: 2.0.0
+Versión: 2.1.0
 """
 
 import logging
@@ -566,7 +570,7 @@ class LiquidadorIVA:
     OCP: Extensible para nuevos tipos de validaciones/cálculos
     """
 
-    VERSION = "2.0.0"
+    VERSION = "2.1.0"
 
     def __init__(self,
                  validador_iva: Optional[ValidadorIVA] = None,
@@ -597,16 +601,34 @@ class LiquidadorIVA:
         """
         Realiza la liquidación completa de IVA y ReteIVA.
 
-        Flujo:
+        Flujo para facturación NACIONAL:
         1. Extraer datos de respuesta Gemini
-        2. Validar precondiciones de IVA (ValidadorIVA)
-        3. Si válido, validar condiciones ReteIVA (ValidadorReteIVA)
-        4. Si aplica ReteIVA, calcular (CalculadorReteIVA)
+        2. Validar precondiciones completas de IVA (ValidadorIVA)
+           - RUT disponible
+           - Responsabilidad de IVA
+           - Valor y porcentaje de IVA
+           - Categoría según responsabilidad
+        3. Validar condiciones completas ReteIVA (ValidadorReteIVA)
+           - Es responsable de IVA
+           - Valor IVA > 0
+           - Categoría gravada
+           - Estado IVA válido
+        4. Si aplica ReteIVA, calcular con tarifa 15% (CalculadorReteIVA)
+        5. Construir respuesta final
+
+        Flujo para facturación EXTRANJERA:
+        1. Extraer datos de respuesta Gemini
+        2. Validación simplificada IVA:
+           - Solo verificar valor_subtotal_sin_iva > 0
+           - Calcular IVA manualmente (19%)
+        3. Validación simplificada ReteIVA:
+           - Solo verificar valor_iva_calculado > 0
+        4. Si aplica ReteIVA, calcular con tarifa 100% (CalculadorReteIVA)
         5. Construir respuesta final
 
         Args:
             analisis_gemini: Respuesta del PROMPT_ANALISIS_IVA
-            clasificacion_inicial: Clasificación de primera llamada
+            clasificacion_inicial: Clasificación de primera llamada (incluye es_facturacion_extranjera)
             nit_administrativo: NIT de la entidad
 
         Returns:
@@ -620,10 +642,19 @@ class LiquidadorIVA:
                 analisis_gemini, clasificacion_inicial
             )
 
-            # PASO 2: Validar IVA
-            resultado_validacion = self.validador_iva.validar_precondiciones(
-                datos_extraccion
-            )
+            # PASO 2: Validar IVA - Bifurcación según tipo de facturación
+            if datos_extraccion.es_facturacion_extranjera:
+                # Flujo simplificado para facturación extranjera
+                logger.info("Procesando facturación extranjera con flujo simplificado")
+                resultado_validacion = self._validar_facturacion_extranjera(
+                    datos_extraccion
+                )
+            else:
+                # Flujo normal para facturación nacional
+                logger.info("Procesando facturación nacional con validaciones completas")
+                resultado_validacion = self.validador_iva.validar_precondiciones(
+                    datos_extraccion
+                )
 
             # Registrar warnings si existen
             for warning in resultado_validacion.warnings:
@@ -639,22 +670,37 @@ class LiquidadorIVA:
             # PASO 3: Determinar fuente de ingreso
             es_fuente_nacional = not datos_extraccion.es_facturacion_extranjera
 
-            # PASO 4: Validar si aplica ReteIVA
-            debe_aplicar, razon_reteiva = self.validador_reteiva.debe_aplicar_reteiva(
-                es_responsable_iva=datos_extraccion.es_responsable_iva,
-                valor_iva=resultado_validacion.valor_iva_calculado,
-                categoria=datos_extraccion.categoria,
-                estado_iva=resultado_validacion.estado
-            )
-
-            if not debe_aplicar:
-                logger.info(f"ReteIVA no aplica: {razon_reteiva}")
-                return self._crear_respuesta_sin_reteiva(
-                    datos_extraccion,
-                    resultado_validacion,
-                    es_fuente_nacional,
-                    razon_reteiva
+            # PASO 4: Validar si aplica ReteIVA - Bifurcación según tipo de facturación
+            if datos_extraccion.es_facturacion_extranjera:
+                # Facturación extranjera: solo validar valor IVA > 0
+                if resultado_validacion.valor_iva_calculado <= 0:
+                    razon_reteiva = "Valor de IVA es cero o negativo"
+                    logger.info(f"ReteIVA no aplica (extranjera): {razon_reteiva}")
+                    return self._crear_respuesta_sin_reteiva(
+                        datos_extraccion,
+                        resultado_validacion,
+                        es_fuente_nacional,
+                        razon_reteiva
+                    )
+                # Si valor IVA > 0, continuar al cálculo (debe_aplicar = True implícito)
+                logger.info("ReteIVA aplica para facturación extranjera (IVA > 0)")
+            else:
+                # Facturación nacional: validaciones completas
+                debe_aplicar, razon_reteiva = self.validador_reteiva.debe_aplicar_reteiva(
+                    es_responsable_iva=datos_extraccion.es_responsable_iva,
+                    valor_iva=resultado_validacion.valor_iva_calculado,
+                    categoria=datos_extraccion.categoria,
+                    estado_iva=resultado_validacion.estado
                 )
+
+                if not debe_aplicar:
+                    logger.info(f"ReteIVA no aplica (nacional): {razon_reteiva}")
+                    return self._crear_respuesta_sin_reteiva(
+                        datos_extraccion,
+                        resultado_validacion,
+                        es_fuente_nacional,
+                        razon_reteiva
+                    )
 
             # PASO 5: Calcular ReteIVA
             resultado_reteiva = self.calculador_reteiva.calcular_reteiva_preciso(
@@ -724,6 +770,65 @@ class LiquidadorIVA:
 
         logger.info(f"Datos extraídos - IVA: ${datos.valor_iva:,.2f}, Responsable: {datos.es_responsable_iva}")
         return datos
+
+    def _validar_facturacion_extranjera(self,
+                                        datos: DatosExtraccionIVA) -> ResultadoValidacionIVA:
+        """
+        Valida y calcula IVA para facturación extranjera.
+
+        Flujo simplificado:
+        1. Solo valida que valor_subtotal_sin_iva > 0
+        2. Si no hay valor, retorna estado "sin finalizar"
+        3. Si hay valor, aplica 19% manual para calcular IVA
+
+        Args:
+            datos: Datos extraídos de Gemini
+
+        Returns:
+            ResultadoValidacionIVA: Resultado con IVA calculado manualmente
+        """
+        observaciones = []
+        warnings = []
+
+        # Validación única: valor_subtotal_sin_iva > 0
+        if datos.valor_subtotal_sin_iva <= 0:
+            observaciones.append("No se pudo identificar el valor de la factura")
+            return ResultadoValidacionIVA(
+                es_valido=False,
+                estado="Preliquidacion sin finalizar",
+                observaciones=observaciones,
+                warnings=warnings,
+                valor_iva_calculado=0.0,
+                porcentaje_iva_calculado=0.0
+            )
+
+        # Cálculo manual del IVA (19%)
+        porcentaje_iva = 0.19
+        valor_iva_calculado = datos.valor_subtotal_sin_iva * porcentaje_iva
+
+        observaciones.append(
+            f"Facturación extranjera identificada"
+        )
+        observaciones.append(
+            f"Valor subtotal sin IVA: ${datos.valor_subtotal_sin_iva:,.2f}"
+        )
+        observaciones.append(
+            f"IVA calculado manualmente (19%): ${datos.valor_subtotal_sin_iva:,.2f} x 19% = ${valor_iva_calculado:,.2f}"
+        )
+
+        logger.info(
+            f"Facturación extranjera: IVA calculado ${valor_iva_calculado:,.2f} "
+            f"sobre base ${datos.valor_subtotal_sin_iva:,.2f}"
+        )
+
+        return ResultadoValidacionIVA(
+            es_valido=True,
+            estado="Preliquidado",
+            observaciones=observaciones,
+            warnings=warnings,
+            valor_iva_calculado=valor_iva_calculado,
+            porcentaje_iva_calculado=porcentaje_iva
+        )
 
     def _crear_respuesta_exitosa(self,
                                 datos: DatosExtraccionIVA,

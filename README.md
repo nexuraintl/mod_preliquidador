@@ -1,6 +1,6 @@
-# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v3.0.9
+# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v3.0.10
 
-> 🏗️ **ARQUITECTURA SOLID v3.0.9**: Sistema con principios SOLID + Validaciones Mejoradas
+> 🏗️ **ARQUITECTURA SOLID v3.0.10**: Sistema con principios SOLID + Pagos al Exterior
 
 > **Sistema automatizado de liquidación tributaria con Inteligencia Artificial y Arquitectura Profesional**  
 > API REST con diseño SOLID para procesar facturas y calcular múltiples impuestos colombianos usando Google Gemini AI
@@ -924,12 +924,13 @@ datos_negocio = resultado.get('data') if resultado.get('success') else None
 ## 🎯 **CARACTERÍSTICAS PRINCIPALES**
 
 ### ✅ **Impuestos Soportados**
-- 🏛️ **Retención en la Fuente** - 43 conceptos con normativa exacta
+- 🏛️ **Retención en la Fuente** - 43 conceptos nacionales + 8 conceptos para pagos al exterior ✨ **v3.0**
 - 🎓 **Estampilla Pro Universidad Nacional** - Cálculo según tabla UVT
 - 🏢 **Contribución a Obra Pública 5%** - Tarifa fija para contratos de obra
 - 💰 **IVA y ReteIVA** - Identificación de IVA y cálculo de retención
 - 🆕 **6 Estampillas Generales** - Identificación de estampillas (Procultura, Bienestar, Adulto Mayor, Universidad Pedagógica, Francisco José de Caldas, Prodeporte)
 - ⚡ **Procesamiento Paralelo Obligatorio** - Todos los NITs aplican múltiples impuestos simultáneamente (v3.2.2+)
+- 🌍 **Pagos al Exterior** - Retención en la fuente con tarifas convenio y normales ✨ **NUEVO v3.0**
 
 ### 🧠 **Inteligencia Artificial**
 - **Google Gemini AI** para análisis de documentos
@@ -1001,12 +1002,13 @@ graph TD
 ```
 
 **Impuestos Implementados:**
-1. 💼 **Retención en la Fuente**: 43 conceptos según normativa DIAN
+1. 💼 **Retención en la Fuente**: 43 conceptos nacionales + 8 conceptos para pagos al exterior ✨ **v3.0**
 2. 🎓 **Estampilla Pro Universidad Nacional**: Cálculo según tabla UVT
 3. 🏗️ **Contribución a Obra Pública 5%**: Tarifa fija para contratos
 4. 📋 **IVA y ReteIVA**: Análisis especializado con validaciones manuales
 5. 📌 **6 Estampillas Generales**: Identificación automática (Procultura, Bienestar, etc.)
 6. ⚽ **Tasa Prodeporte**: Validación por rubro presupuestal con 11 pasos de validación ✨ **NUEVO v2.11.0**
+7. 🌍 **Pagos al Exterior**: Retención en la fuente con tarifas convenio y normales ✨ **NUEVO v3.0**
 
 #### **⚽ Tasa Prodeporte - NUEVO v2.11.0**
 
@@ -1053,14 +1055,166 @@ RUBRO_PRESUPUESTAL = {
 - ⚠️ **"Preliquidacion sin finalizar"**: Falta información o datos inconsistentes
 - ❌ **"No aplica el impuesto"**: Condiciones no cumplen para aplicar tasa
 
-### 🌍 **3. Facturación Internacional - CORREGIDO v2.1.1**
+#### **🌍 Retención en la Fuente - Pagos al Exterior - NUEVO v3.0**
 
-**✅ Soporte Completo para Facturas Extranjeras:**
-- **🔄 Redirección inteligente**: Sistema detecta facturas extranjeras y usa función especializada
-- **📊 Tarifas internacionales**: Aplicación automática de tarifas para pagos al exterior
-- **🇳🇴 Normativa colombiana**: Cálculo exacto según convenios de doble tributación
-- **🔍 Análisis especializado**: Gemini identifica servicios, tecnología, regalías y otros conceptos extranjeros
-- **⚡ Procesamiento optimizado**: Flujo independiente sin conflictos con retención nacional
+**🏗️ ARQUITECTURA v3.0: Separación Total IA-Validación**
+
+El sistema de pagos al exterior implementa una arquitectura revolucionaria donde **Gemini AI SOLO identifica datos** y **Python realiza TODAS las validaciones y cálculos**.
+
+**Principio fundamental**:
+- ❌ Gemini NO calcula tarifas, NO aplica convenios, NO decide si aplica retención
+- ✅ Gemini SOLO extrae: país proveedor, conceptos facturados, valores
+- ✅ Python valida, consulta BD, aplica tarifas, calcula retenciones
+
+---
+
+**🗄️ Integración con Base de Datos Supabase:**
+
+Dos tablas especializadas en Supabase:
+
+1. **`conceptos_extranjeros`** - 8 conceptos para pagos al exterior
+   - Campos: `index`, `nombre_concepto`, `base_pesos`, `tarifa_normal`, `tarifa_convenio`
+   - Ejemplos:
+     - Dividendos y participaciones (tarifa_normal: 20%, tarifa_convenio: 0-15%)
+     - Intereses (tarifa_normal: 15%, tarifa_convenio: 10%)
+     - Regalías (tarifa_normal: 15%, tarifa_convenio: 10%)
+     - Servicios técnicos y consultoría (tarifa_normal: 15%, tarifa_convenio: 10%)
+     - Honorarios (tarifa_normal: 10%, tarifa_convenio: 10%)
+
+2. **`paises_convenio_tributacion`** - Países con convenio de doble tributación
+   - Determina si aplica `tarifa_convenio` o `tarifa_normal`
+   - Ejemplos: España, Chile, México, Suiza, Corea del Sur, etc.
+
+---
+
+**🔄 Flujo de Procesamiento:**
+
+```
+1️⃣ Clasificación Inicial
+   └─> Sistema detecta es_facturacion_extranjera = True
+
+2️⃣ Gemini AI - SOLO IDENTIFICACIÓN
+   ├─> Identifica país proveedor (ej: "Estados Unidos")
+   ├─> Extrae conceptos facturados (texto literal)
+   ├─> Mapea conceptos con diccionario simplificado {index: nombre}
+   ├─> Extrae base_gravable por concepto
+   └─> Extrae valor_total de la factura
+
+3️⃣ Python - VALIDACIONES SECUENCIALES (9 pasos)
+   ├─> ✅ 1. Validar país_proveedor no vacío
+   ├─> ✅ 2. Validar concepto_facturado extraído
+   ├─> ✅ 3. Validar concepto mapeado a BD
+   ├─> ✅ 4. Validar base_gravable > 0
+   ├─> ✅ 5. Validar valor_total > 0
+   ├─> 🔍 6. Consultar BD: ¿país tiene convenio?
+   │         ├─> SÍ → usar tarifa_convenio
+   │         └─> NO → usar tarifa_normal
+   ├─> ✅ 7. Validar base_gravable >= base_minima (BD)
+   ├─> 🧮 8. Calcular: retención = base_gravable × tarifa
+   └─> 📦 9. Crear resultado con todos los conceptos
+
+4️⃣ Respuesta Transparente
+   └─> Incluye: país, convenio (sí/no), conceptos procesados, observaciones
+```
+
+---
+
+**🎯 Validaciones Manuales Implementadas:**
+
+| Validación | Descripción | Error si falla |
+|------------|-------------|----------------|
+| `_validar_pais_proveedor_extranjera()` | País no vacío | "No se pudo identificar el país del proveedor" |
+| `_validar_concepto_facturado_extranjera()` | Concepto extraído | "No se pudo extraer un concepto facturado" |
+| `_validar_concepto_mapeado_extranjera()` | Concepto en BD | "Los conceptos facturados no aplican para retención" |
+| `_validar_base_gravable_extranjera()` | Base > 0 | "No se pudo extraer la base gravable del concepto" |
+| `_validar_valor_total_extranjera()` | Total > 0 | "No se pudo extraer el valor total de la factura" |
+| `_obtener_tarifa_aplicable_extranjera()` | Consulta BD + convenio | "Error consultando tarifas" |
+| `_validar_base_minima_extranjera()` | Base >= base_minima | "La base gravable no supera la base mínima" |
+| `_calcular_retencion_extranjera()` | Cálculo matemático | - |
+
+---
+
+**📊 Estructura de Respuesta:**
+
+```json
+{
+  "impuestos": {
+    "retefuente": {
+      "aplica": true,
+      "estado": "Preliquidado",
+      "pais_proveedor": "Estados Unidos",
+      "valor_factura_sin_iva": 10000.0,
+      "valor_retencion": 1500.0,
+      "valor_base": 10000.0,
+      "conceptos_aplicados": [
+        {
+          "concepto": "Servicios técnicos y de consultoría",
+          "concepto_facturado": "Technical consulting services",
+          "tarifa_retencion": 15.0,
+          "base_gravable": 10000.0,
+          "valor_retencion": 1500.0,
+          "codigo_concepto": null
+        }
+      ],
+      "observaciones": [
+        "País proveedor: Estados Unidos",
+        "Convenio de doble tributación: No",
+        "Total conceptos procesados: 1",
+        "Facturación extranjera"
+      ]
+    }
+  }
+}
+```
+
+**✨ Campo nuevo**: `pais_proveedor` - Siempre presente en respuesta de pagos al exterior
+
+---
+
+**🔧 Manejo de Múltiples Conceptos:**
+
+El sistema procesa **TODOS** los conceptos en una factura:
+- ✅ Valida cada concepto individualmente
+- ✅ Acumula retenciones de todos los conceptos válidos
+- ⚠️ Advierte sobre conceptos que no cumplen validaciones
+- ✅ Devuelve lista completa en `conceptos_aplicados[]`
+
+**Ejemplo - Factura con 3 conceptos:**
+- Concepto 1: Servicios técnicos → ✅ Procesado ($1,500)
+- Concepto 2: Regalías → ✅ Procesado ($2,000)
+- Concepto 3: Otros ingresos → ⚠️ Base no supera mínimo (advertencia)
+- **Retención total**: $3,500 (suma de conceptos válidos)
+
+---
+
+**Estados Posibles:**
+- ✅ **"Preliquidado"**: Al menos un concepto procesado exitosamente
+- ⚠️ **"Preliquidacion sin finalizar"**: Validaciones no superadas
+  - País no identificado
+  - Conceptos no mapeados
+  - Base gravable faltante
+  - Valor total faltante
+
+**🎯 Observación obligatoria**: Siempre incluye `"Facturación extranjera"` al final
+
+---
+
+### 🌍 **3. Facturación Internacional - Integración Completa**
+
+**✅ Detección Automática:**
+- Sistema detecta automáticamente facturas extranjeras
+- Campo `es_facturacion_extranjera: true` activa flujo especializado
+- No requiere configuración manual del usuario
+
+**📊 Tarifas Diferenciadas:**
+- **Con convenio**: Tarifas reducidas según tratados internacionales
+- **Sin convenio**: Tarifas normales según normativa colombiana
+- Consulta automática a base de datos de convenios
+
+**🔍 Transparencia Total:**
+- Respuesta incluye si país tiene convenio o no
+- Muestra tarifa aplicada (convenio/normal)
+- Lista conceptos procesados con detalles individuales
 
 ### 📁 **4. Guardado Automático Organizado - ACTUALIZADO v2.4.0**
 

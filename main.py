@@ -875,6 +875,7 @@ async def procesar_facturas_integrado(
                     return await clasificador_ica.analizar_ica(
                         nit_administrativo=nit_administrativo,
                         textos_documentos=documentos_clasificados,
+                        estructura_contable=estructura_contable,
                         cache_archivos=cache_archivos  # Cache para procesamiento híbrido
                     )
                 except Exception as e:
@@ -1247,7 +1248,7 @@ async def procesar_facturas_integrado(
                 liquidador_ica = LiquidadorICA(database_manager=db_manager)
 
                 # Liquidar ICA
-                resultado_ica = liquidador_ica.liquidar_ica(analisis_ica)
+                resultado_ica = liquidador_ica.liquidar_ica(analisis_ica, estructura_contable)
 
                 # Agregar resultado al resultado final
                 resultado_final["impuestos"]["ica"] = resultado_ica

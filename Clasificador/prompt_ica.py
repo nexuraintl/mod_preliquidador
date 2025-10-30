@@ -99,7 +99,28 @@ IMPORTANTE:
 
 Si encuentras UBICACIONES SOLAS sin que se especifique que ahí se ejecuta la actividad, NO LAS CONSIDERES y menciona en observaciones que no se encontraron ubicaciones de ejecución explícitas.
 
+EXCEPCIONES POR ACTIVIDAD FACTURADA:
+
+- Si la actividad facturada es Transporte, entonces la ubicación que tienes que extraer es la ubicación en donde se despacha el bien, mercancía o persona. 
+
+- Si la actividad facturada esta relacionada con servicios de televisión e internet por suscripción y telefonía fija. La ubicación seleccionada será el lugar en el que se encuentre el suscriptor del servicio según el Contrato.
+
+- Si la actividad facturada es servicio de telefonia movil, navegacion movil o servicio de datos moviles la ubicacion seleccionada sera la del lugar donde se encuentre el suscriptor del servicio segun el contrato o en el documento de actualizacion.
+
+IMPORTANTE EXCEPCIONES POR ACTIVIDAD FACTURADA:
+- Si se cumple alguna de las excepciones anteriores menciona en observaciones que se aplicó la excepción correspondiente  a la actividad facturada.
+
+- Si se cumple alguna de las excepciones anteriores por actividad facturada y NO se encuentra la ubicación para esa excepcion, entonces asigna:
+
+- nombre_ubicacion = ""
+- codigo_ubicacion = 0
+- texto_identificador = ""
+- porcentaje_ejecucion = 0.0
+
+
 VALIDACIONES OBLIGATORIAS:
+
+Revisar si se cumplen las excepciones por actividad facturada antes de proceder a identificar ubicaciones.
 
 Si encuentras UNA sola ubicación:
 - porcentaje_ejecucion = 100 (siempre, aunque no aparezca en documentos)
@@ -134,7 +155,7 @@ Debes responder UNICAMENTE con un JSON válido siguiendo esta estructura EXACTA:
 {{
   "ubicaciones": [
     {{
-      "nombre_ubicacion": "NOMBRE EXACTO como aparece en BD (o MAYUSCULAS SIN ACENTOS si no está en BD)",
+      "nombre_ubicacion": "NOMBRE EXACTO como aparece en BD (SIN MAYUSCULAS SIN ACENTOS si no está en BD)",
       "codigo_ubicacion": 1,
       "texto_identificador": "CITA TEXTUAL del documento",
       "porcentaje_ejecucion": 100.0
@@ -185,7 +206,7 @@ EJEMPLO 3 - Ubicación NO encontrada en BD:
 {{
   "ubicaciones": [
     {{
-      "nombre_ubicacion": "ZIPAQUIRA",
+      "nombre_ubicacion": "zipaquira",
       "codigo_ubicacion": 0,
       "texto_identificador": "Servicio prestado en el municipio de Zipaquirá",
       "porcentaje_ejecucion": 100.0
@@ -290,6 +311,7 @@ PASO 1: UBICACIONES IDENTIFICADAS (PASO ANTERIOR)
 ═══════════════════════════════════════════════════════════════════════
 PASO 2: ACTIVIDADES PARAMETRIZADAS EN BASE DE DATOS POR UBICACION
 ═══════════════════════════════════════════════════════════════════════
+REVISA TODAS las actividades disponibles:
 
 {actividades_str}
 
@@ -308,19 +330,20 @@ PASO 4: INSTRUCCIONES DE RELACION
 PROCESO OBLIGATORIO:
 
 1. EXTRAER de la FACTURA:
-   - Actividad facturada (TEXTUAL, tal como aparece)
-   - Base gravable de cada actividad
+   - TODAS las actividades facturadas (TEXTUALES, tal como aparecen en la factura)
+   - El valor de la FACTURA SIN IVA (valor único para todas las actividades)
 
-2. RELACIONAR actividad facturada con actividades de la BD:
-   - Para CADA ubicación identificada
-   - Buscar en las actividades de BD de ESA ubicación
-   - SOLO PUEDE HABER UNA actividad relacionada POR UBICACION
-   - Si NO encuentras relación para una ubicación, dejar actividades_relacionadas vacío para esa ubicación
+2. RELACIONAR TODAS las actividades facturadas EN CONJUNTO con actividades de la BD:
+   - Analizar TODAS las actividades facturadas como un grupo
+   - Relacionarlas con actividades de la base de datos
+   - MAPEA EL CONJUNTO de actividades facturadas con LAS ACTIVIDAD MAS PRECISA DE LA BASE DE DATOS POR UBICACION
+   - PUEDE HABER múltiples actividades relacionadas SOLO si son de DIFERENTES ubicaciones
+   - Para la MISMA ubicación, SOLO PUEDE HABER UNA actividad relacionada
 
 3. IMPORTANTE:
-   - Una actividad facturada puede tener múltiples actividades relacionadas SOLO si son de DIFERENTES ubicaciones
-   - Para la MISMA ubicación, SOLO PUEDE HABER UNA actividad relacionada
-   - Si no encuentras ninguna relación, nombre_act_rel = "", codigo_actividad = 0, codigo_ubicacion = 0
+   - Si encuentras múltiples actividades relacionadas, DEBEN ser de DIFERENTES ubicaciones (codigo_ubicacion diferente)
+   - NUNCA dos actividades relacionadas con el mismo codigo_ubicacion
+   - Si NO encuentras ninguna relación, dejar actividades_relacionadas con: nombre_act_rel = "", codigo_actividad = 0, codigo_ubicacion = 0
 
 ═══════════════════════════════════════════════════════════════════════
 PASO 5: FORMATO DE RESPUESTA JSON (OBLIGATORIO)
@@ -329,126 +352,87 @@ PASO 5: FORMATO DE RESPUESTA JSON (OBLIGATORIO)
 Debes responder UNICAMENTE con un JSON válido siguiendo esta estructura EXACTA:
 
 {{
-  "actividades_facturadas": [
+  "actividades_facturadas": ["ACTIVIDAD 1 TEXTUAL de la FACTURA", "ACTIVIDAD 2 TEXTUAL de la FACTURA"],
+  "actividades_relacionadas": [
     {{
-      "nombre_actividad": "ACTIVIDAD TEXTUAL de la FACTURA",
-      "base_gravable": 1000000.0,
-      "actividades_relacionadas": [
-        {{
-          "nombre_act_rel": "DESCRIPCION TEXTUAL de BD para ubicación 1",
-          "codigo_actividad": 10,
-          "codigo_ubicacion": 1
-        }},
-        {{
-          "nombre_act_rel": "DESCRIPCION TEXTUAL de BD para ubicación 2",
-          "codigo_actividad": 15,
-          "codigo_ubicacion": 2
-        }}
-      ]
+      "nombre_act_rel": "DESCRIPCION TEXTUAL de BD para ubicación 1",
+      "codigo_actividad": 10,
+      "codigo_ubicacion": 1
     }},
     {{
-      "nombre_actividad": "SEGUNDA ACTIVIDAD FACTURADA (solo si existe)",
-      "base_gravable": 500000.0,
-      "actividades_relacionadas": [
-        {{
-          "nombre_act_rel": "DESCRIPCION de BD",
-          "codigo_actividad": 20,
-          "codigo_ubicacion": 1
-        }}
-      ]
+      "nombre_act_rel": "DESCRIPCION TEXTUAL de BD para ubicación 2",
+      "codigo_actividad": 15,
+      "codigo_ubicacion": 2
     }}
-  ]
+  ],
+  "valor_factura_sin_iva": 1000000.0
 }}
 
 EJEMPLO 1 - Una actividad, una ubicación:
 {{
-  "actividades_facturadas": [
+  "actividades_facturadas": ["Servicios de consultoría en sistemas y soporte técnico"],
+  "actividades_relacionadas": [
     {{
-      "nombre_actividad": "Servicios de consultoría en sistemas",
-      "base_gravable": 5000000.0,
-      "actividades_relacionadas": [
-        {{
-          "nombre_act_rel": "Servicios de consultoría en informática",
-          "codigo_actividad": 620100,
-          "codigo_ubicacion": 1
-        }}
-      ]
+      "nombre_act_rel": "Servicios de consultoría en informática",
+      "codigo_actividad": 620100,
+      "codigo_ubicacion": 1
     }}
-  ]
+  ],
+  "valor_factura_sin_iva": 5000000.0
 }}
 
-EJEMPLO 2 - Una actividad, múltiples ubicaciones:
+EJEMPLO 2 - Múltiples actividades facturadas, múltiples ubicaciones:
 {{
-  "actividades_facturadas": [
+  "actividades_facturadas": ["Servicios de ingeniería civil", "Diseño arquitectónico", "Supervisión técnica"],
+  "actividades_relacionadas": [
     {{
-      "nombre_actividad": "Servicios de ingeniería civil",
-      "base_gravable": 10000000.0,
-      "actividades_relacionadas": [
-        {{
-          "nombre_act_rel": "Servicios de ingeniería y arquitectura",
-          "codigo_actividad": 711000,
-          "codigo_ubicacion": 1
-        }},
-        {{
-          "nombre_act_rel": "Servicios de ingeniería y arquitectura",
-          "codigo_actividad": 711000,
-          "codigo_ubicacion": 5
-        }}
-      ]
-    }}
-  ]
-}}
-
-EJEMPLO 3 - Múltiples actividades facturadas:
-{{
-  "actividades_facturadas": [
-    {{
-      "nombre_actividad": "Servicios de consultoría",
-      "base_gravable": 3000000.0,
-      "actividades_relacionadas": [
-        {{
-          "nombre_act_rel": "Servicios de consultoría empresarial",
-          "codigo_actividad": 702000,
-          "codigo_ubicacion": 1
-        }}
-      ]
+      "nombre_act_rel": "Servicios de ingeniería y arquitectura",
+      "codigo_actividad": 711000,
+      "codigo_ubicacion": 1
     }},
     {{
-      "nombre_actividad": "Servicios de capacitación",
-      "base_gravable": 2000000.0,
-      "actividades_relacionadas": [
-        {{
-          "nombre_act_rel": "Servicios de educación y capacitación",
-          "codigo_actividad": 855900,
-          "codigo_ubicacion": 1
-        }}
-      ]
+      "nombre_act_rel": "Servicios de ingeniería y arquitectura",
+      "codigo_actividad": 711000,
+      "codigo_ubicacion": 5
     }}
-  ]
+  ],
+  "valor_factura_sin_iva": 10000000.0
+}}
+
+EJEMPLO 3 - Múltiples actividades, una ubicación:
+{{
+  "actividades_facturadas": ["Servicios de consultoría empresarial", "Servicios de capacitación", "Asesoría administrativa"],
+  "actividades_relacionadas": [
+    {{
+      "nombre_act_rel": "Servicios de consultoría empresarial",
+      "codigo_actividad": 702000,
+      "codigo_ubicacion": 1
+    }}
+  ],
+  "valor_factura_sin_iva": 5000000.0
 }}
 
 EJEMPLO 4 - NO se pudo relacionar:
 {{
-  "actividades_facturadas": [
+  "actividades_facturadas": ["Servicios varios no especificados", "Otros servicios"],
+  "actividades_relacionadas": [
     {{
-      "nombre_actividad": "Servicios varios no especificados",
-      "base_gravable": 1000000.0,
-      "actividades_relacionadas": [
-        {{
-          "nombre_act_rel": "",
-          "codigo_actividad": 0,
-          "codigo_ubicacion": 0
-        }}
-      ]
+      "nombre_act_rel": "",
+      "codigo_actividad": 0,
+      "codigo_ubicacion": 0
     }}
-  ]
+  ],
+  "valor_factura_sin_iva": 1000000.0
 }}
 
 IMPORTANTE:
 - Responde SOLO con el JSON, sin texto adicional
 - NO agregues comentarios fuera del JSON
 - Valida que sea JSON válido antes de responder
-- POR CADA ubicación identificada, SOLO UNA actividad relacionada
+- actividades_facturadas es una LISTA SIMPLE de strings (textos de la factura)
+- actividades_relacionadas es una LISTA UNICA (no anidada)
+- SOLO puede haber múltiples actividades relacionadas si tienen DIFERENTE codigo_ubicacion
+- valor_factura_sin_iva es el valor total de la factura SIN IVA
 """
 
 
@@ -515,7 +499,7 @@ def validar_estructura_ubicaciones(data: Dict[str, Any]) -> bool:
 
 def validar_estructura_actividades(data: Dict[str, Any]) -> bool:
     """
-    Valida que el JSON de actividades tenga la estructura correcta.
+    Valida que el JSON de actividades tenga la estructura correcta (NUEVO FORMATO v3.0).
 
     RESPONSABILIDAD (SRP):
     - Solo valida estructura de JSON de actividades
@@ -527,32 +511,32 @@ def validar_estructura_actividades(data: Dict[str, Any]) -> bool:
     Returns:
         bool: True si la estructura es válida
     """
+    # Validar campos principales
     if "actividades_facturadas" not in data:
         return False
+    if "actividades_relacionadas" not in data:
+        return False
+    if "valor_factura_sin_iva" not in data:
+        return False
 
+    # Validar actividades_facturadas (lista simple de strings)
     if not isinstance(data["actividades_facturadas"], list):
         return False
 
-    if len(data["actividades_facturadas"]) == 0:
+    # Validar actividades_relacionadas (lista de objetos)
+    if not isinstance(data["actividades_relacionadas"], list):
         return False
 
-    for actividad in data["actividades_facturadas"]:
-        if "nombre_actividad" not in actividad:
+    for rel in data["actividades_relacionadas"]:
+        if "nombre_act_rel" not in rel:
             return False
-        if "base_gravable" not in actividad:
+        if "codigo_actividad" not in rel:
             return False
-        if "actividades_relacionadas" not in actividad:
-            return False
-
-        if not isinstance(actividad["actividades_relacionadas"], list):
+        if "codigo_ubicacion" not in rel:
             return False
 
-        for rel in actividad["actividades_relacionadas"]:
-            if "nombre_act_rel" not in rel:
-                return False
-            if "codigo_actividad" not in rel:
-                return False
-            if "codigo_ubicacion" not in rel:
-                return False
+    # Validar valor_factura_sin_iva es numérico
+    if not isinstance(data["valor_factura_sin_iva"], (int, float)):
+        return False
 
     return True

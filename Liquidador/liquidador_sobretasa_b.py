@@ -222,14 +222,18 @@ class LiquidadorSobretasaBomberil:
         resultado_ica: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """
-        Extrae todas las ubicaciones y sus valores de ICA.
+        Extrae todas las ubicaciones y sus valores de ICA (COMPATIBLE CON FORMATO v3.0).
 
         RESPONSABILIDAD (SRP):
         - Solo extrae ubicaciones de actividades relacionadas
-        - Itera todas las actividades relacionadas de la primera actividad facturada
+        - Itera todas las actividades relacionadas directamente
+
+        FORMATO ICA v3.0:
+        - actividades_relacionadas: Lista directa en resultado_ica (no anidada)
+        - Cada actividad tiene: codigo_ubicacion, nombre_ubicacion, valor_ica
 
         Args:
-            resultado_ica: Resultado de liquidación ICA
+            resultado_ica: Resultado de liquidación ICA (FORMATO v3.0)
 
         Returns:
             List[Dict]: Lista de ubicaciones con estructura:
@@ -244,27 +248,18 @@ class LiquidadorSobretasaBomberil:
         ubicaciones = []
 
         try:
-            # Obtener actividades facturadas
-            actividades_facturadas = resultado_ica.get("actividades_facturadas", [])
-
-            if not actividades_facturadas:
-                logger.warning("No hay actividades facturadas en resultado ICA")
-                return ubicaciones
-
-            # Tomar la primera actividad facturada - OJO En este punto solo se usa la primera puede que cambie
-            
-            primera_actividad = actividades_facturadas[0]
-            actividades_relacionadas = primera_actividad.get("actividades_relacionada", [])
+            # NUEVO FORMATO v3.0: actividades_relacionadas está directamente en resultado_ica
+            actividades_relacionadas = resultado_ica.get("actividades_relacionadas", [])
 
             if not actividades_relacionadas:
-                logger.warning("No hay actividades relacionadas en primera actividad")
+                logger.warning("No hay actividades relacionadas en resultado ICA")
                 return ubicaciones
 
             # ITERAR TODAS las actividades relacionadas
             for act_rel in actividades_relacionadas:
                 codigo_ubicacion = act_rel.get("codigo_ubicacion")
                 nombre_ubicacion = act_rel.get("nombre_ubicacion", "")
-                valor_ica = act_rel.get("valor", 0.0)
+                valor_ica = act_rel.get("valor_ica", 0.0)  # NUEVO FORMATO v3.0: valor_ica (antes: valor)
 
                 if codigo_ubicacion:
                     ubicaciones.append({
