@@ -159,7 +159,7 @@ class ClasificadorICA:
 
         resultado_base = {
             "aplica": False,
-            "estado": "No aplica impuesto",
+            "estado": "no_aplica_impuesto",
             "valor_total_ica": 0.0,
             "actividades_facturadas": [],
             "actividades_relacionadas": [],  # NUEVO FORMATO v3.0
@@ -184,7 +184,7 @@ class ClasificadorICA:
             # PASO 2: Obtener ubicaciones de la BD
             ubicaciones_bd = self._obtener_ubicaciones_bd()
             if not ubicaciones_bd:
-                resultado_base["estado"] = "Preliquidacion sin finalizar"
+                resultado_base["estado"] = "preliquidacion_sin_finalizar"
                 resultado_base["observaciones"].append(
                     "No se pudieron obtener ubicaciones de la base de datos"
                 )
@@ -199,7 +199,7 @@ class ClasificadorICA:
             )
 
             if not ubicaciones_identificadas:
-                resultado_base["estado"] = "Preliquidacion sin finalizar"
+                resultado_base["estado"] = "preliquidacion_sin_finalizar"
                 resultado_base["observaciones"].append(
                     "No se pudieron identificar ubicaciones de la actividad"
                 )
@@ -214,7 +214,7 @@ class ClasificadorICA:
             )
 
             if not validacion_ubicaciones["valido"]:
-                resultado_base["estado"] = "Preliquidacion sin finalizar"
+                resultado_base["estado"] = "preliquidacion_sin_finalizar"
                 resultado_base["observaciones"].extend(validacion_ubicaciones["errores"])
                 logger.warning(f"Validación de ubicaciones falló: {validacion_ubicaciones['errores']}")
                 return resultado_base
@@ -231,7 +231,7 @@ class ClasificadorICA:
             )
 
             if not actividades_bd_por_ubicacion:
-                resultado_base["estado"] = "Preliquidacion sin finalizar"
+                resultado_base["estado"] = "preliquidacion_sin_finalizar"
                 resultado_base["observaciones"].append(
                     "No se pudieron obtener actividades de la base de datos"
                 )
@@ -250,7 +250,7 @@ class ClasificadorICA:
             )
 
             if not datos_actividades:
-                resultado_base["estado"] = "Preliquidacion sin finalizar"
+                resultado_base["estado"] = "preliquidacion_sin_finalizar"
                 resultado_base["observaciones"].append(
                     "No se pudieron identificar actividades en la documentación"
                 )
@@ -275,9 +275,9 @@ class ClasificadorICA:
             if not validacion_actividades["valido"]:
                 # Determinar estado según el tipo de error
                 if validacion_actividades.get("todas_no_aplican", False):
-                    resultado_base["estado"] = "No aplica impuesto"
+                    resultado_base["estado"] = "no_aplica_impuesto"
                 else:
-                    resultado_base["estado"] = "Preliquidacion sin finalizar"
+                    resultado_base["estado"] = "preliquidacion_sin_finalizar"
 
                 # Preservar estructura completa con datos extraídos
                 resultado_base["actividades_facturadas"] = actividades_facturadas
@@ -308,7 +308,7 @@ class ClasificadorICA:
 
         except Exception as e:
             logger.error(f"Error en análisis ICA: {e}")
-            resultado_base["estado"] = "Preliquidacion sin finalizar"
+            resultado_base["estado"] = "preliquidacion_sin_finalizar"
             resultado_base["observaciones"].append(f"Error en análisis: {str(e)}")
             return resultado_base
 

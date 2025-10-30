@@ -76,7 +76,7 @@ class LiquidadorICA:
         # Resultado base (ESTRUCTURA COMPLETA v3.0)
         resultado = {
             "aplica": False,
-            "estado": "No aplica impuesto",
+            "estado": "no_aplica_impuesto",
             "valor_total_ica": 0.0,
             "actividades_facturadas": [],
             "actividades_relacionadas": [],
@@ -88,13 +88,13 @@ class LiquidadorICA:
         try:
             # PASO 1: Validar que el análisis del clasificador es válido
             if not analisis_clasificador.get("aplica", False):
-                resultado["estado"] = analisis_clasificador.get("estado", "No aplica impuesto")
+                resultado["estado"] = analisis_clasificador.get("estado", "no_aplica_impuesto")
                 logger.info(f"ICA no aplica - Estado: {resultado['estado']}")
                 return resultado
 
             if analisis_clasificador.get("estado") != "Validado - Listo para liquidación":
                 resultado["aplica"] = True  # Aplica pero no se puede liquidar
-                resultado["estado"] = analisis_clasificador.get("estado", "Preliquidacion sin finalizar")
+                resultado["estado"] = analisis_clasificador.get("estado", "preliquidacion_sin_finalizar")
                 logger.warning(f"No se puede liquidar - Estado: {resultado['estado']}")
                 return resultado
 
@@ -105,7 +105,7 @@ class LiquidadorICA:
             ubicaciones_identificadas = analisis_clasificador.get("ubicaciones_identificadas", [])
 
             if not actividades_relacionadas:
-                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["estado"] = "preliquidacion_sin_finalizar"
                 resultado["observaciones"].append("No hay actividades relacionadas para liquidar")
                 resultado["actividades_facturadas"] = actividades_facturadas
                 resultado["valor_factura_sin_iva"] = valor_factura_sin_iva  # Preservar estructura completa
@@ -147,7 +147,7 @@ class LiquidadorICA:
 
             # PASO 4: Validar que se liquidó al menos una actividad
             if not actividades_liquidadas:
-                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["estado"] = "preliquidacion_sin_finalizar"
                 resultado["observaciones"].append(
                     "No se pudo liquidar ninguna actividad (problemas obteniendo tarifas de BD)"
                 )
@@ -158,7 +158,7 @@ class LiquidadorICA:
 
             # PASO 5: Generar resultado final exitoso (NUEVO FORMATO v3.0)
             resultado["aplica"] = True
-            resultado["estado"] = "Preliquidado"
+            resultado["estado"] = "preliquidado"
             resultado["valor_total_ica"] = round(valor_total_ica, 2)
             resultado["actividades_facturadas"] = actividades_facturadas
             resultado["actividades_relacionadas"] = actividades_liquidadas
@@ -169,7 +169,7 @@ class LiquidadorICA:
 
         except Exception as e:
             logger.error(f"Error en liquidación ICA: {e}")
-            resultado["estado"] = "Preliquidacion sin finalizar"
+            resultado["estado"] = "preliquidacion_sin_finalizar"
             resultado["observaciones"].append(f"Error en liquidación: {str(e)}")
 
             # Preservar estructura completa con datos del clasificador si están disponibles

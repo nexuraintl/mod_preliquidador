@@ -127,7 +127,7 @@ class LiquidadorTimbre:
 
             return ResultadoTimbre(
                 aplica=True,
-                estado="Preliquidado",
+                estado="preliquidado",
                 valor=valor_impuesto,
                 tarifa=tarifa_bd,
                 tipo_cuantia=tipo_cuantia_bd,
@@ -191,7 +191,7 @@ class LiquidadorTimbre:
 
         return ResultadoTimbre(
             aplica=True,
-            estado="Preliquidado",
+            estado="preliquidado",
             valor=valor_impuesto,
             tarifa=tarifa_bd,
             tipo_cuantia="Indeterminable",
@@ -358,7 +358,7 @@ class LiquidadorTimbre:
 
         return ResultadoTimbre(
             aplica=True,
-            estado="Preliquidado",
+            estado="preliquidado",
             valor=valor_impuesto,
             tarifa=tarifa_bd,
             tipo_cuantia="Determinable",
@@ -397,7 +397,7 @@ class LiquidadorTimbre:
 
         return ResultadoTimbre(
             aplica=True,
-            estado="Preliquidado",
+            estado="preliquidado",
             valor=valor_impuesto,
             tarifa=tarifa_bd,
             tipo_cuantia="Determinable",
@@ -481,7 +481,7 @@ class LiquidadorTimbre:
 
         return ResultadoTimbre(
             aplica=False,
-            estado="no aplica impuesto",
+            estado="no_aplica_impuesto",
             valor=0.0,
             tarifa=0.0,
             tipo_cuantia="",
@@ -501,7 +501,7 @@ class LiquidadorTimbre:
 
         return ResultadoTimbre(
             aplica=False,
-            estado="Preliquidacion sin finalizar",
+            estado="preliquidacion_sin_finalizar",
             valor=0.0,
             tarifa=0.0,
             tipo_cuantia=tipo_cuantia,

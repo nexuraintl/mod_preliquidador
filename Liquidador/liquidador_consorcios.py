@@ -701,7 +701,7 @@ class LiquidadorConsorcios:
                     retencion_total=Decimal('0'),
                     valor_factura_sin_iva=valor_total,
                     conceptos_aplicados=conceptos_validos,
-                    estado="Preliquidación sin finalizar",
+                    estado="preliquidación_sin_finalizar",
                     observaciones=mensajes_error_naturaleza,
                     procesamiento_exitoso=False
                 )
@@ -718,7 +718,7 @@ class LiquidadorConsorcios:
                 retencion_total=retencion_total,
                 valor_factura_sin_iva=valor_total,
                 conceptos_aplicados=conceptos_validos,
-                estado="Preliquidado",
+                estado="preliquidado",
                 observaciones=observaciones,
                 procesamiento_exitoso=True
             )
@@ -870,7 +870,7 @@ class LiquidadorConsorcios:
             retencion_total=Decimal('0'),
             valor_factura_sin_iva=Decimal('0'),
             conceptos_aplicados=[],
-            estado="Preliquidacion sin finalizar",
+            estado="preliquidacion_sin_finalizar",
             observaciones=[mensaje],
             procesamiento_exitoso=False
         )
@@ -893,7 +893,7 @@ class LiquidadorConsorcios:
             retencion_total=Decimal('0'),
             valor_factura_sin_iva=valor_factura_sin_iva,
             conceptos_aplicados=[],
-            estado="Preliquidación sin finalizar",
+            estado="preliquidacion_sin_finalizar",
             observaciones=[mensaje],
             procesamiento_exitoso=False
         )

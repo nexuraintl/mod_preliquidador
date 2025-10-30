@@ -124,7 +124,7 @@ class ResultadoLiquidacion(BaseModel):
     fecha_calculo: str
     puede_liquidar: bool
     mensajes_error: List[str]
-    estado: str  # NUEVO: "No aplica impuesto", "Preliquidacion sin finalizar", "Preliquidado"
+    estado: str  # NUEVO: "no aplica impuesto", "preliquidacion_sin_finalizar", "preliquidado"
     
 
 # ===============================
@@ -178,7 +178,7 @@ class LiquidadorRetencion:
             logger.error(f"Conceptos sin concepto_facturado: {len(conceptos_sin_facturar)}")
             return self._crear_resultado_no_liquidable(
                 mensajes_error,
-                estado="Preliquidacion sin finalizar",
+                estado="preliquidacion_sin_finalizar",
                 valor_factura_sin_iva=analisis.valor_total or 0
             )
 
@@ -187,7 +187,7 @@ class LiquidadorRetencion:
         if not resultado_validacion["puede_continuar"]:
             return self._crear_resultado_no_liquidable(
                 resultado_validacion["mensajes"],
-                estado=resultado_validacion.get("estado", "Preliquidacion sin finalizar"),
+                estado=resultado_validacion.get("estado", "preliquidacion_sin_finalizar"),
                 valor_factura_sin_iva=analisis.valor_total or 0
             )
         
@@ -219,7 +219,7 @@ class LiquidadorRetencion:
         if not puede_liquidar:
             return self._crear_resultado_no_liquidable(
                 mensajes_error,
-                estado="Preliquidacion sin finalizar",
+                estado="preliquidacion_sin_finalizar",
                 valor_factura_sin_iva=analisis.valor_total or 0
             )
         
@@ -267,7 +267,7 @@ class LiquidadorRetencion:
             logger.error(f"Liquidación detenida: {len(conceptos_sin_base)} concepto(s) sin base gravable")
             return self._crear_resultado_no_liquidable(
                 mensajes_error,
-                estado="Preliquidacion sin finalizar",
+                estado="preliquidacion_sin_finalizar",
                 valor_factura_sin_iva=analisis.valor_total or 0
             )
 
@@ -284,7 +284,7 @@ class LiquidadorRetencion:
             logger.error(f"Liquidación detenida: Suma bases (${suma_bases_gravables:,.2f}) != Valor total (${valor_base_total:,.2f})")
             return self._crear_resultado_no_liquidable(
                 mensajes_error,
-                estado="Preliquidacion sin finalizar",
+                estado="preliquidacion_sin_finalizar",
                 valor_factura_sin_iva=analisis.valor_total or 0
             )
 
@@ -315,7 +315,7 @@ class LiquidadorRetencion:
         if not puede_liquidar:
             return self._crear_resultado_no_liquidable(
                 mensajes_error,
-                estado="No aplica impuesto",
+                estado="no_aplica_impuesto",
                 valor_factura_sin_iva=analisis.valor_total or 0
             )
         
@@ -361,7 +361,7 @@ class LiquidadorRetencion:
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=True,
             mensajes_error=mensajes_error,
-            estado="Preliquidado"  # NUEVO: Proceso completado exitosamente
+            estado="preliquidado"  # NUEVO: Proceso completado exitosamente
         )
         
         logger.info(f"Retención calculada exitosamente: ${valor_retencion_total:,.0f}")
@@ -512,7 +512,7 @@ class LiquidadorRetencion:
                 fecha_calculo=datetime.now().isoformat(),
                 puede_liquidar=True,
                 mensajes_error=mensajes_detalle,
-                estado="Preliquidado"  # NUEVO: Artículo 383 completado exitosamente
+                estado="preliquidado"  # NUEVO: Artículo 383 completado exitosamente
             )
             
             return {
@@ -910,7 +910,7 @@ class LiquidadorRetencion:
                 fecha_calculo=datetime.now().isoformat(),
                 puede_liquidar=True,
                 mensajes_error=mensajes_detalle,
-                estado="Preliquidado"  # NUEVO: Artículo 383 validado completado exitosamente
+                estado="preliquidado"  # NUEVO: Artículo 383 validado completado exitosamente
             )
             
             return {
@@ -1102,7 +1102,7 @@ class LiquidadorRetencion:
             if hasattr(naturaleza, 'es_autorretenedor') and naturaleza.es_autorretenedor is True:
                 resultado["puede_continuar"] = False
                 resultado["mensajes"].append("El tercero es autorretenedor - NO se debe practicar retención")
-                resultado["estado"] = "No aplica impuesto"  # NUEVO
+                resultado["estado"] = "no_aplica_impuesto"  # NUEVO
                 logger.info("Tercero es autorretenedor - no aplica retención")
                 return resultado
 
@@ -1112,7 +1112,7 @@ class LiquidadorRetencion:
             if hasattr(naturaleza, 'regimen_tributario') and naturaleza.regimen_tributario == "SIMPLE" and hasattr(naturaleza, 'es_persona_natural') and naturaleza.es_persona_natural == False:
                 resultado["puede_continuar"] = False
                 resultado["mensajes"].append("Régimen Simple de Tributación - Persona Jurídica - NO aplica retención en la fuente")
-                resultado["estado"] = "No aplica impuesto"  # NUEVO
+                resultado["estado"] = "no_aplica_impuesto"  # NUEVO
                 logger.info("Régimen Simple detectado - no aplica retención")
                 return resultado
             
@@ -1132,7 +1132,7 @@ class LiquidadorRetencion:
                 )
                 resultado["puede_continuar"] = False
                 resultado["mensajes"].append(f"Datos faltantes de la naturaleza del tercero - NO se puede practicar retención : {datos_faltantes}")
-                resultado["estado"] = "Preliquidacion sin finalizar"  # NUEVO
+                resultado["estado"] = "preliquidacion_sin_finalizar"  # NUEVO
                 logger.warning(f"Datos faltantes de la naturaleza del tercero: {datos_faltantes}")
                 return resultado
                 
@@ -1317,7 +1317,7 @@ class LiquidadorRetencion:
 
         # NUEVO: Determinar estado si no se proporciona
         if estado is None:
-            estado = "Preliquidacion sin finalizar"  # Default
+            estado = "preliquidacion_sin_finalizar"  # Default
 
         # Determinar concepto específico y estado basado en el mensaje de error
         if mensajes_error:
@@ -1325,21 +1325,21 @@ class LiquidadorRetencion:
 
             if "autorretenedor" in primer_mensaje:
                 concepto_descriptivo = "No aplica - tercero es autorretenedor"
-                estado = "No aplica impuesto"
+                estado = "no_aplica_impuesto"
             elif "simple" in primer_mensaje:
                 concepto_descriptivo = "No aplica - régimen simple de tributación y persona jurídica"
-                estado = "No aplica impuesto"
+                estado = "no_aplica_impuesto"
             elif "extranjera" in primer_mensaje or "exterior" in primer_mensaje:
                 concepto_descriptivo = "No aplica - facturación extranjera"
             elif "base" in primer_mensaje and "mínimo" in primer_mensaje:
                 concepto_descriptivo = "No aplica - base inferior al mínimo"
-                estado = "No aplica impuesto"
+                estado = "no_aplica_impuesto"
             elif "concepto" in primer_mensaje and "identificado" in primer_mensaje:
                 concepto_descriptivo = "No aplica - conceptos no identificados"
-                estado = "Preliquidacion sin finalizar"
+                estado = "preliquidacion_sin_finalizar"
             elif "faltantes" in primer_mensaje and "datos" in primer_mensaje:
                 concepto_descriptivo = "No aplica - datos del tercero incompletos"
-                estado = "Preliquidacion sin finalizar"
+                estado = "preliquidacion_sin_finalizar"
 
         # 🆕 NUEVA ESTRUCTURA: Crear resultado con nueva estructura
         return ResultadoLiquidacion(
@@ -1691,7 +1691,7 @@ class LiquidadorRetencion:
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=False,
             mensajes_error=observaciones_finales,
-            estado="Preliquidacion sin finalizar"
+            estado="preliquidacion_sin_finalizar"
         )
 
     def _crear_resultado_extranjera(self, conceptos_procesados: List[Dict[str, Any]],
@@ -1770,7 +1770,7 @@ class LiquidadorRetencion:
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=True,
             mensajes_error=observaciones_finales,
-            estado="Preliquidado"
+            estado="preliquidado"
         )
 
     def liquidar_factura_extranjera_con_validaciones(self, analisis_extranjera: Dict[str, Any]) -> ResultadoLiquidacion:
@@ -2180,7 +2180,7 @@ class LiquidadorRetencion:
                         f"Faltan campos: {', '.join(campos_faltantes)}",
                         "Revise el análisis de Gemini"
                     ],
-                    "estado": "Preliquidacion sin finalizar"  # NUEVO: Error en estructura
+                    "estado": "preliquidacion_sin_finalizar"  # NUEVO: Error en estructura
                 }
 
             # CREAR OBJETO ANALYSISFACTURA MANUALMENTE
@@ -2276,7 +2276,7 @@ class LiquidadorRetencion:
                 "error": error_msg,
                 "valor_retencion": 0.0,
                 "observaciones": ["Error importando módulos de análisis", "Revise la configuración del sistema"],
-                "estado": "Preliquidacion sin finalizar"  # NUEVO: Error de importación
+                "estado": "preliquidacion_sin_finalizar"  # NUEVO: Error de importación
             }
 
         except Exception as e:
@@ -2303,5 +2303,5 @@ class LiquidadorRetencion:
                     "Revise estructura de datos",
                     f"Error técnico: {str(e)}"
                 ],
-                "estado": "Preliquidacion sin finalizar"  # NUEVO: Error general
+                "estado": "preliquidacion_sin_finalizar"  # NUEVO: Error general
             }

@@ -9,7 +9,6 @@ Arquitectura: Separacion IA-Validacion
 - Gemini: Solo identificacion de datos
 - Python: Todas las validaciones, calculos y logica de negocio
 
-Autor: Claude Code - Implementacion SOLID
 """
 
 import logging
@@ -53,7 +52,7 @@ class ResultadoTasaProdeporte(BaseModel):
 
     SRP: Solo estructura de resultado
     """
-    estado: str  # "Preliquidado" | "Preliquidacion sin finalizar" | "No aplica el impuesto"
+    estado: str  # "preliquidado" | "preliquidacion_sin_finalizar" | "no_aplica_impuesto"
     aplica: bool
     valor_imp: float = 0.0
     tarifa: float = 0.0
@@ -177,7 +176,7 @@ class LiquidadorTasaProdeporte:
         fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         resultado = ResultadoTasaProdeporte(
-            estado="Preliquidacion sin finalizar",
+            estado="preliquidacion_sin_finalizar",
             aplica=False,
             numero_contrato=parametros.numero_contrato or "",
             fecha_calculo=fecha_actual
@@ -187,7 +186,7 @@ class LiquidadorTasaProdeporte:
             # VALIDACION 0: Verificar si hay error en el analisis de Gemini
             if "error" in analisis_gemini:
                 error_gemini = analisis_gemini.get("error", "Error desconocido en el analisis")
-                resultado.estado = "Preliquidacion sin finalizar"
+                resultado.estado = "preliquidacion_sin_finalizar"
                 resultado.observaciones = f"Error en el procesamiento de Tasa Prodeporte: {error_gemini}"
                 logger.error(f"Tasa Prodeporte: Error en analisis de Gemini - {error_gemini}")
                 return resultado
@@ -196,7 +195,7 @@ class LiquidadorTasaProdeporte:
             parametros_completos, campos_faltantes = self.validar_parametros_completos(parametros)
 
             if not parametros_completos:
-                resultado.estado = "No aplica el impuesto"
+                resultado.estado = "no_aplica_impuesto"
                 resultado.observaciones = f"Faltan los siguientes campos requeridos: {', '.join(campos_faltantes)}"
                 logger.warning(f"Tasa Prodeporte: Faltan campos - {campos_faltantes}")
                 return resultado
@@ -211,7 +210,7 @@ class LiquidadorTasaProdeporte:
             aplica_tasa_gemini = analisis_gemini.get("aplica_tasa_prodeporte", False)
 
             if not aplica_tasa_gemini:
-                resultado.estado = "No aplica el impuesto"
+                resultado.estado = "no_aplica_impuesto"
                 resultado.observaciones = "El campo observaciones no menciona la aplicacion de Tasa Pro deporte"
                 logger.info("Tasa Prodeporte: No se menciona en observaciones")
                 return resultado
@@ -228,21 +227,21 @@ class LiquidadorTasaProdeporte:
                     logger.info(f"Factura sin IVA calculada: ${factura_sin_iva:,.2f}")
 
             if factura_sin_iva <= 0:
-                resultado.estado = "Preliquidacion sin finalizar"
+                resultado.estado = "preliquidacion_sin_finalizar"
                 resultado.observaciones = "No se pudo identificar el valor de la factura sin IVA"
                 logger.warning("Tasa Prodeporte: Factura sin IVA no identificada")
                 return resultado
 
             # VALIDACION 5: Genera presupuesto == "si"
             if genera_presupuesto_normalizado != "si":
-                resultado.estado = "No aplica el impuesto"
+                resultado.estado = "no_aplica_impuesto"
                 resultado.observaciones = "La transaccion no genera Presupuesto"
                 logger.info(f"Tasa Prodeporte: No genera presupuesto ({parametros.genera_presupuesto})")
                 return resultado
 
             # VALIDACION 6: Primeros 2 digitos del rubro == "28"
             if not rubro_str.startswith("28"):
-                resultado.estado = "No aplica el impuesto"
+                resultado.estado = "no_aplica_impuesto"
                 resultado.observaciones = f"El codigo del rubro presupuestal no inicia con 28: {rubro_str}"
                 logger.info(f"Tasa Prodeporte: Rubro no inicia con 28 ({rubro_str})")
                 return resultado
@@ -251,7 +250,7 @@ class LiquidadorTasaProdeporte:
             rubro_valido, mensaje_error = validar_rubro_presupuestal(rubro_str)
 
             if not rubro_valido:
-                resultado.estado = "No aplica el impuesto"
+                resultado.estado = "no_aplica_impuesto"
                 resultado.observaciones = mensaje_error
                 logger.info(f"Tasa Prodeporte: {mensaje_error}")
                 return resultado
@@ -289,7 +288,7 @@ class LiquidadorTasaProdeporte:
             municipio_final = municipio_gemini if municipio_gemini else municipio_dict
 
             # RESULTADO EXITOSO
-            resultado.estado = "Preliquidado"
+            resultado.estado = "preliquidado"
             resultado.aplica = True
             resultado.valor_imp = valor_tasa_prodeporte
             resultado.tarifa = tarifa
@@ -307,7 +306,7 @@ class LiquidadorTasaProdeporte:
 
         except Exception as e:
             logger.error(f"Error liquidando Tasa Prodeporte: {e}")
-            resultado.estado = "Preliquidacion sin finalizar"
+            resultado.estado = "preliquidacion_sin_finalizar"
             resultado.observaciones = f"Error tecnico: {str(e)}"
             return resultado
 

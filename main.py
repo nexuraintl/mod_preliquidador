@@ -884,7 +884,7 @@ async def procesar_facturas_integrado(
                     logger.error(traceback.format_exc())
                     return {
                         "aplica": False,
-                        "estado": "Preliquidacion sin finalizar",
+                        "estado": "preliquidacion_sin_finalizar",
                         "observaciones": [f"Error en análisis ICA: {str(e)}"]
                     }
 
@@ -1068,7 +1068,7 @@ async def procesar_facturas_integrado(
                             'fecha_calculo': datetime.now().isoformat(),
                             'mensajes_error': [error_msg],
                             'resumen_conceptos': 'Error técnico',
-                            'estado': 'Preliquidacion sin finalizar'
+                            'estado': 'preliquidacion_sin_finalizar'
                         })()
                     else:
                         # Caso normal - confiar en liquidador.py
@@ -1081,7 +1081,7 @@ async def procesar_facturas_integrado(
                             'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
                             'mensajes_error': resultado_retefuente_dict.get("observaciones", []),
                             'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A"),
-                            'estado': resultado_retefuente_dict.get("estado", "Preliquidado")
+                            'estado': resultado_retefuente_dict.get("estado", "preliquidado")
                         })()
 
                         # Log apropiado según resultado
@@ -1095,7 +1095,7 @@ async def procesar_facturas_integrado(
 
                     resultado_final["impuestos"]["retefuente"] = {
                     "aplica": resultado_retefuente_dict.get("aplica", False),
-                    "estado": resultado_retefuente_dict.get("estado", "Preliquidacion sin finalizar"),
+                    "estado": resultado_retefuente_dict.get("estado", "preliquidacion_sin_finalizar"),
                     "valor_factura_sin_iva": resultado_retefuente_dict.get("valor_factura_sin_iva", 0.0),
                     "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
                     "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
@@ -1265,7 +1265,7 @@ async def procesar_facturas_integrado(
                 logger.error(traceback.format_exc())
                 resultado_final["impuestos"]["ica"] = {
                     "aplica": False,
-                    "estado": "Preliquidacion sin finalizar",
+                    "estado": "preliquidacion_sin_finalizar",
                     "error": str(e),
                     "observaciones": [f"Error en liquidación ICA: {str(e)}"]
                 }
@@ -1299,7 +1299,7 @@ async def procesar_facturas_integrado(
                 logger.error(traceback.format_exc())
                 resultado_final["impuestos"]["sobretasa_bomberil"] = {
                     "aplica": False,
-                    "estado": "Preliquidacion sin finalizar",
+                    "estado": "preliquidacion_sin_finalizar",
                     "error": str(e),
                     "observaciones": f"Error en liquidación Sobretasa Bomberil: {str(e)}"
                 }
@@ -1342,7 +1342,7 @@ async def procesar_facturas_integrado(
                 resultado_final["impuestos"]["tasa_prodeporte"] = {
                     "error": str(e),
                     "aplica": False,
-                    "estado": "Preliquidacion sin finalizar"
+                    "estado": "preliquidacion_sin_finalizar"
                 }
 
         # Liquidar Timbre - NUEVA FUNCIONALIDAD
@@ -1358,7 +1358,7 @@ async def procesar_facturas_integrado(
                 if not aplica_timbre_obs:
                     resultado_final["impuestos"]["timbre"] = {
                         "aplica": False,
-                        "estado": "no aplica impuesto",
+                        "estado": "no_aplica_impuesto",
                         "valor": 0.0,
                         "tarifa": 0.0,
                         "tipo_cuantia": "",
@@ -1403,7 +1403,7 @@ async def procesar_facturas_integrado(
                 logger.error(traceback.format_exc())
                 resultado_final["impuestos"]["timbre"] = {
                     "aplica": False,
-                    "estado": "Preliquidacion sin finalizar",
+                    "estado": "preliquidacion_sin_finalizar",
                     "error": str(e),
                     "observaciones": f"Error en liquidación Timbre: {str(e)}"
                 }
@@ -1415,7 +1415,7 @@ async def procesar_facturas_integrado(
         # Agregar respuesta para impuestos que no aplican según código de negocio
         if not aplica_estampilla and "estampilla_universidad" not in resultado_final["impuestos"]:
             razon_estampilla = deteccion_impuestos.get("razon_no_aplica_estampilla") or f"El negocio {nombre_negocio} no aplica este impuesto"
-            estado_estampilla = deteccion_impuestos.get("estado_especial") or "No aplica el impuesto"
+            estado_estampilla = deteccion_impuestos.get("estado_especial") or "no_aplica_impuesto"
 
             # Construir mensajes_error sin duplicados
             # Si hay observaciones, usar solo esas; si no, usar la razón
@@ -1439,7 +1439,7 @@ async def procesar_facturas_integrado(
 
         if not aplica_obra_publica and "contribucion_obra_publica" not in resultado_final["impuestos"]:
             razon_obra_publica = deteccion_impuestos.get("razon_no_aplica_obra_publica") or f"El negocio {nombre_negocio} no aplica este impuesto"
-            estado_obra_publica = deteccion_impuestos.get("estado_especial") or "No aplica el impuesto"
+            estado_obra_publica = deteccion_impuestos.get("estado_especial") or "no_aplica_impuesto"
 
             # Construir mensajes_error sin duplicados
             # Si hay observaciones, usar solo esas; si no, usar la razón
@@ -1462,14 +1462,14 @@ async def procesar_facturas_integrado(
         if not aplica_iva and "iva_reteiva" not in resultado_final["impuestos"]:
             resultado_final["impuestos"]["iva_reteiva"] = {
                 "aplica": False,
-                "estado": "No aplica el impuesto",
+                "estado": "no_aplica_impuesto",
                 "razon": f"El NIT {nit_administrativo} no está configurado para IVA/ReteIVA"
             }
             logger.info(f" IVA/ReteIVA: No aplica para NIT {nit_administrativo}")
 
         if not aplica_tasa_prodeporte and "tasa_prodeporte" not in resultado_final["impuestos"]:
             resultado_final["impuestos"]["tasa_prodeporte"] = {
-                "estado": "No aplica el impuesto",
+                "estado": "no_aplica_impuesto",
                 "aplica": False,
                 "valor_imp": 0.0,
                 "tarifa": 0.0,
@@ -1488,7 +1488,7 @@ async def procesar_facturas_integrado(
         if not aplica_timbre and "timbre" not in resultado_final["impuestos"]:
             resultado_final["impuestos"]["timbre"] = {
                 "aplica": False,
-                "estado": "no aplica impuesto",
+                "estado": "no_aplica_impuesto",
                 "valor": 0.0,
                 "tarifa": 0.0,
                 "tipo_cuantia": "",

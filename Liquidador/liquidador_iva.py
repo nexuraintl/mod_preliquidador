@@ -134,7 +134,7 @@ class ValidadorIVA:
         if not datos.rut_disponible:
             return ResultadoValidacionIVA(
                 es_valido=False,
-                estado="Preliquidacion sin finalizar",
+                estado="preliquidacion_sin_finalizar",
                 observaciones=["RUT no disponible en documentos adjuntos"],
                 warnings=[],
                 valor_iva_calculado=0.0,
@@ -145,7 +145,7 @@ class ValidadorIVA:
         if datos.es_responsable_iva is None:
             return ResultadoValidacionIVA(
                 es_valido=False,
-                estado="Preliquidacion sin finalizar",
+                estado="preliquidacion_sin_finalizar",
                 observaciones=["No se identificó responsabilidad de IVA en el RUT"],
                 warnings=[],
                 valor_iva_calculado=0.0,
@@ -185,7 +185,7 @@ class ValidadorIVA:
         if not resultado_extranjera["es_valido"]:
             return ResultadoValidacionIVA(
                 es_valido=False,
-                estado="Preliquidacion sin finalizar",
+                estado="preliquidacion_sin_finalizar",
                 observaciones=observaciones,
                 warnings=warnings,
                 valor_iva_calculado=valor_iva_final,
@@ -195,7 +195,7 @@ class ValidadorIVA:
         # Todas las validaciones pasaron
         return ResultadoValidacionIVA(
             es_valido=True,
-            estado="Preliquidado",
+            estado="preliquidado",
             observaciones=observaciones,
             warnings=warnings,
             valor_iva_calculado=valor_iva_final,
@@ -308,7 +308,7 @@ class ValidadorIVA:
             else:
                 observaciones.append("Categoría 'gravado' validada correctamente")
 
-            return {"es_valido": True, "estado": "Preliquidado"}
+            return {"es_valido": True, "estado": "preliquidado"}
 
         # CASO 2: Responsable de IVA pero sin valor IVA
         if datos.es_responsable_iva and valor_iva == 0:
@@ -320,7 +320,7 @@ class ValidadorIVA:
                 )
                 return {
                     "es_valido": False,
-                    "estado": "Preliquidacion sin finalizar"
+                    "estado": "preliquidacion_sin_finalizar"
                 }
 
             if datos.categoria in categorias_validas:
@@ -332,19 +332,19 @@ class ValidadorIVA:
                     observaciones.append(
                         f"Coincidencia: {datos.coincidencia_encontrada}"
                     )
-                return {"es_valido": True, "estado": "No aplica impuesto"}
+                return {"es_valido": True, "estado": "no_aplica_impuesto"}
 
             # Categoría inesperada
             warnings.append(
                 f"ADVERTENCIA: Categoría '{datos.categoria}' con IVA = 0"
             )
-            return {"es_valido": True, "estado": "No aplica impuesto"}
+            return {"es_valido": True, "estado": "no_aplica_impuesto"}
 
         # CASO 3: NO responsable de IVA
         if not datos.es_responsable_iva:
             if valor_iva == 0:
                 observaciones.append("No responsable de IVA y valor IVA = 0 (correcto)")
-                return {"es_valido": True, "estado": "No aplica impuesto"}
+                return {"es_valido": True, "estado": "no_aplica_impuesto"}
             else:
                 observaciones.append(
                     f"Inconsistencia: No tiene responsabilidad de IVA pero se está "
@@ -352,10 +352,10 @@ class ValidadorIVA:
                 )
                 return {
                     "es_valido": False,
-                    "estado": "Preliquidacion sin finalizar"
+                    "estado": "preliquidacion_sin_finalizar"
                 }
 
-        return {"es_valido": True, "estado": "Preliquidado"}
+        return {"es_valido": True, "estado": "preliquidado"}
 
     def _validar_fuente_extranjera(self, datos: DatosExtraccionIVA,
                                    porcentaje_iva: float,
@@ -480,7 +480,7 @@ class ValidadorReteIVA:
             return False, f"Operación con categoría '{categoria}' no aplica ReteIVA"
 
         # Condición 4: Estado de IVA debe ser válido
-        if estado_iva in ["Preliquidacion sin finalizar", "No aplica impuesto"]:
+        if estado_iva in ["preliquidacion_sin_finalizar", "no_aplica_impuesto"]:
             return False, f"Estado IVA '{estado_iva}' no permite ReteIVA"
 
         # Todas las condiciones cumplidas
@@ -795,7 +795,7 @@ class LiquidadorIVA:
             observaciones.append("No se pudo identificar el valor de la factura")
             return ResultadoValidacionIVA(
                 es_valido=False,
-                estado="Preliquidacion sin finalizar",
+                estado="preliquidacion_sin_finalizar",
                 observaciones=observaciones,
                 warnings=warnings,
                 valor_iva_calculado=0.0,
@@ -823,7 +823,7 @@ class LiquidadorIVA:
 
         return ResultadoValidacionIVA(
             es_valido=True,
-            estado="Preliquidado",
+            estado="preliquidado",
             observaciones=observaciones,
             warnings=warnings,
             valor_iva_calculado=valor_iva_calculado,
@@ -909,7 +909,7 @@ class LiquidadorIVA:
                 "estado_liquidacion": validacion.estado,
                 "es_responsable_iva": datos.es_responsable_iva,
                 "observaciones": validacion.observaciones,
-                "calculo_exitoso": False if validacion.estado == "Preliquidacion sin finalizar" else True
+                "calculo_exitoso": False if validacion.estado == "preliquidacion_sin_finalizar" else True
             }
         }
 
@@ -926,7 +926,7 @@ class LiquidadorIVA:
                 "porcentaje_iva": 0.0,
                 "tarifa_reteiva": 0.0,
                 "es_fuente_nacional": True,
-                "estado_liquidacion": "Error en liquidación",
+                "estado_liquidacion": "preliquidacion_sin_finalizar",
                 "es_responsable_iva": None,
                 "observaciones": [mensaje_error],
                 "calculo_exitoso": False

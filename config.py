@@ -963,7 +963,7 @@ def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio
                     "nombre_entidad_obra_publica": None,
                     "validacion_nit": validacion_nit,
                     "validacion_recurso": validacion_recurso,  # Incluir resultado completo
-                    "estado_especial": "Preliquidacion sin finalizar",
+                    "estado_especial": "preliquidacion_sin_finalizar",
                     "razon_no_aplica_estampilla": validacion_recurso.get("observaciones"),
                     "razon_no_aplica_obra_publica": validacion_recurso.get("observaciones")
                 }
@@ -989,7 +989,7 @@ def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio
                     "error": str(e),
                     "observaciones": f"Error técnico al validar tipo de recurso: {str(e)}"
                 },
-                "estado_especial": "Preliquidacion sin finalizar",
+                "estado_especial": "preliquidacion_sin_finalizar",
                 "razon_no_aplica_estampilla": f"Error técnico al validar tipo de recurso: {str(e)}",
                 "razon_no_aplica_obra_publica": f"Error técnico al validar tipo de recurso: {str(e)}"
             }
@@ -1645,7 +1645,7 @@ def crear_resultado_recurso_extranjero_retefuente() -> object:
         'fecha_calculo': datetime.now().isoformat(),
         'mensajes_error': ["Recurso de fuente extranjera - No aplica retención en la fuente"],
         'resumen_conceptos': 'N/A',
-        'estado': 'No aplica'
+        'estado': 'no_aplica_impuesto'
     })()
 
 def crear_resultado_recurso_extranjero_iva() -> Dict[str, Any]:
@@ -1667,7 +1667,7 @@ def crear_resultado_recurso_extranjero_iva() -> Dict[str, Any]:
             "porcentaje_iva": 0.0,
             "tarifa_reteiva": 0.0,
             "es_fuente_nacional": False,
-            "estado_liquidacion": "No aplica",
+            "estado_liquidacion": "no_aplica_impuesto",
             "es_responsable_iva": None,
             "observaciones": ["Recurso de fuente extranjera - No aplica IVA ni ReteIVA"],
             "calculo_exitoso": True

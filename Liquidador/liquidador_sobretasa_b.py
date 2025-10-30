@@ -101,7 +101,7 @@ class LiquidadorSobretasaBomberil:
         # Resultado base
         resultado = {
             "aplica": False,
-            "estado": "No aplica impuesto",
+            "estado": "no_aplica_impuesto",
             "valor_total_sobretasa": 0.0,
             "ubicaciones": [],
             "observaciones": "",
@@ -113,7 +113,7 @@ class LiquidadorSobretasaBomberil:
             valor_total_ica = resultado_ica.get("valor_total_ica", 0.0)
 
             if valor_total_ica <= 0:
-                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["estado"] = "preliquidacion_sin_finalizar"
                 resultado["observaciones"] = (
                     "No aplica ICA, por tanto no aplica Sobretasa Bomberil"
                 )
@@ -124,7 +124,7 @@ class LiquidadorSobretasaBomberil:
             ubicaciones_ica = self._extraer_ubicaciones_ica(resultado_ica)
 
             if not ubicaciones_ica:
-                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["estado"] = "preliquidacion_sin_finalizar"
                 resultado["observaciones"] = (
                     "No se pudieron identificar ubicaciones en el análisis de ICA"
                 )
@@ -183,14 +183,14 @@ class LiquidadorSobretasaBomberil:
 
             # VALIDACIÓN 2: Si hubo error de BD
             if error_bd and not ubicaciones_liquidadas:
-                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["estado"] = "preliquidacion_sin_finalizar"
                 resultado["observaciones"] = "Error al consultar la base de datos"
                 logger.error("Error en todas las consultas a Base de datos")
                 return resultado
 
             # VALIDACIÓN 3: Ninguna ubicación tiene tarifa (no aplica)
             if not ubicaciones_liquidadas:
-                resultado["estado"] = "No aplica impuesto"
+                resultado["estado"] = "no_aplica_impuesto"
                 resultado["observaciones"] = (
                     f"Ninguna de las {len(ubicaciones_ica)} ubicaciones aplica Sobretasa Bomberil"
                 )
@@ -199,7 +199,7 @@ class LiquidadorSobretasaBomberil:
 
             # PASO 4: Generar resultado exitoso
             resultado["aplica"] = True
-            resultado["estado"] = "Preliquidado"
+            resultado["estado"] = "preliquidado"
             resultado["valor_total_sobretasa"] = round(valor_total_sobretasa, 2)
             resultado["ubicaciones"] = ubicaciones_liquidadas
             resultado["observaciones"] = (
@@ -213,7 +213,7 @@ class LiquidadorSobretasaBomberil:
 
         except Exception as e:
             logger.error(f"Error en liquidación Sobretasa Bomberil: {e}")
-            resultado["estado"] = "Preliquidacion sin finalizar"
+            resultado["estado"] = "preliquidacion_sin_finalizar"
             resultado["observaciones"] = f"Error en liquidación: {str(e)}"
             return resultado
 

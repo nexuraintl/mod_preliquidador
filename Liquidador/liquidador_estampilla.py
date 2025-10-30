@@ -433,7 +433,7 @@ class LiquidadorEstampilla:
         ✅ Valida valor del contrato (para determinar tarifa UVT)
         ✅ Si NO se identifica valor → "Preliquidación sin finalizar"
         ✅ Fórmula: Estampilla = Valor factura (sin IVA) x Porcentaje tarifa
-        ✅ Estados: "Preliquidado" / "No aplica el impuesto" / "Preliquidación sin finalizar"
+        ✅ Estados: "Preliquidado" / "No aplica impuesto" / "Preliquidación sin finalizar"
         ✅ Manejo de consorcios con porcentaje de participación
 
         Args:
@@ -447,7 +447,7 @@ class LiquidadorEstampilla:
         """
         resultado = ResultadoEstampilla(
             aplica=False,
-            estado="Preliquidación sin finalizar",
+            estado="preliquidacion_sin_finalizar",
             fecha_calculo=datetime.now().isoformat()
         )
 
@@ -458,7 +458,7 @@ class LiquidadorEstampilla:
 
             if not codigo_valido:
                 resultado.mensajes_error.append(mensaje_codigo)
-                resultado.estado = "No aplica el impuesto"
+                resultado.estado = "no_aplica_impuesto"
                 resultado.razon = mensaje_codigo
                 return resultado
             
@@ -469,11 +469,11 @@ class LiquidadorEstampilla:
                 
                 if not tercero_valido:
                     resultado.mensajes_error.append(mensaje_tercero)
-                    resultado.estado = "No aplica el impuesto"
+                    resultado.estado = "no_aplica_impuesto"
                     return resultado
             else:
                 resultado.mensajes_error.append("No se identificó información del tercero")
-                resultado.estado = "Preliquidación sin finalizar"
+                resultado.estado = "preliquidacion_sin_finalizar"
                 return resultado
             
             # 3. ✅ VALIDAR OBJETO DEL CONTRATO - REQUISITO CRÍTICO
@@ -482,12 +482,12 @@ class LiquidadorEstampilla:
                 
                 if not resultado.objeto_contrato_valido:
                     resultado.mensajes_error.append(f"Objeto del contrato '{analisis_contrato.objeto_identificado.objeto}' no aplica para estampilla")
-                    resultado.estado = "No aplica el impuesto"
+                    resultado.estado = "no_aplica_impuesto"
                     return resultado
             else:
                 # ✅ CUMPLE REQUISITO: Si NO se identifica objeto → "Preliquidación sin finalizar"
                 resultado.mensajes_error.append("Cuando no se identifica el objeto del contrato, asignar estado: Preliquidación sin finalizar")
-                resultado.estado = "Preliquidación sin finalizar"
+                resultado.estado = "preliquidacion_sin_finalizar"
                 return resultado
             
             # 4. ✅ VALIDAR VALOR DEL CONTRATO - REQUISITO CRÍTICO
@@ -498,7 +498,7 @@ class LiquidadorEstampilla:
             else:
                 # ✅ CUMPLE REQUISITO: Si NO se identifica valor → "Preliquidación sin finalizar"
                 resultado.mensajes_error.append("Si no se identifica el valor del contrato, asignar estado: Preliquidación sin finalizar")
-                resultado.estado = "Preliquidación sin finalizar"
+                resultado.estado = "preliquidacion_sin_finalizar"
                 return resultado
             
             # 5. ✅ CALCULAR ESTAMPILLA CON FÓRMULA CORRECTA
@@ -520,7 +520,7 @@ class LiquidadorEstampilla:
             
             # 6. ✅ ACTUALIZAR RESULTADO CON ESTADOS CORRECTOS
             resultado.aplica = True
-            resultado.estado = "Preliquidado"  # ✅ CUMPLE REQUISITO: Si aplica → "Preliquidado"
+            resultado.estado = "preliquidado"  # ✅ CUMPLE REQUISITO: Si aplica → "Preliquidado"
             resultado.valor_estampilla = calculo["valor_estampilla"]
             resultado.tarifa_aplicada = calculo["tarifa_aplicada"]
             resultado.rango_uvt = calculo["rango_uvt"]
@@ -532,7 +532,7 @@ class LiquidadorEstampilla:
         except Exception as e:
             logger.error(f" Error calculando estampilla: {e}")
             resultado.mensajes_error.append(f"Error interno: {str(e)}")
-            resultado.estado = "Preliquidación sin finalizar"
+            resultado.estado = "preliquidacion_sin_finalizar"
         
         return resultado
     
@@ -590,7 +590,7 @@ class LiquidadorEstampilla:
         ✅ Si NO se identifica valor → "Preliquidación sin finalizar"
         ✅ Fórmula: Contribución = Valor factura (sin IVA) x 5%
         ✅ Consorcios: Contribución = Valor factura (sin IVA) x 5% x % participación
-        ✅ Estados: "Preliquidado" / "No aplica el impuesto" / "Preliquidación sin finalizar"
+        ✅ Estados: "Preliquidado" / "No aplica  impuesto" / "Preliquidación sin finalizar"
 
         Args:
             valor_factura_sin_iva: Valor de la factura sin IVA
@@ -609,7 +609,7 @@ class LiquidadorEstampilla:
         fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         resultado = ResultadoContribucionObraPublica(
             aplica=False,
-            estado="Preliquidación sin finalizar",
+            estado="preliquidacion_sin_finalizar",
             fecha_calculo=fecha_actual
         )
 
@@ -620,7 +620,7 @@ class LiquidadorEstampilla:
 
             if not codigo_valido:
                 resultado.mensajes_error.append(mensaje_codigo)
-                resultado.estado = "No aplica el impuesto"
+                resultado.estado = "no_aplica_impuesto"
                 resultado.razon = mensaje_codigo
                 logger.warning(f"Código de negocio no válido: {codigo_negocio}")
                 return resultado
@@ -632,7 +632,7 @@ class LiquidadorEstampilla:
                     logger.info(f"Tercero válido: {nombre_tercero}")
                 else:
                     resultado.mensajes_error.append(f"Tercero '{nombre_tercero}' no administra recursos públicos")
-                    resultado.estado = "No aplica el impuesto"
+                    resultado.estado = "no_aplica_impuesto"
                     logger.warning(f"Tercero no válido: {nombre_tercero}")
                     return resultado
             else:
@@ -647,12 +647,12 @@ class LiquidadorEstampilla:
                 else:
                     resultado.mensajes_error.append("Cuando no se identifica el objeto del contrato como OBRA, asignar estado: Preliquidación sin finalizar")
                     logger.warning(f" Objeto no válido: {objeto_contrato}")
-                    resultado.estado = "Preliquidación sin finalizar"
+                    resultado.estado = "preliquidacion_sin_finalizar"
                     return resultado
             else:
                 # ✅ CUMPLE REQUISITO: Si NO se identifica objeto → "Preliquidación sin finalizar"
                 resultado.mensajes_error.append("Cuando no se identifica el objeto del contrato, asignar estado: Preliquidación sin finalizar")
-                resultado.estado = "Preliquidación sin finalizar"
+                resultado.estado = "preliquidacion_sin_finalizar"
                 return resultado
             
             # 4. ✅ VALIDAR VALOR DE FACTURA - REQUISITO CRÍTICO
@@ -662,7 +662,7 @@ class LiquidadorEstampilla:
             else:
                 # ✅ CUMPLE REQUISITO: Si NO se identifica valor → "Preliquidación sin finalizar"
                 resultado.mensajes_error.append("Si no se identifica el valor de la factura, asignar estado: Preliquidación sin finalizar")
-                resultado.estado = "Preliquidación sin finalizar"
+                resultado.estado = "preliquidacion_sin_finalizar"
                 return resultado
             
             # 5. ✅ CÁLCULO CON FÓRMULA CORRECTA
@@ -673,18 +673,18 @@ class LiquidadorEstampilla:
             
             # 6. ✅ ESTADO FINAL CORRECTO
             if resultado.aplica and resultado.valor_contribucion > 0:
-                resultado.estado = "Preliquidado"  # ✅ CUMPLE REQUISITO: Si aplica → "Preliquidado"
+                resultado.estado = "preliquidado"  # ✅ CUMPLE REQUISITO: Si aplica → "Preliquidado"
                 logger.info(f" Contribución obra pública calculada: ${resultado.valor_contribucion:,.2f}")
                 logger.info(f" Fórmula: Valor factura sin IVA x 5% = ${valor_factura_sin_iva:,.2f} x 5% = ${resultado.valor_contribucion:,.2f}")
             else:
-                resultado.estado = "No aplica el impuesto"
-            
+                resultado.estado = "no_aplica_impuesto"
+
             return resultado
             
         except Exception as e:
             logger.error(f" Error liquidando obra pública: {e}")
             resultado.mensajes_error.append(f"Error en cálculo: {str(e)}")
-            resultado.estado = "Preliquidación sin finalizar"
+            resultado.estado = "preliquidacion_sin_finalizar"
             return resultado
     
     def _es_contrato_obra(self, descripcion: str) -> bool:
@@ -884,7 +884,7 @@ class LiquidadorEstampilla:
 
         resultado = {
             "aplica": False,
-            "estado": "Preliquidacion sin finalizar",
+            "estado": "preliquidacion_sin_finalizar",
             "tarifa_aplicada": 0.05,
             "valor_contribucion": 0.0,
             "valor_factura_sin_iva": 0.0,
@@ -901,17 +901,17 @@ class LiquidadorEstampilla:
             if not objeto_valido:
                 # Distinguir entre NO_APLICA y NO_IDENTIFICADO
                 if tipo_contrato == "NO_APLICA":
-                    resultado["estado"] = "No aplica el impuesto"
+                    resultado["estado"] = "no_aplica_impuesto"
                     resultado["razon"] = error_objeto
                     logger.info(f"Obra Pública: {error_objeto}")
                 elif tipo_contrato == "NO_IDENTIFICADO":
-                    resultado["estado"] = "Preliquidacion sin finalizar"
+                    resultado["estado"] = "preliquidacion_sin_finalizar"
                     resultado["razon"] = error_objeto
                     resultado["mensajes_error"].append(error_objeto)
                     logger.warning(f"Obra Pública: {error_objeto}")
                 else:
                     # Otros casos desconocidos
-                    resultado["estado"] = "Preliquidacion sin finalizar"
+                    resultado["estado"] = "preliquidacion_sin_finalizar"
                     resultado["razon"] = error_objeto
                     resultado["mensajes_error"].append(error_objeto)
                     logger.warning(f"Obra Pública: {error_objeto}")
@@ -920,7 +920,7 @@ class LiquidadorEstampilla:
             # VALIDACIÓN 2: Solo CONTRATO_OBRA aplica para obra pública
             if tipo_contrato != "CONTRATO_OBRA":
                 resultado["aplica"] = False
-                resultado["estado"] = "No aplica el impuesto"
+                resultado["estado"] = "no_aplica_impuesto"
                 resultado["razon"] = f"Solo contratos de obra aplican contribución. Tipo detectado: {tipo_contrato}"
                 logger.info(f"Obra Pública: No aplica para tipo {tipo_contrato}")
                 return resultado
@@ -929,7 +929,7 @@ class LiquidadorEstampilla:
             factura_valida, valor_factura, error_factura = self._validar_valor_factura_sin_iva(extraccion)
 
             if not factura_valida:
-                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["estado"] = "preliquidacion_sin_finalizar"
                 resultado["razon"] = error_factura
                 resultado["mensajes_error"].append(error_factura)
                 logger.warning(f"Obra Pública: {error_factura}")
@@ -939,7 +939,7 @@ class LiquidadorEstampilla:
             valor_contribucion = valor_factura * 0.05
 
             resultado["aplica"] = True
-            resultado["estado"] = "Preliquidado"
+            resultado["estado"] = "preliquidado"
             resultado["valor_contribucion"] = valor_contribucion
             resultado["valor_factura_sin_iva"] = valor_factura
             resultado["tarifa_aplicada"] = 0.05
@@ -951,7 +951,7 @@ class LiquidadorEstampilla:
 
         except Exception as e:
             logger.error(f"Error en validaciones manuales obra pública: {e}")
-            resultado["estado"] = "Preliquidacion sin finalizar"
+            resultado["estado"] = "preliquidacion_sin_finalizar"
             resultado["razon"] = f"Error técnico: {str(e)}"
             resultado["mensajes_error"].append(f"Error interno: {str(e)}")
             return resultado
@@ -984,7 +984,7 @@ class LiquidadorEstampilla:
 
         resultado = {
             "aplica": False,
-            "estado": "Preliquidacion sin finalizar",
+            "estado": "preliquidacion_sin_finalizar",
             "valor_estampilla": 0.0,
             "tarifa_aplicada": 0.0,
             "rango_uvt": "",
@@ -1003,11 +1003,11 @@ class LiquidadorEstampilla:
             if not objeto_valido:
                 # Distinguir entre NO_APLICA y NO_IDENTIFICADO
                 if tipo_contrato == "NO_APLICA":
-                    resultado["estado"] = "No aplica el impuesto"
+                    resultado["estado"] = "no_aplica_impuesto"
                     resultado["razon"] = error_objeto
                     logger.info(f"Estampilla: {error_objeto}")
                 elif tipo_contrato == "NO_IDENTIFICADO":
-                    resultado["estado"] = "Preliquidacion sin finalizar"
+                    resultado["estado"] = "preliquidacion_sin_finalizar"
                     resultado["razon"] = error_objeto
                     resultado["mensajes_error"].append(error_objeto)
                     logger.warning(f"Estampilla: {error_objeto}")
@@ -1024,7 +1024,7 @@ class LiquidadorEstampilla:
 
             if tipo_contrato not in tipos_validos_estampilla:
                 resultado["aplica"] = False
-                resultado["estado"] = "No aplica el impuesto"
+                resultado["estado"] = "no_aplica_impuesto"
                 resultado["razon"] = f"Tipo de contrato '{tipo_contrato}' no aplica para estampilla"
                 logger.info(f"Estampilla: No aplica para tipo {tipo_contrato}")
                 return resultado
@@ -1033,7 +1033,7 @@ class LiquidadorEstampilla:
             contrato_valido, valor_contrato_base, error_contrato = self._validar_valor_contrato_total(extraccion)
 
             if not contrato_valido:
-                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["estado"] = "preliquidacion_sin_finalizar"
                 resultado["razon"] = error_contrato
                 resultado["mensajes_error"].append(error_contrato)
                 logger.warning(f"Estampilla: {error_contrato}")
@@ -1043,7 +1043,7 @@ class LiquidadorEstampilla:
             factura_valida, valor_factura, error_factura = self._validar_valor_factura_sin_iva(extraccion)
 
             if not factura_valida:
-                resultado["estado"] = "Preliquidacion sin finalizar"
+                resultado["estado"] = "preliquidacion_sin_finalizar"
                 resultado["razon"] = error_factura
                 resultado["mensajes_error"].append(error_factura)
                 logger.warning(f"Estampilla: {error_factura}")
@@ -1069,7 +1069,7 @@ class LiquidadorEstampilla:
                 rango_texto = f"{info_tarifa['rango_desde_uvt']:,.0f}-{info_tarifa['rango_hasta_uvt']:,.0f} UVT ({tarifa_aplicable*100:.1f}%)"
 
             resultado["aplica"] = True
-            resultado["estado"] = "Preliquidado"
+            resultado["estado"] = "preliquidado"
             resultado["valor_estampilla"] = valor_estampilla
             resultado["tarifa_aplicada"] = tarifa_aplicable
             resultado["rango_uvt"] = rango_texto
@@ -1084,7 +1084,7 @@ class LiquidadorEstampilla:
 
         except Exception as e:
             logger.error(f"Error en validaciones manuales estampilla: {e}")
-            resultado["estado"] = "Preliquidacion sin finalizar"
+            resultado["estado"] = "preliquidacion_sin_finalizar"
             resultado["razon"] = f"Error técnico: {str(e)}"
             resultado["mensajes_error"].append(f"Error interno: {str(e)}")
             return resultado
