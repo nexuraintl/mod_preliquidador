@@ -6,7 +6,6 @@ Modulo que contiene los prompts especializados para el analisis
 del Impuesto al Timbre usando Google Gemini.
 
 Responsabilidad (SRP): Solo definicion de prompts para timbre
-Autor: Claude Code - Arquitectura SOLID
 """
 
 from typing import List

@@ -6,7 +6,6 @@ Modulo para calcular el Impuesto al Timbre con validaciones manuales en Python.
 Gemini solo identifica datos, Python aplica toda la logica de negocio.
 
 Responsabilidad (SRP): Solo calculos y validaciones de timbre
-Autor: Claude Code - Arquitectura SOLID
 """
 
 import logging

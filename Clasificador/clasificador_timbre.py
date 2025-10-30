@@ -7,7 +7,6 @@ usando Google Gemini.
 
 Responsabilidad (SRP): Solo analisis de timbre mediante IA
 Reutiliza funciones del ProcesadorGemini existente
-Autor: Claude Code - Arquitectura SOLID
 """
 
 import json
