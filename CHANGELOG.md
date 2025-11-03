@@ -1,5 +1,249 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.0.13 - REFACTOR: Clean Architecture - Separación Infrastructure Layer] - 2025-10-30
+
+### 🏗️ ARQUITECTURA: CLEAN ARCHITECTURE - INFRASTRUCTURE LAYER
+
+#### DESCRIPCIÓN GENERAL
+Refactorización siguiendo principios de Clean Architecture para separar funciones de infraestructura del archivo principal. Se movieron funciones de setup y configuración a módulos especializados en la Infrastructure Layer.
+
+**Objetivos arquitectónicos**:
+- ✅ **SRP (Single Responsibility Principle)**: Cada módulo tiene una responsabilidad única
+- ✅ **Clean Architecture**: Separación clara de capas (Infrastructure Layer)
+- ✅ **Mantenibilidad**: Código más organizado y fácil de mantener
+- ✅ **Testabilidad**: Funciones de infraestructura aisladas y testeables
+
+---
+
+### 🆕 AÑADIDO
+
+#### Nuevo Módulo `app_logging.py`
+**Ubicación**: Raíz del proyecto
+**Layer**: Infrastructure Layer
+
+**Descripción**: Módulo dedicado exclusivamente a configuración de logging del sistema.
+
+**Funciones exportadas**:
+1. `configurar_logging(nivel: str = "INFO")` - Configura el sistema de logging
+2. `obtener_logger(nombre: str)` - Utilidad para obtener loggers configurados
+
+**Características**:
+```python
+# Configuración profesional de logging
+from app_logging import configurar_logging
+
+# Configurar con nivel por defecto (INFO)
+configurar_logging()
+
+# O con nivel personalizado
+configurar_logging("DEBUG")
+```
+
+**Beneficios**:
+- SRP: Solo responsable de configuración de logging
+- Reutilizable desde cualquier módulo
+- Extensible mediante parámetro de nivel
+- Evita duplicación de handlers de uvicorn
+
+---
+
+#### Nuevo Módulo `database/setup.py`
+**Ubicación**: `database/setup.py`
+**Layer**: Infrastructure Layer
+
+**Descripción**: Módulo dedicado a inicialización de infraestructura de base de datos.
+
+**Funciones exportadas**:
+1. `inicializar_database_manager()` - Inicializa stack completo de DB
+2. `verificar_conexion_database(db_manager)` - Verifica estado de conexión
+
+**Firma actualizada**:
+```python
+def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Optional[BusinessDataService]]:
+    """
+    Retorna tupla: (database_manager, business_service)
+    - database_manager: None si error o sin credenciales
+    - business_service: Siempre disponible (graceful degradation)
+    """
+```
+
+**Características**:
+- DIP: Depende de abstracciones (DatabaseManager, BusinessDataService)
+- Strategy Pattern: Usa DatabaseManager con implementación configurable
+- Dependency Injection: Inyecta DatabaseManager en BusinessService
+- Graceful Degradation: BusinessService funciona sin DB si es necesario
+- Logging completo de inicialización
+
+**Uso**:
+```python
+from database import inicializar_database_manager
+
+# Inicializar stack completo
+db_manager, business_service = inicializar_database_manager()
+
+# business_service siempre está disponible
+resultado = business_service.obtener_datos_negocio(codigo)
+```
+
+---
+
+### 🔧 CAMBIADO
+
+#### `database/__init__.py`
+**Cambios**:
+1. Agregadas exportaciones de `setup.py`:
+   ```python
+   from .setup import (
+       inicializar_database_manager,
+       verificar_conexion_database
+   )
+   ```
+
+2. Actualizado `__all__` para incluir funciones de setup
+
+**Beneficio**: API unificada del módulo database
+
+---
+
+#### `main.py` - Refactorización Infrastructure Layer
+**Cambios arquitectónicos**:
+
+1. **Removidas funciones** (líneas 43-67 anteriormente):
+   - `configurar_logging()` → Movida a `app_logging.py`
+
+2. **Removidas funciones** (líneas 126-166 anteriormente):
+   - `inicializar_database_manager()` → Movida a `database/setup.py`
+
+3. **Nuevas importaciones**:
+   ```python
+   # Infrastructure Layer - Logging
+   from app_logging import configurar_logging
+
+   # Infrastructure Layer - Database Setup
+   from database import inicializar_database_manager
+   ```
+
+4. **Variables globales simplificadas**:
+   ```python
+   # Variables globales para el gestor de base de datos y servicio de negocio
+   # NOTA: Inicializadas en el lifespan de FastAPI
+   db_manager = None
+   business_service = None
+   ```
+
+5. **Actualizado `lifespan()` de FastAPI**:
+   ```python
+   @asynccontextmanager
+   async def lifespan(app: FastAPI):
+       """Ciclo de vida usando Infrastructure Layer"""
+       # Configurar logging
+       configurar_logging()
+       global logger, db_manager, business_service
+       logger = logging.getLogger(__name__)
+
+       # Inicializar infraestructura de DB
+       db_manager, business_service = inicializar_database_manager()
+
+       yield  # App execution
+
+       logger.info("Worker de FastAPI deteniéndose.")
+   ```
+
+**Reducción de código en `main.py`**: ~47 líneas menos
+**Líneas totales antes**: 1842 líneas
+**Líneas totales después**: ~1795 líneas
+
+---
+
+### 📊 IMPACTO EN ARQUITECTURA
+
+#### Antes de la refactorización:
+```
+main.py (1842 líneas)
+├── Funciones de infraestructura mezcladas
+├── configurar_logging() (25 líneas)
+├── inicializar_database_manager() (41 líneas)
+└── Lógica de negocio de endpoints
+```
+
+#### Después de la refactorización:
+```
+PRELIQUIDADOR/
+├── app_logging.py              # Infrastructure Layer - Logging (nuevo)
+│   └── configurar_logging()
+│   └── obtener_logger()
+│
+├── database/
+│   ├── setup.py                # Infrastructure Layer - DB Setup (nuevo)
+│   │   └── inicializar_database_manager()
+│   │   └── verificar_conexion_database()
+│   └── __init__.py             # Exporta setup functions
+│
+└── main.py                     # Application Layer - Solo endpoints
+    └── Importa desde infrastructure modules
+```
+
+---
+
+### ✅ PRINCIPIOS SOLID APLICADOS
+
+#### Single Responsibility Principle (SRP)
+- `app_logging.py`: Solo configura logging
+- `database/setup.py`: Solo inicializa infraestructura de DB
+- `main.py`: Solo define endpoints y orquesta flujo
+
+#### Open/Closed Principle (OCP)
+- `configurar_logging()`: Extensible mediante parámetro `nivel`
+- `inicializar_database_manager()`: Usa Strategy Pattern para diferentes DBs
+
+#### Dependency Inversion Principle (DIP)
+- `main.py` depende de abstracciones en infrastructure layer
+- Funciones de setup inyectan dependencias
+
+#### Clean Architecture Layers
+```
+┌─────────────────────────────────────┐
+│   Application Layer (main.py)       │ ← Endpoints, coordinación
+├─────────────────────────────────────┤
+│   Infrastructure Layer              │
+│   ├── app_logging.py                │ ← Logging setup
+│   └── database/setup.py             │ ← Database setup
+└─────────────────────────────────────┘
+```
+
+---
+
+### 🎯 BENEFICIOS DE LA REFACTORIZACIÓN
+
+1. **Mantenibilidad**: Cada módulo tiene responsabilidad clara
+2. **Testabilidad**: Funciones de infraestructura aisladas y testeables
+3. **Reutilización**: `app_logging` puede usarse desde cualquier módulo
+4. **Organización**: Estructura clara según Clean Architecture
+5. **Escalabilidad**: Fácil agregar nuevos módulos de infraestructura
+6. **Separación de concerns**: Infrastructure Layer bien definido
+
+---
+
+### 📝 NOTAS TÉCNICAS
+
+#### Compatibilidad
+- ✅ **100% compatible** con código existente
+- ✅ Las variables globales `db_manager` y `business_service` siguen disponibles
+- ✅ Todos los endpoints funcionan igual que antes
+- ✅ No requiere cambios en otros módulos
+
+#### Testing
+- ✅ `app_logging.py`: Testeable independientemente
+- ✅ `database/setup.py`: Mockeable fácilmente para tests
+- ✅ `main.py`: Más fácil de testear sin funciones de setup
+
+#### Patrones aplicados
+- Factory Pattern: `inicializar_database_manager()` crea objetos complejos
+- Strategy Pattern: DatabaseManager usa diferentes implementaciones de DB
+- Dependency Injection: Setup inyecta dependencias en servicios
+
+---
+
 ## [3.0.12 - REFACTOR: ICA v3.0 - Formato Optimizado de Actividades] - 2025-10-29
 
 ### 🔄 MÓDULO ICA (INDUSTRIA Y COMERCIO) v3.0.0

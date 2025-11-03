@@ -36,34 +36,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# Configuración de logging PROFESIONAL
+# Configuración de logging - INFRASTRUCTURE LAYER
 import logging
-import sys
-
-def configurar_logging():
-    """
-    Configura el logging profesional para la aplicación.
-    - Elimina handlers existentes para evitar duplicación.
-    - Establece un formato claro con timestamp.
-    - Envía logs a la consola (stdout).
-    """
-    # Evitar duplicación de logs por el reloader de uvicorn
-    if logging.getLogger().hasHandlers():
-        logging.getLogger().handlers.clear()
-        print(" Logging CORREGIDO - Handlers duplicados eliminados")
-
-    # Configurar el formato del log
-    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    formatter = logging.Formatter(log_format)
-
-    # Configurar un handler para la consola
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
-
-    # Configurar el logger raíz
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(stream_handler)
+from app_logging import configurar_logging
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +55,15 @@ from Liquidador.liquidador_consorcios import LiquidadorConsorcios, convertir_res
 from Liquidador.liquidador_ica import LiquidadorICA
 from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
 from Liquidador.liquidador_timbre import LiquidadorTimbre
-from Extraccion import ProcesadorArchivos
+from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
 
 # Importar módulos de base de datos (SOLID: Clean Architecture Module)
 from database import (
     DatabaseManager,
     SupabaseDatabase,
     BusinessDataService,
-    crear_business_service
+    crear_business_service,
+    inicializar_database_manager  # INFRASTRUCTURE SETUP
 )
 
 # Cargar configuración global - INCLUYE ESTAMPILLA Y OBRA PÚBLICA
@@ -105,6 +81,7 @@ from config import (
     detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
     crear_resultado_recurso_extranjero_retefuente,  #  HELPER RECURSO EXTRANJERO
     crear_resultado_recurso_extranjero_iva,  #  HELPER RECURSO EXTRANJERO
+    guardar_archivo_json,  # FUNCIÓN DE UTILIDAD PARA GUARDAR JSON
 
 )
 
@@ -116,291 +93,10 @@ import io
 # INICIALIZACIÓN DE BASE DE DATOS
 # ===============================
 
-# Variable global para el gestor de base de datos
+# Variables globales para el gestor de base de datos y servicio de negocio
+# NOTA: Inicializadas en el lifespan de FastAPI
 db_manager = None
-
-# Variable global para el servicio de datos de negocio 
 business_service = None
-
-def inicializar_database_manager():
-    """
-    Inicializa el gestor de base de datos y servicios asociados usando variables de entorno.
-
-    PRINCIPIOS SOLID APLICADOS:
-    - SRP: Función dedicada solo a inicialización de componentes de base de datos
-    - DIP: Servicios dependen de abstracciones inyectadas
-    """
-    global db_manager, business_service
-    try:
-        # Obtener credenciales desde variables de entorno
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
-
-        if not supabase_url or not supabase_key:
-            logger.warning(" Variables de entorno SUPABASE_URL y SUPABASE_KEY no están configuradas")
-            logger.warning(" DatabaseManager y BusinessService no serán inicializados")
-
-            # Crear business service sin database manager (graceful degradation)
-            business_service = crear_business_service(None)
-            return None
-
-        # Crear la implementación concreta
-        supabase_db = SupabaseDatabase(supabase_url, supabase_key)
-
-        # Crear el manager usando el patrón Strategy
-        db_manager = DatabaseManager(supabase_db)
-
-        # Crear business service con dependency injection (DIP)
-        business_service = crear_business_service(db_manager)
-
-        logger.info(" DatabaseManager y BusinessService inicializados correctamente")
-        return db_manager
-
-    except Exception as e:
-        logger.error(f" Error inicializando DatabaseManager: {e}")
-        db_manager = None
-
-        # Crear business service sin database manager (graceful degradation)
-        business_service = crear_business_service(None)
-        return None
-
-# ===============================
-# FUNCIONES DE PREPROCESAMIENTO
-# ===============================
-
-def preprocesar_excel_limpio(contenido: bytes, nombre_archivo: str = "archivo.xlsx") -> str:
-    """
-    Preprocesa archivo Excel eliminando filas y columnas vacías.
-    Mantiene formato tabular limpio con toda la información intacta.
-    
-    FUNCIONALIDAD:
-    Elimina filas completamente vacías
-    Elimina columnas completamente vacías
-    Mantiene formato tabular pero limpio
-    Conserva toda la información relevante
-    Óptimo y simple
-    Guarda automáticamente el archivo preprocesado
-    
-    Args:
-        contenido: Contenido binario del archivo Excel
-        nombre_archivo: Nombre del archivo (para logging)
-        
-    Returns:
-        str: Texto extraído y limpio del Excel
-    """
-    try:
-        logger.info(f" Preprocesando Excel: {nombre_archivo}")
-        
-        # 1. LEER EXCEL CON TODAS LAS HOJAS
-        df_dict = pd.read_excel(io.BytesIO(contenido), sheet_name=None)
-        
-        texto_completo = ""
-        total_hojas = 0
-        filas_eliminadas_total = 0
-        columnas_eliminadas_total = 0
-        
-        # 2. PROCESAR CADA HOJA CON LIMPIEZA
-        if isinstance(df_dict, dict):
-            total_hojas = len(df_dict)
-            
-            for nombre_hoja, dataframe in df_dict.items():
-                # Estadísticas originales
-                filas_orig = len(dataframe)
-                cols_orig = len(dataframe.columns)
-                
-                #  LIMPIEZA SIMPLE: Eliminar filas y columnas completamente vacías
-                df_limpio = dataframe.dropna(how='all')  # Filas vacías
-                df_limpio = df_limpio.dropna(axis=1, how='all')  # Columnas vacías
-                
-                # Estadísticas después de limpieza
-                filas_final = len(df_limpio)
-                cols_final = len(df_limpio.columns)
-                
-                filas_eliminadas = filas_orig - filas_final
-                columnas_eliminadas = cols_orig - cols_final
-                filas_eliminadas_total += filas_eliminadas
-                columnas_eliminadas_total += columnas_eliminadas
-                
-                # Agregar hoja al texto
-                texto_completo += f"\n--- HOJA: {nombre_hoja} ---\n"
-                
-                if not df_limpio.empty:
-                    # Convertir a texto manteniendo formato tabular limpio
-                    texto_hoja = df_limpio.to_string(index=False, na_rep='', max_cols=None, max_rows=None)
-                    texto_completo += texto_hoja
-                else:
-                    texto_completo += "[HOJA VACÍA DESPUÉS DE LIMPIEZA]"
-                
-                texto_completo += "\n"
-                
-        else:
-            # UNA SOLA HOJA
-            total_hojas = 1
-            dataframe = df_dict
-            
-            # Estadísticas originales
-            filas_orig = len(dataframe)
-            cols_orig = len(dataframe.columns)
-            
-            #  LIMPIEZA SIMPLE: Eliminar filas y columnas vacías
-            df_limpio = dataframe.dropna(how='all')  # Filas vacías
-            df_limpio = df_limpio.dropna(axis=1, how='all')  # Columnas vacías
-            
-            # Estadísticas finales
-            filas_final = len(df_limpio)
-            cols_final = len(df_limpio.columns)
-            
-            filas_eliminadas_total = filas_orig - filas_final
-            columnas_eliminadas_total = cols_orig - cols_final
-            
-            if not df_limpio.empty:
-                texto_completo = df_limpio.to_string(index=False, na_rep='', max_cols=None, max_rows=None)
-            else:
-                texto_completo = "[ARCHIVO VACÍO DESPUÉS DE LIMPIEZA]"
-        
-        texto_final = texto_completo.strip()
-        
-        # 3. GUARDADO AUTOMÁTICO DEL ARCHIVO PREPROCESADO
-        _guardar_archivo_preprocesado(nombre_archivo, texto_final, filas_eliminadas_total, columnas_eliminadas_total, total_hojas)
-        
-        # 4. LOGGING OPTIMIZADO
-        logger.info(f" Preprocesamiento completado: {len(texto_final)} caracteres")
-        logger.info(f" Hojas: {total_hojas} | Filas eliminadas: {filas_eliminadas_total} | Columnas eliminadas: {columnas_eliminadas_total}")
-        logger.info(f" Archivo preprocesado guardado automáticamente")
-        
-        return texto_final
-        
-    except Exception as e:
-        error_msg = f"Error en preprocesamiento Excel: {str(e)}"
-        logger.error(f" {error_msg}")
-        return error_msg
-
-def _guardar_archivo_preprocesado(nombre_archivo: str, texto_preprocesado: str, 
-                                 filas_eliminadas: int, columnas_eliminadas: int, total_hojas: int):
-    """
-    Guarda el archivo Excel preprocesado según nomenclatura {archivo_original}_preprocesado.txt
-    
-    FUNCIONALIDAD:
-     Guarda en carpeta extracciones/ 
-     Nomenclatura: {archivo_original}_preprocesado.txt
-     Logs básicos para confirmar guardado exitoso
-     Manejo de errores sin afectar flujo principal
-    
-    Args:
-        nombre_archivo: Nombre del archivo original
-        texto_preprocesado: Texto limpio extraído
-        filas_eliminadas: Número de filas eliminadas
-        columnas_eliminadas: Número de columnas eliminadas
-        total_hojas: Número total de hojas procesadas
-    """
-    try:
-        # 1. CREAR CARPETA EXTRACCIONES SIMPLE
-        carpeta_extracciones = Path("extracciones")
-        carpeta_extracciones.mkdir(exist_ok=True)
-        
-        # 2. CREAR NOMBRE SEGÚN NOMENCLATURA: {archivo_original}_preprocesado.txt
-        # Limpiar nombre de archivo original (quitar caracteres especiales)
-        nombre_base = "".join(c for c in nombre_archivo if c.isalnum() or c in "._-")
-        
-        # Quitar extensión original (.xlsx, .xls)
-        if '.' in nombre_base:
-            nombre_sin_extension = nombre_base.rsplit('.', 1)[0]
-        else:
-            nombre_sin_extension = nombre_base
-            
-        # Crear nombre final: {archivo_original}_preprocesado.txt
-        nombre_final = f"{nombre_sin_extension}_preprocesado.txt"
-        ruta_archivo = carpeta_extracciones / nombre_final
-        
-        # 3. CONTENIDO SIMPLE PERO COMPLETO
-        contenido_final = f"""ARCHIVO EXCEL PREPROCESADO
-=============================
-
-Archivo original: {nombre_archivo}
-Fecha procesamiento: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-Hojas procesadas: {total_hojas}
-Filas vacías eliminadas: {filas_eliminadas}
-Columnas vacías eliminadas: {columnas_eliminadas}
-Caracteres finales: {len(texto_preprocesado)}
-
-=============================
-TEXTO ENVIADO A GEMINI:
-=============================
-
-{texto_preprocesado}
-"""
-        
-        # 4. GUARDAR ARCHIVO
-        with open(ruta_archivo, 'w', encoding='utf-8') as f:
-            f.write(contenido_final)
-        
-        # 5. LOG BÁSICO DE CONFIRMACIÓN
-        logger.info(f" Archivo preprocesado guardado: extracciones/{nombre_final}")
-        logger.info(f" Estadísticas: {filas_eliminadas} filas y {columnas_eliminadas} columnas eliminadas")
-        
-    except Exception as e:
-        logger.error(f" Error guardando archivo preprocesado: {e}")
-        # No fallar el preprocesamiento por un error de guardado
-
-# ===============================
-# FUNCIÓN PARA GUARDAR ARCHIVOS JSON
-# ===============================
-
-def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str = "") -> bool:
-    """
-    Guarda archivos JSON en la carpeta Results/ organizados por fecha.
-    
-    FUNCIONALIDAD:
-     Crea estructura Results/YYYY-MM-DD/
-     Guarda archivos JSON con timestamp
-     Manejo de errores sin afectar flujo principal
-     Logs de confirmación
-    Path absoluto para evitar errores de subpath
-    
-    Args:
-        contenido: Diccionario a guardar como JSON
-        nombre_archivo: Nombre base del archivo (sin extensión)
-        subcarpeta: Subcarpeta opcional dentro de la fecha
-        
-    Returns:
-        bool: True si se guardó exitosamente, False en caso contrario
-    """
-    try:
-        # 1. CREAR ESTRUCTURA DE CARPETAS CON PATH ABSOLUTO
-        fecha_actual = datetime.now().strftime("%Y-%m-%d")
-        carpeta_base = Path.cwd()  # Path absoluto del proyecto
-        carpeta_results = carpeta_base / "Results"
-        carpeta_fecha = carpeta_results / fecha_actual
-        
-        if subcarpeta:
-            carpeta_final = carpeta_fecha / subcarpeta
-        else:
-            carpeta_final = carpeta_fecha
-            
-        carpeta_final.mkdir(parents=True, exist_ok=True)
-        
-        # 2. CREAR NOMBRE CON TIMESTAMP
-        timestamp = datetime.now().strftime("%H-%M-%S")
-        nombre_final = f"{nombre_archivo}_{timestamp}.json"
-        ruta_archivo = carpeta_final / nombre_final
-        
-        # 3. GUARDAR ARCHIVO JSON
-        with open(ruta_archivo, 'w', encoding='utf-8') as f:
-            json.dump(contenido, f, indent=2, ensure_ascii=False)
-        
-        # 4. LOG DE CONFIRMACIÓN CON PATH RELATIVO SEGURO
-        try:
-            ruta_relativa = ruta_archivo.relative_to(carpeta_base)
-            logger.info(f" JSON guardado: {ruta_relativa}")
-        except ValueError:
-            # Fallback si relative_to falla
-            logger.info(f" JSON guardado: {nombre_final} en {carpeta_final.name}")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f" Error guardando JSON {nombre_archivo}: {e}")
-        return False
 
 # ===============================
 # CONFIGURACIÓN Y CONSTANTES
@@ -475,19 +171,19 @@ class DependientesEconomicos(BaseModel):
     nombre_encargado: str = ""
     declaracion_juramentada: bool = False
 
-# 🆕 MODELO PARA MEDICINA PREPAGADA
+#  MODELO PARA MEDICINA PREPAGADA
 class MedicinaPrepagada(BaseModel):
     """Información de medicina prepagada"""
     valor_sin_iva_med_prepagada: float = 0.0
     certificado_med_prepagada: bool = False
 
-# 🆕 MODELO PARA AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN)
+#  MODELO PARA AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN)
 class AFCInfo(BaseModel):
     """Información de AFC (Ahorro para Fomento a la Construcción)"""
     valor_a_depositar: float = 0.0
     planilla_de_cuenta_AFC: bool = False
 
-# 🆕 MODELO PARA PLANILLA DE SEGURIDAD SOCIAL
+#  MODELO PARA PLANILLA DE SEGURIDAD SOCIAL
 class PlanillaSeguridadSocial(BaseModel):
     """Información de planilla de seguridad social"""
     IBC_seguridad_social: float = 0.0
@@ -533,19 +229,23 @@ async def lifespan(app: FastAPI):
     """
     Manejador del ciclo de vida de la aplicación.
     Reemplaza los eventos startup/shutdown.
+
+    PRINCIPIOS SOLID:
+    - SRP: Solo maneja ciclo de vida de la aplicación
+    - DIP: Usa funciones de infraestructura inyectadas
     """
     # Código que se ejecuta ANTES de que la aplicación inicie
     configurar_logging()
-    global logger
+    global logger, db_manager, business_service
     logger = logging.getLogger(__name__)
-    
+
     logger.info(" Worker de FastAPI iniciándose... Cargando configuración.")
     if not inicializar_configuracion():
         logger.critical(" FALLO EN LA CARGA DE CONFIGURACIÓN. La aplicación puede no funcionar correctamente.")
 
-    # Inicializar gestor de base de datos
-    inicializar_database_manager()
-    
+    # Inicializar gestor de base de datos usando Infrastructure Layer
+    db_manager, business_service = inicializar_database_manager()
+
     yield # <--- La aplicación se ejecuta aquí
 
     # Código que se ejecuta DESPUÉS de que la aplicación se detiene (opcional)
@@ -1610,26 +1310,6 @@ async def procesar_facturas_integrado(
 # ENDPOINTS ADICIONALES
 # ===============================
 
-# este endpoint se va a actualizar con la base de datos de SIFI
-@app.get("/api/conceptos")
-async def obtener_conceptos():
-    """Obtener lista de conceptos de retefuente con sus datos exactos"""
-    conceptos_formateados = []
-    
-    for concepto, datos in CONCEPTOS_RETEFUENTE.items():
-        conceptos_formateados.append({
-            "concepto": concepto,
-            "base_pesos": datos["base_pesos"],
-            "tarifa_porcentaje": datos["tarifa_retencion"] * 100,
-            "tarifa_decimal": datos["tarifa_retencion"]
-        })
-    
-    return {
-        "conceptos": conceptos_formateados,
-        "total_conceptos": len(CONCEPTOS_RETEFUENTE),
-        "fuente": "RETEFUENTE_CONCEPTOS.xlsx",
-        "version": "2.4.0"
-    }
 
 @app.get("/api/nits-disponibles")
 async def obtener_nits_disponibles_endpoint():

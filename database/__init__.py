@@ -65,6 +65,18 @@ from .database_service import (
 )
 
 # ===============================
+# INFRASTRUCTURE SETUP EXPORTS
+# ===============================
+
+from .setup import (
+    # Inicialización de infraestructura
+    inicializar_database_manager,
+
+    # Verificación de conexión
+    verificar_conexion_database
+)
+
+# ===============================
 # MODULE METADATA
 # ===============================
 
@@ -86,6 +98,10 @@ __all__ = [
     "BusinessDataServiceFactory",
     "crear_business_service",
     "MockBusinessDataService",
+
+    # Infrastructure Setup
+    "inicializar_database_manager",
+    "verificar_conexion_database",
 ]
 
 # ===============================

@@ -11,6 +11,7 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Any
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -1709,3 +1710,64 @@ def inicializar_configuracion():
     #inicializar_configuracion()
 #except Exception as e:
    # logger.warning(f" Error en inicialización automática: {e}")
+
+
+# ===============================
+# FUNCIÓN PARA GUARDAR ARCHIVOS JSON
+# ===============================
+
+def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str = "") -> bool:
+    """
+    Guarda archivos JSON en la carpeta Results/ organizados por fecha.
+
+    FUNCIONALIDAD:
+     Crea estructura Results/YYYY-MM-DD/
+     Guarda archivos JSON con timestamp
+     Manejo de errores sin afectar flujo principal
+     Logs de confirmación
+    Path absoluto para evitar errores de subpath
+
+    Args:
+        contenido: Diccionario a guardar como JSON
+        nombre_archivo: Nombre base del archivo (sin extensión)
+        subcarpeta: Subcarpeta opcional dentro de la fecha
+
+    Returns:
+        bool: True si se guardó exitosamente, False en caso contrario
+    """
+    try:
+        # 1. CREAR ESTRUCTURA DE CARPETAS CON PATH ABSOLUTO
+        fecha_actual = datetime.now().strftime("%Y-%m-%d")
+        carpeta_base = Path.cwd()  # Path absoluto del proyecto
+        carpeta_results = carpeta_base / "Results"
+        carpeta_fecha = carpeta_results / fecha_actual
+
+        if subcarpeta:
+            carpeta_final = carpeta_fecha / subcarpeta
+        else:
+            carpeta_final = carpeta_fecha
+
+        carpeta_final.mkdir(parents=True, exist_ok=True)
+
+        # 2. CREAR NOMBRE CON TIMESTAMP
+        timestamp = datetime.now().strftime("%H-%M-%S")
+        nombre_final = f"{nombre_archivo}_{timestamp}.json"
+        ruta_archivo = carpeta_final / nombre_final
+
+        # 3. GUARDAR ARCHIVO JSON
+        with open(ruta_archivo, 'w', encoding='utf-8') as f:
+            json.dump(contenido, f, indent=2, ensure_ascii=False)
+
+        # 4. LOG DE CONFIRMACIÓN CON PATH RELATIVO SEGURO
+        try:
+            ruta_relativa = ruta_archivo.relative_to(carpeta_base)
+            logger.info(f" JSON guardado: {ruta_relativa}")
+        except ValueError:
+            # Fallback si relative_to falla
+            logger.info(f" JSON guardado: {nombre_final} en {carpeta_final.name}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f" Error guardando JSON {nombre_archivo}: {e}")
+        return False
