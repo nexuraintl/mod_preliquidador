@@ -51,94 +51,28 @@ from .prompt_clasificador import (
 # from .consorcio_processor import ProcesadorConsorcios
 
 # ===============================
-# MODELOS DE DATOS LOCALES
+# IMPORTAR MODELOS DESDE DOMAIN LAYER (Clean Architecture - SRP)
 # ===============================
 
-class ConceptoIdentificado(BaseModel):
-    concepto: str
-    concepto_facturado: Optional[str] = None
-    base_gravable: Optional[float] = None
-    concepto_index: Optional[int] = None
+from modelos import (
+    # Modelos para Retencion General
+    ConceptoIdentificado,
+    NaturalezaTercero,
 
-class NaturalezaTercero(BaseModel):
-    es_persona_natural: Optional[bool] = None
-    regimen_tributario: Optional[str] = None  # SIMPLE, ORDINARIO, ESPECIAL
-    es_autorretenedor: Optional[bool] = None
+    # Modelos para Articulo 383 - Deducciones Personales
+    ConceptoIdentificadoArt383,
+    CondicionesArticulo383,
+    InteresesVivienda,
+    DependientesEconomicos,
+    MedicinaPrepagada,
+    AFCInfo,
+    PlanillaSeguridadSocial,
+    DeduccionesArticulo383,
+    InformacionArticulo383,
 
-# NUEVOS MODELOS PARA ARTÍCULO 383 - ESTRUCTURA ACTUALIZADA PARA GEMINI
-
-# 🆕 MODELO PARA CONCEPTOS IDENTIFICADOS EN ART 383
-class ConceptoIdentificadoArt383(BaseModel):
-    """Concepto identificado específico para Artículo 383"""
-    concepto: str
-    base_gravable: float = 0.0
-
-# 🆕 MODELO ACTUALIZADO PARA CONDICIONES ART 383
-class CondicionesArticulo383(BaseModel):
-    """Condiciones cumplidas para aplicar Artículo 383 - NUEVA ESTRUCTURA"""
-    es_persona_natural: bool = False
-    conceptos_identificados: List[ConceptoIdentificadoArt383] = []
-    conceptos_aplicables: bool = False
-    ingreso: float = 0.0
-    es_primer_pago: bool = False
-    documento_soporte: bool = False
-
-# 🆕 MODELO PARA INTERESES POR VIVIENDA
-class InteresesVivienda(BaseModel):
-    """Información de intereses por vivienda"""
-    intereses_corrientes: float = 0.0
-    certificado_bancario: bool = False
-
-# 🆕 MODELO PARA DEPENDIENTES ECONÓMICOS
-class DependientesEconomicos(BaseModel):
-    """Información de dependientes económicos"""
-    nombre_encargado: str = ""
-    declaracion_juramentada: bool = False
-
-# 🆕 MODELO PARA MEDICINA PREPAGADA
-class MedicinaPrepagada(BaseModel):
-    """Información de medicina prepagada"""
-    valor_sin_iva_med_prepagada: float = 0.0
-    certificado_med_prepagada: bool = False
-
-# 🆕 MODELO PARA AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN)
-class AFCInfo(BaseModel):
-    """Información de AFC (Ahorro para Fomento a la Construcción)"""
-    valor_a_depositar: float = 0.0
-    planilla_de_cuenta_AFC: bool = False
-
-# 🆕 MODELO PARA PLANILLA DE SEGURIDAD SOCIAL
-class PlanillaSeguridadSocial(BaseModel):
-    """Información de planilla de seguridad social"""
-    IBC_seguridad_social: float = 0.0
-    planilla_seguridad_social: bool = False
-    fecha_de_planilla_seguridad_social: str = "0000-00-00"
-
-# 🆕 MODELO ACTUALIZADO PARA DEDUCCIONES ART 383
-class DeduccionesArticulo383(BaseModel):
-    """Deducciones identificadas para Artículo 383 - NUEVA ESTRUCTURA"""
-    intereses_vivienda: InteresesVivienda = InteresesVivienda()
-    dependientes_economicos: DependientesEconomicos = DependientesEconomicos()
-    medicina_prepagada: MedicinaPrepagada = MedicinaPrepagada()
-    AFC: AFCInfo = AFCInfo()
-    planilla_seguridad_social: PlanillaSeguridadSocial = PlanillaSeguridadSocial()
-
-# 🆕 MODELO ACTUALIZADO PARA INFORMACIÓN ART 383
-class InformacionArticulo383(BaseModel):
-    """Información completa del Artículo 383 - NUEVA ESTRUCTURA SIN CÁLCULO"""
-    # NOTA: Ya no hay campo 'aplica' porque Python decide eso ahora
-    condiciones_cumplidas: CondicionesArticulo383 = CondicionesArticulo383()
-    deducciones_identificadas: DeduccionesArticulo383 = DeduccionesArticulo383()
-    # ELIMINADO: calculo - Gemini ya no calcula, solo identifica
-
-class AnalisisFactura(BaseModel):
-    conceptos_identificados: List[ConceptoIdentificado]
-    naturaleza_tercero: Optional[NaturalezaTercero]
-    articulo_383: Optional[InformacionArticulo383] = None  #  NUEVO CAMPO SINCRONIZADO
-    es_facturacion_exterior: bool = False  # Default False, se obtiene de clasificación inicial
-    valor_total: Optional[float]
-    observaciones: List[str]
-    pais_proveedor: Optional[str] = None  # v3.0: País del proveedor para facturación extranjera
+    # Modelos Agregadores - Entrada/Salida
+    AnalisisFactura,
+)
 
 # ===============================
 # PROCESADOR GEMINI

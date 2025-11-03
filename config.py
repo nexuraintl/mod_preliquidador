@@ -1015,18 +1015,6 @@ def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio
         "razon_no_aplica_obra_publica": None
     }
 
-# DEPRECATED: Mantener por compatibilidad legacy
-def detectar_impuestos_aplicables(nit: str) -> Dict[str, Any]:
-    """DEPRECATED: Usar detectar_impuestos_aplicables_por_codigo en su lugar"""
-    return {
-        "nit": nit,
-        "aplica_estampilla_universidad": False,
-        "aplica_contribucion_obra_publica": False,
-        "impuestos_aplicables": [],
-        "procesamiento_paralelo": False,
-        "nombre_entidad_estampilla": None,
-        "nombre_entidad_obra_publica": None
-    }
 
 def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
     """Obtiene configuración integrada para ambos impuestos"""
@@ -1685,16 +1673,12 @@ def inicializar_configuracion():
         # Validar que las constantes estén definidas
         assert UVT_2025 > 0, "UVT_2025 debe ser mayor a 0"
         assert SMMLV_2025 > 0, "SMMLV_2025 debe ser mayor a 0"
-        assert len(NITS_ESTAMPILLA_UNIVERSIDAD) > 0, "Debe haber NITs configurados para estampilla"
-        assert len(NITS_CONTRIBUCION_OBRA_PUBLICA) > 0, "Debe haber NITs configurados para obra pública"
         assert len(TERCEROS_RECURSOS_PUBLICOS) > 0, "Debe haber terceros configurados"
         assert len(CONCEPTOS_RETEFUENTE) > 0, "Debe haber conceptos de retefuente configurados"
         assert len(NITS_IVA_RETEIVA) > 0, "Debe haber NITs configurados para IVA y ReteIVA"
         
         logger.info(" Configuración inicializada correctamente")
         logger.info(f"   - UVT 2025: ${UVT_2025:,}")
-        logger.info(f"   - NITs Estampilla: {len(NITS_ESTAMPILLA_UNIVERSIDAD)}")
-        logger.info(f"   - NITs Obra Pública: {len(NITS_CONTRIBUCION_OBRA_PUBLICA)}")
         logger.info(f"   - Terceros: {len(TERCEROS_RECURSOS_PUBLICOS)}")
         logger.info(f"   - Conceptos ReteFuente: {len(CONCEPTOS_RETEFUENTE)}")
         logger.info(f"   - NITs IVA y ReteIVA: {len(NITS_IVA_RETEIVA)}")

@@ -11,121 +11,32 @@ Autor: Miguel Angel Jaramillo Durango
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
-from pydantic import BaseModel
+
+# Importar modelos desde Domain Layer (Clean Architecture - SRP)
+from modelos import (
+    # Modelos para Retencion General
+    ConceptoIdentificado,
+    DetalleConcepto,
+    NaturalezaTercero,
+
+    # Modelos para Articulo 383 - Deducciones Personales
+    ConceptoIdentificadoArt383,
+    CondicionesArticulo383,
+    InteresesVivienda,
+    DependientesEconomicos,
+    MedicinaPrepagada,
+    AFCInfo,
+    PlanillaSeguridadSocial,
+    DeduccionesArticulo383,
+    InformacionArticulo383,
+
+    # Modelos Agregadores - Entrada/Salida
+    AnalisisFactura,
+    ResultadoLiquidacion,
+)
 
 # Configuración de logging
 logger = logging.getLogger(__name__)
-
-# ===============================
-# MODELOS DE DATOS LOCALES
-# ===============================
-
-class ConceptoIdentificado(BaseModel):
-    concepto: str
-    concepto_facturado: Optional[str] = None
-    base_gravable: Optional[float] = None
-    concepto_index: Optional[int] = None
-
-# 🆕 NUEVO MODELO PARA DETALLES POR CONCEPTO
-class DetalleConcepto(BaseModel):
-    """Detalle individual de cada concepto liquidado"""
-    concepto: str
-    concepto_facturado: Optional[str] = None
-    tarifa_retencion: float
-    base_gravable: float
-    valor_retencion: float
-    codigo_concepto: Optional[str] = None  # Código del concepto desde BD
-
-class NaturalezaTercero(BaseModel):
-    es_persona_natural: Optional[bool] = None
-    es_declarante: Optional[bool] = None
-    regimen_tributario: Optional[str] = None  # SIMPLE, ORDINARIO, ESPECIAL
-    es_autorretenedor: Optional[bool] = None
-
-# NUEVOS MODELOS PARA ARTÍCULO 383 - ESTRUCTURA ACTUALIZADA PARA GEMINI
-
-# 🆕 MODELO PARA CONCEPTOS IDENTIFICADOS EN ART 383
-class ConceptoIdentificadoArt383(BaseModel):
-    """Concepto identificado específico para Artículo 383"""
-    concepto: str
-    base_gravable: float = 0.0
-
-# 🆕 MODELO ACTUALIZADO PARA CONDICIONES ART 383
-class CondicionesArticulo383(BaseModel):
-    """Condiciones cumplidas para aplicar Artículo 383 - NUEVA ESTRUCTURA"""
-    es_persona_natural: bool = False
-    conceptos_identificados: List[ConceptoIdentificadoArt383] = []
-    conceptos_aplicables: bool = False
-    ingreso: float = 0.0
-    es_primer_pago: bool = False
-    documento_soporte: bool = False
-
-# 🆕 MODELO PARA INTERESES POR VIVIENDA
-class InteresesVivienda(BaseModel):
-    """Información de intereses por vivienda"""
-    intereses_corrientes: float = 0.0
-    certificado_bancario: bool = False
-
-# 🆕 MODELO PARA DEPENDIENTES ECONÓMICOS
-class DependientesEconomicos(BaseModel):
-    """Información de dependientes económicos"""
-    nombre_encargado: str = ""
-    declaracion_juramentada: bool = False
-
-# 🆕 MODELO PARA MEDICINA PREPAGADA
-class MedicinaPrepagada(BaseModel):
-    """Información de medicina prepagada"""
-    valor_sin_iva_med_prepagada: float = 0.0
-    certificado_med_prepagada: bool = False
-
-# 🆕 MODELO PARA AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN)
-class AFCInfo(BaseModel):
-    """Información de AFC (Ahorro para Fomento a la Construcción)"""
-    valor_a_depositar: float = 0.0
-    planilla_de_cuenta_AFC: bool = False
-
-# 🆕 MODELO PARA PLANILLA DE SEGURIDAD SOCIAL
-class PlanillaSeguridadSocial(BaseModel):
-    """Información de planilla de seguridad social"""
-    IBC_seguridad_social: float = 0.0
-    planilla_seguridad_social: bool = False
-    fecha_de_planilla_seguridad_social: str = "0000-00-00"
-
-# 🆕 MODELO ACTUALIZADO PARA DEDUCCIONES ART 383
-class DeduccionesArticulo383(BaseModel):
-    """Deducciones identificadas para Artículo 383 - NUEVA ESTRUCTURA"""
-    intereses_vivienda: InteresesVivienda = InteresesVivienda()
-    dependientes_economicos: DependientesEconomicos = DependientesEconomicos()
-    medicina_prepagada: MedicinaPrepagada = MedicinaPrepagada()
-    AFC: AFCInfo = AFCInfo()
-    planilla_seguridad_social: PlanillaSeguridadSocial = PlanillaSeguridadSocial()
-
-# 🆕 MODELO ACTUALIZADO PARA INFORMACIÓN ART 383
-class InformacionArticulo383(BaseModel):
-    
-    condiciones_cumplidas: CondicionesArticulo383 = CondicionesArticulo383()
-    deducciones_identificadas: DeduccionesArticulo383 = DeduccionesArticulo383()
-    
-
-class AnalisisFactura(BaseModel):
-    conceptos_identificados: List[ConceptoIdentificado]
-    naturaleza_tercero: Optional[NaturalezaTercero]
-    articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
-    es_facturacion_exterior: bool = False  # Default False, se obtiene de clasificación inicial
-    valor_total: Optional[float]
-    observaciones: List[str]
-
-class ResultadoLiquidacion(BaseModel):
-    valor_base_retencion: float
-    valor_retencion: float
-    valor_factura_sin_iva: float  # NUEVO: Valor total de la factura sin IVA (de Gemini)
-    conceptos_aplicados: List[DetalleConcepto]  #  NUEVO: Detalles por concepto
-    resumen_conceptos: str  #  NUEVO: Resumen descriptivo - Puede que no sea necesario
-    fecha_calculo: str
-    puede_liquidar: bool
-    mensajes_error: List[str]
-    estado: str  # NUEVO: "no aplica impuesto", "preliquidacion_sin_finalizar", "preliquidado"
-    
 
 # ===============================
 # LIQUIDADOR DE RETENCIÓN
@@ -492,7 +403,7 @@ class LiquidadorRetencion:
             concepto_original = analisis.conceptos_identificados[0].concepto if analisis.conceptos_identificados else "Honorarios y servicios"
             concepto_art383 = f"Artículo 383 - {concepto_original}"
             
-            # 🆕 NUEVA ESTRUCTURA: Crear detalle del concepto Art. 383
+            #  NUEVA ESTRUCTURA: Crear detalle del concepto Art. 383
             detalle_concepto_art383 = DetalleConcepto(
                 concepto=concepto_art383,
                 tarifa_retencion=tarifa_art383,
@@ -507,8 +418,8 @@ class LiquidadorRetencion:
             resultado = ResultadoLiquidacion(
                 valor_base_retencion=base_gravable_final,
                 valor_retencion=valor_retencion_art383,
-                conceptos_aplicados=[detalle_concepto_art383],  # 🆕 NUEVO: Lista con concepto individual
-                resumen_conceptos=resumen_art383,  # 🆕 NUEVO: Resumen descriptivo
+                conceptos_aplicados=[detalle_concepto_art383],  #  NUEVO: Lista con concepto individual
+                resumen_conceptos=resumen_art383,  #  NUEVO: Resumen descriptivo
                 fecha_calculo=datetime.now().isoformat(),
                 puede_liquidar=True,
                 mensajes_error=mensajes_detalle,
@@ -1015,7 +926,7 @@ class LiquidadorRetencion:
     
     def _agregar_observaciones_art383_no_aplica(self, articulo_383, mensajes_error: List[str]) -> None:
         """
-        🆕 NUEVA FUNCIÓN: Agrega observaciones cuando el Artículo 383 no aplica.
+         NUEVA FUNCIÓN: Agrega observaciones cuando el Artículo 383 no aplica.
         
         Args:
             articulo_383: Información del Art 383 del análisis
@@ -1341,13 +1252,13 @@ class LiquidadorRetencion:
                 concepto_descriptivo = "No aplica - datos del tercero incompletos"
                 estado = "preliquidacion_sin_finalizar"
 
-        # 🆕 NUEVA ESTRUCTURA: Crear resultado con nueva estructura
+        #  NUEVA ESTRUCTURA: Crear resultado con nueva estructura
         return ResultadoLiquidacion(
             valor_base_retencion=0,
             valor_retencion=0,
             valor_factura_sin_iva=valor_factura_sin_iva,  # NUEVO: Valor total de la factura
-            conceptos_aplicados=[],  # 🆕 NUEVO: Lista vacía para casos sin retención
-            resumen_conceptos=concepto_descriptivo,  # 🆕 NUEVO: Descripción clara del motivo
+            conceptos_aplicados=[],  #  NUEVO: Lista vacía para casos sin retención
+            resumen_conceptos=concepto_descriptivo,  #  NUEVO: Descripción clara del motivo
             fecha_calculo=datetime.now().isoformat(),
             puede_liquidar=False,
             mensajes_error=mensajes_error,
@@ -2184,7 +2095,7 @@ class LiquidadorRetencion:
                 }
 
             # CREAR OBJETO ANALYSISFACTURA MANUALMENTE
-            from Clasificador.clasificador import AnalisisFactura, ConceptoIdentificado, NaturalezaTercero
+            # Modelos ya importados desde modelos/ al inicio del archivo
 
             # Convertir conceptos identificados
             conceptos = []

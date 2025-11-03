@@ -9,7 +9,6 @@ ARQUITECTURA MODULAR:
 - Clasificador/: Clasificación de documentos con Gemini
 - Liquidador/: Cálculo de retenciones según normativa
 - Extraccion/: Extracción de texto de archivos (PDF, OCR, Excel, Word)
-- Static/: Frontend y archivos estáticos
 - Results/: Almacenamiento de resultados organizados por fecha
 
  FUNCIONALIDAD INTEGRADA:
@@ -120,109 +119,9 @@ if not GEMINI_API_KEY:
 from config import CONCEPTOS_RETEFUENTE
 
 # ===============================
-# MODELOS DE DATOS
+# NOTA: Los modelos Pydantic fueron movidos a modelos/modelos.py (Domain Layer - Clean Architecture)
+# Este archivo trabaja directamente con diccionarios en lugar de modelos Pydantic
 # ===============================
-
-class DocumentoClasificado(BaseModel):
-    nombre_archivo: str
-    tipo_documento: str  # FACTURA, RUT, COTIZACION, ANEXO, ANEXO CONCEPTO CONTRATO
-    confianza: float
-
-class ConceptoIdentificado(BaseModel):
-    concepto: str
-    base_gravable: Optional[float] = None
-    concepto_index: Optional[int] = None
-
-class NaturalezaTercero(BaseModel):
-    es_persona_natural: Optional[bool] = None
-    es_declarante: Optional[bool] = None
-    regimen_tributario: Optional[str] = None  # SIMPLE, ORDINARIO, ESPECIAL
-    es_autorretenedor: Optional[bool] = None
-
-# NUEVOS MODELOS PARA ARTÍCULO 383
-class DeduccionArticulo383(BaseModel):
-    valor: float = 0.0
-    tiene_soporte: bool = False
-    limite_aplicable: float = 0.0
-    
-class ConceptoIdentificadoArt383(BaseModel):
-    """Concepto identificado específico para Artículo 383"""
-    concepto: str
-    base_gravable: float = 0.0
-    
-    
-class CondicionesArticulo383(BaseModel):
-    """Condiciones cumplidas para aplicar Artículo 383 - NUEVA ESTRUCTURA"""
-    es_persona_natural: bool = False
-    conceptos_identificados: List[ConceptoIdentificadoArt383] = []
-    conceptos_aplicables: bool = False
-    ingreso: float = 0.0
-    es_primer_pago: bool = False
-    documento_soporte: bool = False
-    
-    
-class InteresesVivienda(BaseModel):
-    """Información de intereses por vivienda"""
-    intereses_corrientes: float = 0.0
-    certificado_bancario: bool = False
-
-class DependientesEconomicos(BaseModel):
-    """Información de dependientes económicos"""
-    nombre_encargado: str = ""
-    declaracion_juramentada: bool = False
-
-#  MODELO PARA MEDICINA PREPAGADA
-class MedicinaPrepagada(BaseModel):
-    """Información de medicina prepagada"""
-    valor_sin_iva_med_prepagada: float = 0.0
-    certificado_med_prepagada: bool = False
-
-#  MODELO PARA AFC (AHORRO PARA FOMENTO A LA CONSTRUCCIÓN)
-class AFCInfo(BaseModel):
-    """Información de AFC (Ahorro para Fomento a la Construcción)"""
-    valor_a_depositar: float = 0.0
-    planilla_de_cuenta_AFC: bool = False
-
-#  MODELO PARA PLANILLA DE SEGURIDAD SOCIAL
-class PlanillaSeguridadSocial(BaseModel):
-    """Información de planilla de seguridad social"""
-    IBC_seguridad_social: float = 0.0
-    planilla_seguridad_social: bool = False
-    fecha_de_planilla_seguridad_social: str = "0000-00-00"
-
-    
-class DeduccionesArticulo383(BaseModel):
-    
-    intereses_vivienda: InteresesVivienda = InteresesVivienda()
-    dependientes_economicos: DependientesEconomicos = DependientesEconomicos()
-    medicina_prepagada: MedicinaPrepagada = MedicinaPrepagada()
-    AFC: AFCInfo = AFCInfo()
-    planilla_seguridad_social: PlanillaSeguridadSocial = PlanillaSeguridadSocial()
-    
-class CalculoArticulo383(BaseModel):
-    ingreso_bruto: float = 0.0
-    aportes_seguridad_social: float = 0.0
-    total_deducciones: float = 0.0
-    deducciones_limitadas: float = 0.0
-    base_gravable_final: float = 0.0
-    base_gravable_uvt: float = 0.0
-    tarifa_aplicada: float = 0.0
-    valor_retencion_art383: float = 0.0
-
-class InformacionArticulo383(BaseModel):
-    
-    condiciones_cumplidas: CondicionesArticulo383 = CondicionesArticulo383()
-    deducciones_identificadas: DeduccionesArticulo383 = DeduccionesArticulo383()
-    
-class AnalisisFactura(BaseModel):
-    conceptos_identificados: List[ConceptoIdentificado]
-    naturaleza_tercero: Optional[NaturalezaTercero]
-    articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
-    es_facturacion_exterior: bool = False  # Default False, se obtiene de clasificación inicial
-    valor_total: Optional[float]
-    observaciones: List[str]
-
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1587,22 +1486,7 @@ async def diagnostico_completo():
                     "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_rf else 'NO'} aplica retención fuente"
                 }
                 
-                #  VERIFICAR ESTAMPILLA UNIVERSIDAD
-                aplica_estampilla = nit_aplica_estampilla_universidad(primer_nit)
-                config_status["estampilla_universidad"] = {
-                    "status": "OK",
-                    "aplica_estampilla": aplica_estampilla,
-                    "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_estampilla else 'NO'} aplica estampilla universidad"
-                }
-                
-                #  VERIFICAR CONTRIBUCIÓN OBRA PÚBLICA
-                aplica_obra_publica = nit_aplica_contribucion_obra_publica(primer_nit)
-                config_status["contribucion_obra_publica"] = {
-                    "status": "OK",
-                    "aplica_obra_publica": aplica_obra_publica,
-                    "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_obra_publica else 'NO'} aplica contribución obra pública 5%"
-                }
-            
+         
                 #  VERIFICAR DETECCIÓN AUTOMÁTICA INTEGRADA
                 try:
                     deteccion_auto = detectar_impuestos_aplicables(primer_nit)
@@ -1719,33 +1603,16 @@ if __name__ == "__main__":
     logger.info(" Funcionalidades: Retención en la fuente + Estampilla universidad + Obra pública 5%")
     logger.info(f" Gemini configurado: {bool(GEMINI_API_KEY)}")
     #logger.info(f" Vision configurado: {bool(GOOGLE_CLOUD_CREDENTIALS)}")
-    logger.info(f" Conceptos cargados: {len(CONCEPTOS_RETEFUENTE)}")
     
     # Verificar estructura de carpetas
-    carpetas_requeridas = ["Clasificador", "Liquidador", "Extraccion", "Static", "Results"]
+    carpetas_requeridas = ["Clasificador", "Liquidador", "Extraccion",  "Results"]
     for carpeta in carpetas_requeridas:
         if os.path.exists(carpeta):
             logger.info(f" Módulo {carpeta}/ encontrado")
         else:
             logger.warning(f" Módulo {carpeta}/ no encontrado")
     
-    # Verificar funciones de impuestos especiales
-    try:
-        # Test de importación estampilla
-        test_nit = "800000001"  # NIT ficticio para test
-        nit_aplica_estampilla_universidad(test_nit)
-        logger.info(f" Función nit_aplica_estampilla_universidad importada correctamente")
-        
-        # Test de importación obra pública
-        nit_aplica_contribucion_obra_publica(test_nit)
-        logger.info(f" Función nit_aplica_contribucion_obra_publica importada correctamente")
-        
-        # Test de detección automática
-        detectar_impuestos_aplicables(test_nit)
-        logger.info(f" Función detectar_impuestos_aplicables funcionando correctamente")
-        
-    except Exception as e:
-        logger.error(f" Error con funciones de impuestos especiales: {e}")
+
     
     uvicorn.run(
         "main:app",

@@ -1,5 +1,443 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.0.14 - REFACTOR: Clean Architecture - Separación Domain Layer (Modelos)] - 2025-10-30
+
+### 🏗️ ARQUITECTURA: CLEAN ARCHITECTURE - DOMAIN LAYER
+
+#### DESCRIPCIÓN GENERAL
+Refactorización de modelos Pydantic desde `Liquidador/liquidador.py` a un módulo independiente `modelos/` siguiendo principios de Clean Architecture y Single Responsibility Principle (SRP).
+
+**Objetivos arquitectónicos**:
+- ✅ **SRP (Single Responsibility Principle)**: Módulo dedicado solo a definiciones de modelos
+- ✅ **Domain Layer**: Separación de entidades de dominio de lógica de negocio
+- ✅ **Reutilización**: Modelos disponibles globalmente para todos los módulos
+- ✅ **Mantenibilidad**: Código más organizado y fácil de mantener
+
+---
+
+### 🆕 AÑADIDO
+
+#### Nuevo Módulo `modelos/`
+**Ubicación**: Raíz del proyecto (`PRELIQUIDADOR/modelos/`)
+**Layer**: Domain Layer - Entities & Value Objects
+
+**Estructura creada**:
+```
+PRELIQUIDADOR/
+├── modelos/
+│   ├── __init__.py          # Exports de todos los modelos
+│   └── modelos.py           # 14 modelos Pydantic (450+ líneas)
+```
+
+---
+
+#### Archivo `modelos/modelos.py`
+**Total de modelos**: 14 modelos Pydantic
+
+**Organización en 3 secciones**:
+
+**SECCIÓN 1: Modelos para Retención General (3 modelos)**
+1. `ConceptoIdentificado` - Concepto de retención identificado
+2. `DetalleConcepto` - Detalle individual de concepto liquidado
+3. `NaturalezaTercero` - Información de naturaleza jurídica del tercero
+
+**SECCIÓN 2: Modelos para Artículo 383 - Deducciones Personales (9 modelos)**
+4. `ConceptoIdentificadoArt383` - Concepto deducible Art 383
+5. `CondicionesArticulo383` - Condiciones para aplicar deducciones
+6. `InteresesVivienda` - Deducción por intereses de vivienda
+7. `DependientesEconomicos` - Deducción por dependientes
+8. `MedicinaPrepagada` - Deducción por medicina prepagada
+9. `AFCInfo` - Deducción por AFC (Ahorro Fomento Construcción)
+10. `PlanillaSeguridadSocial` - Deducción por seguridad social
+11. `DeduccionesArticulo383` - Contenedor de todas las deducciones
+12. `InformacionArticulo383` - Información completa Art 383
+
+**SECCIÓN 3: Modelos Agregadores - Entrada/Salida (2 modelos)**
+13. `AnalisisFactura` - Modelo de entrada principal para liquidación
+14. `ResultadoLiquidacion` - Modelo de salida con resultados de liquidación
+
+**Características del archivo**:
+- 450+ líneas de código bien documentado
+- Docstrings completos con ejemplos para cada modelo
+- Documentación de límites y validaciones (ej: límites UVT)
+- Explicación de campos y tipos
+- Metadata del módulo
+
+---
+
+#### Archivo `modelos/__init__.py`
+**Responsabilidad**: Exportar los 14 modelos para importación fácil
+
+**Exports organizados por categoría**:
+```python
+from modelos import (
+    # Sección 1: Retención General
+    ConceptoIdentificado,
+    DetalleConcepto,
+    NaturalezaTercero,
+
+    # Sección 2: Artículo 383
+    ConceptoIdentificadoArt383,
+    # ... (9 modelos total)
+
+    # Sección 3: Agregadores
+    AnalisisFactura,
+    ResultadoLiquidacion,
+)
+```
+
+**Metadata incluida**:
+- `__version__ = "3.0.0"`
+- `__architecture__ = "Clean Architecture - Domain Layer"`
+- `__total_modelos__ = 14`
+- Logging de inicialización
+
+---
+
+### 🔧 CAMBIADO
+
+#### `Liquidador/liquidador.py`
+**Cambios arquitectónicos**:
+
+1. **Removidas** definiciones de 14 modelos (líneas 23-128 anteriormente):
+   - ~110 líneas de definiciones de modelos eliminadas
+
+2. **Agregado** import desde Domain Layer:
+   ```python
+   # Importar modelos desde Domain Layer (Clean Architecture - SRP)
+   from modelos import (
+       # Modelos para Retencion General
+       ConceptoIdentificado,
+       DetalleConcepto,
+       NaturalezaTercero,
+
+       # Modelos para Articulo 383 - Deducciones Personales
+       ConceptoIdentificadoArt383,
+       CondicionesArticulo383,
+       InteresesVivienda,
+       DependientesEconomicos,
+       MedicinaPrepagada,
+       AFCInfo,
+       PlanillaSeguridadSocial,
+       DeduccionesArticulo383,
+       InformacionArticulo383,
+
+       # Modelos Agregadores - Entrada/Salida
+       AnalisisFactura,
+       ResultadoLiquidacion,
+   )
+   ```
+
+3. **Mantenida** toda la lógica de liquidación intacta
+4. **Sin cambios** en funcionalidad o comportamiento
+
+**Reducción de código**: ~110 líneas menos
+**Líneas totales antes**: ~1800 líneas
+**Líneas totales después**: ~1690 líneas
+
+---
+
+#### `main.py` - Limpieza de Modelos Duplicados
+**Cambios de limpieza**:
+
+1. **Removidas** todas las definiciones de modelos Pydantic (líneas 122-225 anteriormente):
+   - 13 modelos **duplicados** (ya existen en `modelos/modelos.py`)
+   - 3 modelos **únicos no utilizados** (DocumentoClasificado, DeduccionArticulo383, CalculoArticulo383)
+   - ~103 líneas eliminadas
+
+2. **Agregado** nota de referencia:
+   ```python
+   # NOTA: Los modelos Pydantic fueron movidos a modelos/modelos.py (Domain Layer - Clean Architecture)
+   # Este archivo trabaja directamente con diccionarios en lugar de modelos Pydantic
+   ```
+
+**Modelos duplicados eliminados de main.py**:
+- ConceptoIdentificado
+- NaturalezaTercero
+- ConceptoIdentificadoArt383
+- CondicionesArticulo383
+- InteresesVivienda
+- DependientesEconomicos
+- MedicinaPrepagada
+- AFCInfo
+- PlanillaSeguridadSocial
+- DeduccionesArticulo383
+- InformacionArticulo383
+- AnalisisFactura
+- CalculoArticulo383
+
+**Modelos únicos eliminados** (no se usaban en el código):
+- DocumentoClasificado
+- DeduccionArticulo383
+- CalculoArticulo383
+
+**Reducción de código en main.py**: ~103 líneas menos
+**Líneas totales antes**: ~1774 líneas
+**Líneas totales después**: ~1671 líneas
+
+**Justificación de eliminación**:
+- ✅ Los 13 modelos duplicados están completamente definidos en `modelos/modelos.py`
+- ✅ Los 3 modelos únicos no se usaban en ninguna parte del código
+- ✅ `main.py` trabaja con diccionarios, no con modelos Pydantic
+- ✅ Elimina duplicación y mejora mantenibilidad
+- ✅ Cero impacto en funcionalidad
+
+---
+
+#### `Clasificador/clasificador.py` - Limpieza de Modelos Duplicados
+**Cambios de limpieza**:
+
+1. **Removidas** todas las definiciones de modelos Pydantic (líneas 57-141 anteriormente):
+   - 12 modelos **duplicados** (idénticos a los de `modelos/modelos.py`)
+   - ~85 líneas eliminadas
+
+2. **Agregado** import desde Domain Layer:
+   ```python
+   from modelos import (
+       # Modelos para Retencion General
+       ConceptoIdentificado,
+       NaturalezaTercero,
+
+       # Modelos para Articulo 383 - Deducciones Personales
+       ConceptoIdentificadoArt383,
+       CondicionesArticulo383,
+       InteresesVivienda,
+       DependientesEconomicos,
+       MedicinaPrepagada,
+       AFCInfo,
+       PlanillaSeguridadSocial,
+       DeduccionesArticulo383,
+       InformacionArticulo383,
+
+       # Modelos Agregadores - Entrada/Salida
+       AnalisisFactura,
+   )
+   ```
+
+**Modelos duplicados eliminados de clasificador.py**:
+- ConceptoIdentificado
+- NaturalezaTercero
+- ConceptoIdentificadoArt383
+- CondicionesArticulo383
+- InteresesVivienda
+- DependientesEconomicos
+- MedicinaPrepagada
+- AFCInfo
+- PlanillaSeguridadSocial
+- DeduccionesArticulo383
+- InformacionArticulo383
+- AnalisisFactura
+
+**Reducción de código en clasificador.py**: ~85 líneas menos
+
+**Justificación de eliminación**:
+- ✅ Los 12 modelos son idénticos a los de `modelos/modelos.py`
+- ✅ Elimina duplicación entre clasificador.py y modelos.py
+- ✅ Mejora mantenibilidad (cambios en un solo lugar)
+- ✅ Cero impacto en funcionalidad
+
+---
+
+#### `modelos/modelos.py` - Corrección de NaturalezaTercero
+**Cambio de corrección**:
+
+**Campo removido**: `es_declarante: Optional[bool] = None`
+
+**Razón**: La versión en `clasificador.py` es la correcta. El campo `es_declarante` no es identificado por Gemini y no se usa en el flujo actual.
+
+**Actualización en documentación**:
+```python
+Version:
+    Campo es_declarante removido - No identificado por Gemini
+```
+
+---
+
+#### `Liquidador/liquidador.py` - Eliminación de Fallback Import
+**Cambio de limpieza**:
+
+**Removido** fallback import (línea 2098):
+```python
+# ANTES
+from Clasificador.clasificador import AnalisisFactura, ConceptoIdentificado, NaturalezaTercero
+
+# DESPUÉS
+# Modelos ya importados desde modelos/ al inicio del archivo
+```
+
+**Razón**: Todos los modelos ya están importados desde `modelos/` al inicio del archivo. El fallback import era redundante.
+
+---
+
+### 📊 IMPACTO EN ARQUITECTURA
+
+#### Antes de la refactorización:
+```
+Liquidador/liquidador.py (1800 líneas)
+├── Definiciones de 14 modelos Pydantic (110 líneas)
+├── Lógica de liquidación de retención
+├── Validaciones manuales Artículo 383
+└── Cálculos de deducciones
+```
+
+#### Después de la refactorización:
+```
+PRELIQUIDADOR/
+├── modelos/                        # Domain Layer (nuevo)
+│   ├── __init__.py                 # Exports
+│   └── modelos.py                  # 14 modelos (NaturalezaTercero corregido)
+│
+├── Clasificador/
+│   └── clasificador.py             # Importa desde modelos/ ✅
+│
+├── Liquidador/
+│   └── liquidador.py               # Importa desde modelos/ ✅ (sin fallback)
+│
+└── main.py                         # Application Layer
+    └── SIN modelos duplicados      # Limpio, usa diccionarios
+```
+
+---
+
+### ✅ PRINCIPIOS SOLID APLICADOS
+
+#### Single Responsibility Principle (SRP)
+- `modelos/modelos.py`: Solo define modelos de datos
+- `Liquidador/liquidador.py`: Solo calcula liquidaciones (sin definir modelos)
+
+#### Open/Closed Principle (OCP)
+- Modelos extensibles mediante herencia de `BaseModel`
+- Fácil agregar nuevos modelos sin modificar existentes
+
+#### Dependency Inversion Principle (DIP)
+- `liquidador.py` depende de abstracciones (modelos) en Domain Layer
+- No hay dependencias circulares
+
+#### Clean Architecture Layers
+```
+┌─────────────────────────────────────────┐
+│   Business Logic Layer                  │
+│   ├── Liquidador/liquidador.py         │ ← Usa modelos
+│   └── [otros liquidadores]             │
+├─────────────────────────────────────────┤
+│   Domain Layer                          │
+│   └── modelos/modelos.py               │ ← Define modelos
+└─────────────────────────────────────────┘
+```
+
+---
+
+### 🎯 BENEFICIOS DE LA REFACTORIZACIÓN
+
+1. **Reutilización**: Los 14 modelos ahora están disponibles para:
+   - `Liquidador/liquidador.py` ✅ (importa desde modelos/)
+   - `Clasificador/clasificador.py` ✅ (importa desde modelos/)
+   - `main.py` ✅ (limpiado, trabaja con diccionarios)
+   - Cualquier otro módulo del sistema
+
+2. **Mantenibilidad**:
+   - Cambios en modelos se hacen en un solo lugar
+   - Fácil encontrar y modificar definiciones de modelos
+   - Documentación centralizada
+   - **Sin duplicación** entre archivos (main.py, clasificador.py, liquidador.py)
+
+3. **Organización**:
+   - Separación clara de Domain Layer y Business Logic Layer
+   - Estructura coherente con Clean Architecture
+   - Código más legible y mantenible
+   - **Reducción total**: ~188 líneas (main: 103 + clasificador: 85)
+
+4. **Escalabilidad**:
+   - Fácil agregar nuevos modelos al módulo
+   - Modelos compartibles entre microservicios (futuro)
+
+5. **Testing**:
+   - Modelos testeables independientemente
+   - Fixtures reutilizables
+
+---
+
+### 📝 NOTAS TÉCNICAS
+
+#### Compatibilidad
+- ✅ **100% compatible** con código existente
+- ✅ Todos los tests deben seguir funcionando sin cambios
+- ✅ No requiere cambios en otros módulos
+- ✅ `main.py` limpio de modelos duplicados (completado)
+
+#### Migración completada
+**Archivos refactorizados**:
+1. ✅ `Liquidador/liquidador.py` - Importa desde modelos/ (fallback removido)
+2. ✅ `Clasificador/clasificador.py` - Importa desde modelos/
+3. ✅ `main.py` - Modelos duplicados eliminados
+4. ✅ `modelos/modelos.py` - NaturalezaTercero corregido
+
+**Tareas pendientes**:
+- ⏳ Actualizar tests que importen modelos desde otros archivos
+
+**Plan de migración completado**:
+- Fase 1: ✅ Refactorizar `liquidador.py` (completado)
+- Fase 2: ✅ Limpiar `main.py` (completado)
+- Fase 3: ✅ Refactorizar `clasificador.py` (completado)
+- Fase 4: ⏳ Actualizar tests (pendiente)
+
+#### Jerarquía de modelos
+```
+AnalisisFactura (entrada)
+├── List[ConceptoIdentificado]
+├── NaturalezaTercero
+├── InformacionArticulo383
+    ├── CondicionesArticulo383
+    │   └── List[ConceptoIdentificadoArt383]
+    └── DeduccionesArticulo383
+        ├── InteresesVivienda
+        ├── DependientesEconomicos
+        ├── MedicinaPrepagada
+        ├── AFCInfo
+        └── PlanillaSeguridadSocial
+
+ResultadoLiquidacion (salida)
+└── List[DetalleConcepto]
+```
+
+---
+
+### 🔍 DETALLES DE IMPLEMENTACIÓN
+
+#### Documentación en `modelos.py`
+Cada modelo incluye:
+- Docstring completo con descripción
+- Lista de atributos con tipos y propósitos
+- Ejemplos de uso
+- Notas especiales (límites UVT, validaciones, etc.)
+- Información de versión cuando aplica
+
+**Ejemplo de documentación**:
+```python
+class InteresesVivienda(BaseModel):
+    """
+    Deduccion por intereses de credito de vivienda.
+
+    Informacion sobre intereses pagados por prestamos de vivienda
+    que pueden deducirse del ingreso gravable segun Art 383.
+
+    Attributes:
+        intereses_corrientes: Monto de intereses pagados
+        certificado_bancario: True si hay certificado del banco
+
+    Example:
+        >>> intereses = InteresesVivienda(
+        ...     intereses_corrientes=2000000.0,
+        ...     certificado_bancario=True
+        ... )
+
+    Limits:
+        Maximo deducible: 1.200 UVT anuales (~$55MM en 2024)
+    """
+```
+
+---
+
 ## [3.0.13 - REFACTOR: Clean Architecture - Separación Infrastructure Layer] - 2025-10-30
 
 ### 🏗️ ARQUITECTURA: CLEAN ARCHITECTURE - INFRASTRUCTURE LAYER

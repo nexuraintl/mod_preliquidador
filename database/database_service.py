@@ -113,7 +113,7 @@ class BusinessDataService(IBusinessDataService):
                 datos_negocio = resultado_consulta.get('data')
                 if datos_negocio:
                     success_msg = f"Negocio encontrado: {datos_negocio.get('negocio', 'N/A')} - NIT: {datos_negocio.get('nit', 'N/A')} - Fiduciario: {datos_negocio.get('nombre_fiduciario', 'N/A')}"
-                    logger.info(f"✅ {success_msg}")
+                    logger.info(f" {success_msg}")
 
                     return {
                         "success": True,
@@ -288,7 +288,7 @@ class BusinessDataService(IBusinessDataService):
 
             # CASO 3: Recursos Públicos (aplica impuestos)
             if tipo_recurso == "Públicos":
-                logger.info(f"✅ Negocio {codigo_negocio} administra recursos públicos - Aplican impuestos")
+                logger.info(f" Negocio {codigo_negocio} administra recursos públicos - Aplican impuestos")
                 return {
                     "success": True,
                     "tipo_recurso": "Públicos",
@@ -364,7 +364,7 @@ class BusinessDataServiceFactory:
             IBusinessDataService: Instancia del servicio configurada
         """
         servicio = BusinessDataService(database_manager)
-        logger.info("✅ BusinessDataService creado via Factory Pattern")
+        logger.info(" BusinessDataService creado via Factory Pattern")
         return servicio
 
 
