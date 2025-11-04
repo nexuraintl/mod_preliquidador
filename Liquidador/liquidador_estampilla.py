@@ -555,8 +555,8 @@ class LiquidadorEstampilla:
         Returns:
             str: Prompt integrado optimizado para Gemini
         """
-        from Clasificador.prompt_clasificador import PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO
-        
+        from prompts.prompt_estampilla_obra_publica import PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO
+
         return PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(
             factura_texto=factura_texto,
             rut_texto=rut_texto,
@@ -1294,11 +1294,11 @@ def validar_configuracion_impuestos_integrada() -> Dict[str, Any]:
         
         # Validación de prompt integrado
         try:
-            from Clasificador.prompt_clasificador import PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO
+            from prompts.prompt_estampilla_obra_publica import PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO
             validacion["prompt_integrado_disponible"] = True
-            logger.info(" Prompt integrado disponible en prompt_clasificador.py")
+            logger.info(" Prompt integrado disponible en prompt_estampilla_obra_publica.py")
         except ImportError:
-            validacion["errores"].append("Prompt integrado no encontrado en prompt_clasificador.py")
+            validacion["errores"].append("Prompt integrado no encontrado en prompt_estampilla_obra_publica.py")
             validacion["valida"] = False
         
         # Validaciones críticas

@@ -7,13 +7,13 @@ Maneja la primera llamada a Gemini para categorizar documentos.
 """
 
 from .clasificador import ProcesadorGemini
-from .prompt_clasificador import PROMPT_CLASIFICACION, PROMPT_ANALISIS_FACTURA, PROMPT_ANALISIS_CONSORCIO
+from prompts.prompt_clasificador import PROMPT_CLASIFICACION
+from prompts.prompt_retefuente import PROMPT_ANALISIS_FACTURA
 
 
 __all__ = [
-    'ProcesadorGemini', 
-    'PROMPT_CLASIFICACION', 
+    'ProcesadorGemini',
+    'PROMPT_CLASIFICACION',
     'PROMPT_ANALISIS_FACTURA',
-    'PROMPT_ANALISIS_CONSORCIO',
     'ProcesadorConsorcios'
 ]

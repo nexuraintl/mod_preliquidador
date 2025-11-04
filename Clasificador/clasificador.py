@@ -28,24 +28,27 @@ from typing import List, Optional
 # Importación adicional para archivos directos
 from fastapi import UploadFile
 
-# ✅ NUEVAS IMPORTACIONES PARA VALIDACIÓN ROBUSTA DE PDF
+#  NUEVAS IMPORTACIONES PARA VALIDACIÓN ROBUSTA DE PDF
 import PyPDF2
 from io import BytesIO
 
 # Configuración de logging
 logger = logging.getLogger(__name__)
 
-# Importar prompts
-from .prompt_clasificador import (
-    PROMPT_CLASIFICACION,
+# Importar prompts clasificador general
+from prompts.prompt_clasificador import PROMPT_CLASIFICACION
+
+# Importar prompts retefuente
+from prompts.prompt_retefuente import (
     PROMPT_ANALISIS_FACTURA,
-    PROMPT_ANALISIS_CONSORCIO,
     PROMPT_EXTRACCION_CONSORCIO,  # NUEVO: Primera llamada extraccion
     PROMPT_MATCHING_CONCEPTOS,    # NUEVO: Segunda llamada matching
-    PROMPT_ANALISIS_FACTURA_EXTRANJERA,
-    PROMPT_ANALISIS_IVA,  #  NUEVO PROMPT IVA
-    PROMPT_ANALISIS_ESTAMPILLAS_GENERALES  # NUEVO PROMPT ESTAMPILLAS GENERALES
+    PROMPT_ANALISIS_FACTURA_EXTRANJERA
 )
+
+# Importar prompts especializados
+from prompts.prompt_iva import PROMPT_ANALISIS_IVA
+from prompts.prompt_estampillas_generales import PROMPT_ANALISIS_ESTAMPILLAS_GENERALES
 
 # v3.1.2: Procesador de consorcios removido - Se usa liquidador_consorcios.py directamente
 # from .consorcio_processor import ProcesadorConsorcios
@@ -802,7 +805,7 @@ class ProcesadorGemini:
                     nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
             
             # Importar el prompt específico del Art 383
-            from .prompt_clasificador import PROMPT_ANALISIS_ART_383
+            from prompts.prompt_retefuente import PROMPT_ANALISIS_ART_383
             
             # Generar prompt específico para Art 383
             prompt_art383 = PROMPT_ANALISIS_ART_383(
@@ -3076,7 +3079,7 @@ class ProcesadorGemini:
                         nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
 
             # Generar prompt especializado
-            from Clasificador.prompt_clasificador import PROMPT_ANALISIS_TASA_PRODEPORTE
+            from prompts.prompt_tasa_prodeporte import PROMPT_ANALISIS_TASA_PRODEPORTE
 
             prompt = PROMPT_ANALISIS_TASA_PRODEPORTE(
                 factura_texto=factura_texto,

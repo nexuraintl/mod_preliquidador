@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Importar prompts especializados
-from .prompt_ica import (
+from prompts.prompt_ica import (
     crear_prompt_identificacion_ubicaciones,
     crear_prompt_relacionar_actividades,
     limpiar_json_gemini,

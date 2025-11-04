@@ -18,7 +18,7 @@ import json
 from typing import List, Dict, Any
 
 # Importar función para generar sección de archivos directos
-from .prompt_clasificador import _generar_seccion_archivos_directos
+from prompts.prompt_clasificador import _generar_seccion_archivos_directos
 
 
 def crear_prompt_identificacion_ubicaciones(

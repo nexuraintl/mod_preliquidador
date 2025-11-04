@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import UploadFile
 
 from .clasificador import ProcesadorGemini
-from .prompt_timbre import (
+from prompts.prompt_timbre import (
     PROMPT_ANALISIS_TIMBRE_OBSERVACIONES,
     PROMPT_EXTRACCION_CONTRATO_TIMBRE
 )
