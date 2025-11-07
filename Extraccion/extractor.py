@@ -17,15 +17,29 @@ import os
 import io
 import json
 import logging
+import asyncio
 from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 # Procesamiento de archivos
 import PyPDF2
 from PIL import Image
 import pandas as pd
 from docx import Document
+
+# Procesamiento de emails
+import email
+from email.utils import parsedate_to_datetime, parseaddr
+from email.header import decode_header
+try:
+    import extract_msg
+    EXTRACT_MSG_DISPONIBLE = True
+except ImportError:
+    EXTRACT_MSG_DISPONIBLE = False
+    logging.warning("extract-msg no disponible - archivos .msg limitados")
 
 # Nuevas dependencias para PDF → Imagen
 try:
@@ -40,6 +54,14 @@ try:
     PYMUPDF_DISPONIBLE = True
 except ImportError:
     PYMUPDF_DISPONIBLE = False
+
+# PDF Plumber para extracción mejorada
+try:
+    import pdfplumber
+    PDFPLUMBER_DISPONIBLE = True
+except ImportError:
+    PDFPLUMBER_DISPONIBLE = False
+    logging.warning("pdfplumber no disponible - extracción PDF limitada")
 
 # Google Vision para OCR
 from google.cloud import vision
@@ -59,7 +81,6 @@ class ProcesadorArchivos:
     Extrae texto de diferentes tipos de archivos usando las mejores técnicas
     disponibles para cada formato.
     
-    CORRECCIÓN: Maneja correctamente PDF → Imagen → OCR
     """
     
     def __init__(self):
@@ -70,14 +91,32 @@ class ProcesadorArchivos:
         logger.info("ProcesadorArchivos inicializado con guardado automático")
     
     def _verificar_dependencias_pdf(self):
-        """Verifica y reporta las dependencias disponibles para PDF → Imagen"""
-        if PDF2IMAGE_DISPONIBLE:
-            logger.info("✅ pdf2image disponible para conversión PDF → Imagen")
-        elif PYMUPDF_DISPONIBLE:
-            logger.info("✅ PyMuPDF disponible para conversión PDF → Imagen")
+        """Verifica y reporta las dependencias disponibles para extracción PDF y conversión a imagen"""
+        # Verificar PDF Plumber (método principal)
+        if PDFPLUMBER_DISPONIBLE:
+            logger.info(" pdfplumber disponible para extracción principal de PDF")
         else:
-            logger.warning("⚠️ Sin dependencias para PDF → Imagen. OCR fallback limitado")
+            logger.warning(" pdfplumber no disponible. Usando PyPDF2 como principal")
+            logger.warning("   Instala: pip install pdfplumber")
+        
+        # Verificar PyPDF2 (fallback)
+        logger.info(" PyPDF2 disponible como fallback")
+        
+        # Verificar conversión PDF → Imagen para OCR
+        if PDF2IMAGE_DISPONIBLE:
+            logger.info("pdf2image disponible para conversión PDF → Imagen")
+        elif PYMUPDF_DISPONIBLE:
+            logger.info(" PyMuPDF disponible para conversión PDF → Imagen")
+        else:
+            logger.warning(" Sin dependencias para PDF → Imagen. OCR fallback limitado")
             logger.warning("   Instala: pip install pdf2image PyMuPDF")
+        
+        # Verificar dependencias de email
+        if EXTRACT_MSG_DISPONIBLE:
+            logger.info(" extract-msg disponible para archivos .msg")
+        else:
+            logger.warning(" extract-msg no disponible. Archivos .msg limitados")
+            logger.warning("   Instala: pip install extract-msg")
     
     def _configurar_vision(self):
         """
@@ -177,13 +216,13 @@ FIN DE LA EXTRACCIÓN
             with open(ruta_archivo, 'w', encoding='utf-8') as f:
                 f.write(contenido_completo)
             
-            logger.info(f"✅ Texto extraído guardado: {ruta_archivo}")
-            logger.info(f"📊 Caracteres extraídos: {len(texto_extraido)}")
+            logger.info(f" Texto extraído guardado: {ruta_archivo}")
+            logger.info(f" Caracteres extraídos: {len(texto_extraido)}")
             
             return str(ruta_archivo)
             
         except Exception as e:
-            logger.error(f"❌ Error guardando texto extraído: {e}")
+            logger.error(f" Error guardando texto extraído: {e}")
             return f"Error guardando: {str(e)}"
     
     def _validar_pdf(self, contenido_pdf: bytes, nombre_archivo: str) -> Dict[str, Any]:
@@ -268,7 +307,7 @@ FIN DE LA EXTRACCIÓN
         try:
             # Validar que el contenido no esté vacío
             if not contenido_pdf or len(contenido_pdf) < 100:
-                logger.error(f"❌ PDF demasiado pequeño o vacío: {len(contenido_pdf)} bytes")
+                logger.error(f" PDF demasiado pequeño o vacío: {len(contenido_pdf)} bytes")
                 return []
             
             # Intentar con pdf2image primero
@@ -276,7 +315,7 @@ FIN DE LA EXTRACCIÓN
                 try:
                     from pdf2image import convert_from_bytes
                     
-                    logger.info(f"🔄 Convirtiendo PDF a imágenes con pdf2image: {nombre_archivo}")
+                    logger.info(f" Convirtiendo PDF a imágenes con pdf2image: {nombre_archivo}")
                     
                     # Convertir PDF a imágenes con configuración robusta
                     pages = convert_from_bytes(
@@ -285,7 +324,7 @@ FIN DE LA EXTRACCIÓN
                         fmt='JPEG',
                         thread_count=1,  # Evitar problemas de concurrencia
                         first_page=1,
-                        last_page=100  # Limitar a 100 páginas máximo
+                        last_page=1000  # Limitar a 1000 páginas máximo
                     )
                     
                     # Convertir cada página a bytes
@@ -294,30 +333,30 @@ FIN DE LA EXTRACCIÓN
                         page.save(img_byte_arr, format='JPEG', quality=95)
                         imagenes.append(img_byte_arr.getvalue())
                     
-                    logger.info(f"✅ pdf2image: {len(imagenes)} páginas convertidas")
+                    logger.info(f" pdf2image: {len(imagenes)} páginas convertidas")
                     return imagenes
                     
                 except Exception as e:
-                    logger.error(f"❌ Error con pdf2image: {e}")
+                    logger.error(f" Error con pdf2image: {e}")
                     # Continuar con PyMuPDF
             
             # Intentar con PyMuPDF como alternativa
             if PYMUPDF_DISPONIBLE:
                 try:
-                    logger.info(f"🔄 Convirtiendo PDF a imágenes con PyMuPDF: {nombre_archivo}")
+                    logger.info(f" Convirtiendo PDF a imágenes con PyMuPDF: {nombre_archivo}")
                     
                     # Abrir PDF desde bytes
                     pdf_document = fitz.open(stream=contenido_pdf, filetype="pdf")
                     
                     # Verificar que el PDF se abrió correctamente
                     if pdf_document.page_count == 0:
-                        logger.error(f"❌ PDF sin páginas válidas")
+                        logger.error(f" PDF sin páginas válidas")
                         pdf_document.close()
                         return []
                     
                     # Limitar número de páginas
-                    max_pages = min(pdf_document.page_count, 100)
-                    logger.info(f"📄 Procesando {max_pages} de {pdf_document.page_count} páginas")
+                    max_pages = min(pdf_document.page_count, 1000)
+                    logger.info(f" Procesando {max_pages} de {pdf_document.page_count} páginas")
                     
                     # Convertir cada página
                     for page_num in range(max_pages):
@@ -332,14 +371,14 @@ FIN DE LA EXTRACCIÓN
                         imagenes.append(img_data)
                     
                     pdf_document.close()
-                    logger.info(f"✅ PyMuPDF: {len(imagenes)} páginas convertidas")
+                    logger.info(f"PyMuPDF: {len(imagenes)} páginas convertidas")
                     return imagenes
                     
                 except Exception as e:
-                    logger.error(f"❌ Error con PyMuPDF: {e}")
+                    logger.error(f" Error con PyMuPDF: {e}")
             
             # Si llegamos aquí, ambos métodos fallaron
-            logger.error(f"❌ Todos los métodos de conversión fallaron")
+            logger.error(f" Todos los métodos de conversión PDF a imagen  fallaron")
             logger.error(f"   pdf2image disponible: {PDF2IMAGE_DISPONIBLE}")
             logger.error(f"   PyMuPDF disponible: {PYMUPDF_DISPONIBLE}")
             
@@ -350,7 +389,7 @@ FIN DE LA EXTRACCIÓN
             return []
                 
         except Exception as e:
-            logger.error(f"❌ Error general convirtiendo PDF a imágenes: {e}")
+            logger.error(f" Error general convirtiendo PDF a imágenes: {e}")
             logger.error(f"   Archivo: {nombre_archivo}")
             logger.error(f"   Tamaño: {len(contenido_pdf)} bytes")
             return []
@@ -375,18 +414,12 @@ FIN DE LA EXTRACCIÓN
         extension = Path(archivo.filename).suffix.lower()
         contenido = await archivo.read()
         
-        logger.info(f"📄 Procesando archivo: {archivo.filename} ({extension})")
+        logger.info(f" Procesando archivo: {archivo.filename} ({extension})")
         
         # Determinar método de extracción según extensión
         if extension == '.pdf':
             texto = await self.extraer_texto_pdf(contenido, archivo.filename)
-            # Si se extrajo muy poco texto de PDF, intentar OCR
-            if len(texto.strip()) < 1000 and not texto.startswith("Error"):
-                logger.info("🔄 Poco texto extraído de PDF, intentando OCR con conversión a imagen...")
-                texto_ocr = await self.extraer_texto_pdf_con_ocr(contenido, archivo.filename)
-                if texto_ocr and len(texto_ocr) > len(texto) and not texto_ocr.startswith("Error"):
-                    logger.info("✅ OCR proporcionó mejor resultado que extracción de PDF")
-                    return texto_ocr
+            # La función extraer_texto_pdf ya maneja automáticamente el OCR cuando es necesario
             return texto
         
         elif extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']:
@@ -398,12 +431,78 @@ FIN DE LA EXTRACCIÓN
         elif extension in ['.docx', '.doc']:
             return await self.extraer_texto_word(contenido, archivo.filename)
         
+        elif extension in ['.msg', '.eml']:
+            return await self.extraer_texto_emails(contenido, archivo.filename)
+        
         else:
             raise ValueError(f"Tipo de archivo no soportado: {extension}")
     
+    def _evaluar_calidad_extraccion_pdf(self, texto_extraido: str, num_paginas: int) -> dict:
+        """
+        Evalúa la calidad del texto extraído de un PDF para determinar si se necesita OCR.
+        
+        Args:
+            texto_extraido: Texto extraído del PDF
+            num_paginas: Número total de páginas del PDF
+            
+        Returns:
+            dict: Información sobre la calidad de extracción
+        """
+        # Contar páginas con mensaje de "vacía"
+        mensajes_vacia = texto_extraido.count("[Página vacía o sin texto extraíble]")
+        
+        # Calcular texto útil (sin contar separadores y mensajes de páginas vacías)
+        lineas = texto_extraido.split('\n')
+        texto_util = ""
+        
+        for linea in lineas:
+            # Excluir separadores de página y mensajes de páginas vacías
+            if (not linea.startswith("--- PÁGINA") and 
+                "[Página vacía o sin texto extraíble]" not in linea and
+                linea.strip()):
+                texto_util += linea + " "
+        
+        texto_util = texto_util.strip()
+        caracteres_utiles = len(texto_util)
+        
+        # Calcular porcentajes
+        porcentaje_paginas_vacias = (mensajes_vacia / num_paginas) * 100 if num_paginas > 0 else 0
+        
+        # Determinar si necesita OCR
+        necesita_ocr = (
+            porcentaje_paginas_vacias >= 80 or  # 80% o más páginas vacías
+            caracteres_utiles < 100 or          # Menos de 100 caracteres útiles
+            (porcentaje_paginas_vacias >= 50 and caracteres_utiles < 500)  # 50% vacías y poco texto
+        )
+        
+        evaluacion = {
+            "caracteres_totales": len(texto_extraido),
+            "caracteres_utiles": caracteres_utiles,
+            "paginas_totales": num_paginas,
+            "paginas_vacias": mensajes_vacia,
+            "porcentaje_paginas_vacias": porcentaje_paginas_vacias,
+            "necesita_ocr": necesita_ocr,
+            "razon_ocr": self._generar_razon_ocr(porcentaje_paginas_vacias, caracteres_utiles)
+        }
+        
+        return evaluacion
+    
+    def _generar_razon_ocr(self, porcentaje_vacias: float, caracteres_utiles: int) -> str:
+        """
+        Genera una razón legible de por qué se necesita OCR.
+        """
+        if porcentaje_vacias >= 80:
+            return f"80%+ páginas vacías ({porcentaje_vacias:.1f}%)"
+        elif caracteres_utiles < 100:
+            return f"Muy poco texto útil ({caracteres_utiles} caracteres)"
+        elif porcentaje_vacias >= 50 and caracteres_utiles < 500:
+            return f"50%+ páginas vacías ({porcentaje_vacias:.1f}%) y poco texto ({caracteres_utiles} caracteres)"
+        else:
+            return "Extracción satisfactoria"
+    
     async def extraer_texto_pdf(self, contenido: bytes, nombre_archivo: str = "documento.pdf") -> str:
         """
-        Extrae texto de archivo PDF usando PyPDF2.
+        Extrae texto de archivo PDF usando PDF Plumber como método principal y PyPDF2 como fallback.
         GUARDA AUTOMÁTICAMENTE el texto extraído.
         
         Args:
@@ -413,12 +512,79 @@ FIN DE LA EXTRACCIÓN
         Returns:
             str: Texto extraído del PDF
         """
+        # MÉTODO PRINCIPAL: PDF PLUMBER
+        if PDFPLUMBER_DISPONIBLE:
+            try:
+                logger.info(f" Extrayendo texto con PDF Plumber (método principal): {nombre_archivo}")
+                
+                with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+                    texto_completo = ""
+                    num_paginas = len(pdf.pages)
+                    
+                    logger.info(f" Procesando PDF con {num_paginas} página(s) usando PDF Plumber")
+                    
+                    for i, page in enumerate(pdf.pages):
+                        # Extraer texto como fluye naturalmente
+                        texto_pagina = page.extract_text()
+                        if texto_pagina and texto_pagina.strip():  # Solo agregar si hay texto real
+                            texto_completo += f"\n--- PÁGINA {i+1} ---\n{texto_pagina}\n"
+                        else:
+                            texto_completo += f"\n--- PÁGINA {i+1} ---\n[Página vacía o sin texto extraíble]\n"
+                    
+                    texto_final = texto_completo.strip()
+                    
+                    # EVALUAR CALIDAD DE EXTRACCIÓN
+                    evaluacion = self._evaluar_calidad_extraccion_pdf(texto_final, num_paginas)
+                    
+                    # Preparar metadatos con evaluación
+                    metadatos = {
+                        "total_paginas": num_paginas,
+                        "tamaño_archivo_bytes": len(contenido),
+                        "metodo": "PDF Plumber (principal)",
+                        "caracteres_extraidos": len(texto_final),
+                        "evaluacion_calidad": evaluacion
+                    }
+                    
+                    # SI NECESITA OCR, INTENTAR EXTRACCIÓN CON OCR INMEDIATAMENTE
+                    if evaluacion["necesita_ocr"]:
+                        logger.warning(f" PDF Plumber extrajo poco contenido útil: {evaluacion['razon_ocr']}")
+                        logger.info(f" Intentando OCR automáticamente...")
+                        
+                        try:
+                            texto_ocr = await self.extraer_texto_pdf_con_ocr(contenido, nombre_archivo)
+                            
+                            if texto_ocr and not texto_ocr.startswith("Error") and len(texto_ocr.strip()) > evaluacion["caracteres_utiles"]:
+                                logger.info(f" OCR proporcionó mejor resultado que PDF Plumber")
+                                logger.info(f" Comparación: PDF Plumber ({evaluacion['caracteres_utiles']} caracteres útiles) vs OCR ({len(texto_ocr.strip())} caracteres)")
+                                return texto_ocr  # Retornar resultado de OCR
+                            else:
+                                logger.warning(f" OCR no mejoró el resultado, manteniendo extracción de PDF Plumber")
+                                
+                        except Exception as e:
+                            logger.error(f" Error en OCR automático: {str(e)}")
+                            logger.info(f" Continuando con resultado de PDF Plumber")
+                    
+                    # Guardar texto extraído automáticamente
+                    archivo_guardado = self._guardar_texto_extraido(
+                        nombre_archivo, texto_final, "PDF", metadatos
+                    )
+                    
+                    logger.info(f" PDF Plumber: {len(texto_final)} caracteres extraídos")
+                    return texto_final
+                    
+            except Exception as e:
+                logger.warning(f"PDF Plumber falló: {str(e)}")
+                logger.info(f"Intentando con PyPDF2 como fallback...")
+        
+        # MÉTODO FALLBACK: PyPDF2
         try:
+            logger.info(f" Extrayendo texto con PyPDF2 (fallback): {nombre_archivo}")
+            
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(contenido))
             texto_completo = ""
             
             num_paginas = len(pdf_reader.pages)
-            logger.info(f"📖 Procesando PDF con {num_paginas} página(s)")
+            logger.info(f" Procesando PDF con {num_paginas} página(s) usando PyPDF2")
             
             for i, page in enumerate(pdf_reader.pages):
                 texto_pagina = page.extract_text()
@@ -430,7 +596,7 @@ FIN DE LA EXTRACCIÓN
             metadatos = {
                 "total_paginas": num_paginas,
                 "tamaño_archivo_bytes": len(contenido),
-                "metodo": "PyPDF2",
+                "metodo": "PyPDF2 (fallback)",
                 "caracteres_extraidos": len(texto_final)
             }
             
@@ -439,13 +605,12 @@ FIN DE LA EXTRACCIÓN
                 nombre_archivo, texto_final, "PDF", metadatos
             )
             
-            logger.info(f"✅ Texto extraído de PDF: {len(texto_final)} caracteres")
-            
+            logger.info(f"PyPDF2: {len(texto_final)} caracteres extraídos")
             return texto_final
             
         except Exception as e:
-            error_msg = f"Error procesando PDF: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            error_msg = f"Error procesando PDF con ambos métodos (PDF Plumber + PyPDF2): {str(e)}"
+            logger.error(f" {error_msg}")
             
             # Guardar también los errores para debugging
             self._guardar_texto_extraido(
@@ -472,7 +637,7 @@ FIN DE LA EXTRACCIÓN
             
             if not validacion["valido"]:
                 error_msg = f"PDF no válido para OCR: {validacion['error']}"
-                logger.error(f"❌ {error_msg}")
+                logger.error(f" {error_msg}")
                 
                 # Guardar error detallado
                 self._guardar_texto_extraido(
@@ -482,15 +647,15 @@ FIN DE LA EXTRACCIÓN
                 
                 return error_msg
             
-            logger.info(f"✅ PDF validado: {validacion['info']['paginas']} páginas, {validacion['info']['tamaño_bytes']} bytes")
-            logger.info(f"🔧 Método recomendado: {validacion['metodo_recomendado']}")
+            logger.info(f" PDF validado: {validacion['info']['paginas']} páginas, {validacion['info']['tamaño_bytes']} bytes")
+            logger.info(f" Método recomendado: {validacion['metodo_recomendado']}")
             
             # Convertir PDF a imágenes
             imagenes = self._convertir_pdf_a_imagenes(contenido_pdf, nombre_archivo)
             
             if not imagenes:
                 error_msg = "No se pudieron convertir páginas del PDF a imágenes"
-                logger.error(f"❌ {error_msg}")
+                logger.error(f" {error_msg}")
                 
                 self._guardar_texto_extraido(
                     nombre_archivo, error_msg, "PDF_OCR_ERROR", 
@@ -499,44 +664,33 @@ FIN DE LA EXTRACCIÓN
                 
                 return error_msg
             
-            # Aplicar OCR a cada imagen
-            texto_total = ""
-            total_caracteres = 0
-            
-            for i, imagen_bytes in enumerate(imagenes):
-                logger.info(f"🔍 Aplicando OCR a página {i+1}/{len(imagenes)}")
-                
-                # Aplicar OCR a esta imagen
-                texto_pagina = await self._aplicar_ocr_a_imagen(imagen_bytes, f"página_{i+1}")
-                
-                if texto_pagina and not texto_pagina.startswith("Error"):
-                    texto_total += f"\n--- PÁGINA {i+1} (OCR) ---\n{texto_pagina}\n"
-                    total_caracteres += len(texto_pagina)
-                else:
-                    texto_total += f"\n--- PÁGINA {i+1} (OCR) ---\n[Error en OCR o página vacía]\n"
+            # Aplicar OCR paralelo con ThreadPoolExecutor (2 workers fijos)
+            texto_total, total_caracteres = await self._procesar_ocr_paralelo(imagenes, nombre_archivo)
             
             # Preparar metadatos
             metadatos = {
                 "total_paginas": len(imagenes),
                 "tamaño_archivo_bytes": len(contenido_pdf),
-                "metodo": "PDF → Imagen → Google Vision OCR",
+                "metodo": "PDF → Imagen → Google Vision OCR (Paralelo)",
+                "workers_paralelos": 2,
                 "caracteres_extraidos": total_caracteres,
                 "paginas_procesadas": len(imagenes),
-                "validacion": validacion["info"]
+                "validacion": validacion["info"],
+                "procesamiento_paralelo": True
             }
             
             # Guardar texto extraído automáticamente
             archivo_guardado = self._guardar_texto_extraido(
-                nombre_archivo, texto_total, "PDF_OCR", metadatos
+                nombre_archivo, texto_total, "PDF_OCR_PARALELO", metadatos
             )
             
-            logger.info(f"✅ OCR de PDF completado: {total_caracteres} caracteres de {len(imagenes)} páginas")
+            logger.info(f"OCR paralelo de PDF completado: {total_caracteres} caracteres de {len(imagenes)} paginas con 2 workers")
             
             return texto_total.strip()
             
         except Exception as e:
             error_msg = f"Error en OCR de PDF: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -546,9 +700,108 @@ FIN DE LA EXTRACCIÓN
             
             return error_msg
     
+    async def _procesar_ocr_paralelo(self, imagenes: list, nombre_archivo: str) -> tuple:
+        """
+        Procesa OCR de múltiples páginas en paralelo usando ThreadPoolExecutor.
+        
+        Args:
+            imagenes: Lista de imágenes en bytes
+            nombre_archivo: Nombre del archivo para logging
+            
+        Returns:
+            tuple: (texto_total, total_caracteres)
+        """
+        if not imagenes:
+            return "", 0
+        
+        # Configuración de OCR paralelo (2 workers fijos)
+        max_workers = 2
+        num_paginas = len(imagenes)
+        
+        # Logging específico sin emojis
+        logger.info(f"Iniciando OCR paralelo: {num_paginas} paginas con {max_workers} workers")
+        inicio_tiempo = asyncio.get_event_loop().time()
+        
+        # Función sincrónica para usar en ThreadPoolExecutor
+        def aplicar_ocr_sincrono(imagen_bytes: bytes, num_pagina: int) -> tuple:
+            """Función sincrónica que envuelve la llamada a Google Vision"""
+            try:
+                if not self.vision_client:
+                    return num_pagina, "OCR no disponible - Google Vision no configurado"
+                
+                # Crear objeto Image para Vision
+                image = vision.Image(content=imagen_bytes)
+                
+                # Detectar texto
+                response = self.vision_client.text_detection(image=image)
+                
+                if response.error.message:
+                    return num_pagina, f"Error en Vision API: {response.error.message}"
+                
+                texts = response.text_annotations
+                
+                if texts:
+                    texto_extraido = texts[0].description
+                    return num_pagina, texto_extraido
+                else:
+                    return num_pagina, ""
+                    
+            except Exception as e:
+                return num_pagina, f"Error en OCR: {str(e)}"
+        
+        # Ejecutar OCR paralelo con ThreadPoolExecutor
+        loop = asyncio.get_event_loop()
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Crear tareas para cada página
+            tasks = [
+                loop.run_in_executor(
+                    executor, 
+                    aplicar_ocr_sincrono, 
+                    imagen_bytes, 
+                    i + 1
+                )
+                for i, imagen_bytes in enumerate(imagenes)
+            ]
+            
+            # Ejecutar todas las tareas en paralelo
+            resultados = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Calcular tiempo transcurrido
+        tiempo_total = asyncio.get_event_loop().time() - inicio_tiempo
+        
+        # Procesar resultados manteniendo orden de páginas
+        texto_total = ""
+        total_caracteres = 0
+        paginas_exitosas = 0
+        
+        for resultado in resultados:
+            if isinstance(resultado, Exception):
+                # Manejar excepción
+                num_pagina = len([r for r in resultados[:resultados.index(resultado)] if not isinstance(r, Exception)]) + 1
+                texto_total += f"\n--- PÁGINA {num_pagina} (OCR) ---\n[Error en procesamiento paralelo: {resultado}]\n"
+                continue
+            
+            num_pagina, texto_pagina = resultado
+            
+            if texto_pagina and not texto_pagina.startswith("Error"):
+                texto_total += f"\n--- PÁGINA {num_pagina} (OCR) ---\n{texto_pagina}\n"
+                total_caracteres += len(texto_pagina)
+                paginas_exitosas += 1
+            else:
+                texto_total += f"\n--- PÁGINA {num_pagina} (OCR) ---\n[Error en OCR o página vacía]\n"
+        
+        # Logging de resultados sin emojis
+        logger.info(f"OCR paralelo completado: {paginas_exitosas}/{num_paginas} paginas exitosas")
+        logger.info(f"Tiempo total de OCR paralelo: {tiempo_total:.2f} segundos")
+        logger.info(f"Promedio por pagina: {tiempo_total/num_paginas:.2f} segundos")
+        logger.info(f"Caracteres extraidos: {total_caracteres}")
+        
+        return texto_total, total_caracteres
+    
     async def _aplicar_ocr_a_imagen(self, imagen_bytes: bytes, descripcion: str = "imagen") -> str:
         """
-        Aplica OCR a una imagen específica.
+        Aplica OCR a una imagen específica de  manera directa.
         
         Args:
             imagen_bytes: Bytes de la imagen
@@ -574,14 +827,14 @@ FIN DE LA EXTRACCIÓN
             
             if texts:
                 texto_extraido = texts[0].description
-                logger.debug(f"✅ OCR exitoso en {descripcion}: {len(texto_extraido)} caracteres")
+                logger.debug(f" OCR exitoso en {descripcion}: {len(texto_extraido)} caracteres")
                 return texto_extraido
             else:
-                logger.debug(f"⚠️ No se detectó texto en {descripcion}")
+                logger.debug(f" No se detectó texto en {descripcion}")
                 return ""
                 
         except Exception as e:
-            logger.error(f"❌ Error en OCR de {descripcion}: {e}")
+            logger.error(f" Error en OCR de {descripcion}: {e}")
             return f"Error en OCR: {str(e)}"
     
     async def extraer_texto_imagen(self, contenido: bytes, nombre_archivo: str = "imagen.jpg", metodo: str = "OCR") -> str:
@@ -599,7 +852,7 @@ FIN DE LA EXTRACCIÓN
         """
         if not self.vision_client:
             error_msg = "OCR no disponible - Google Vision no configurado"
-            logger.warning(f"⚠️ {error_msg}")
+            logger.warning(f" {error_msg}")
             
             # Guardar el error
             self._guardar_texto_extraido(
@@ -626,11 +879,11 @@ FIN DE LA EXTRACCIÓN
                     nombre_archivo, texto_extraido, metodo, metadatos
                 )
                 
-                logger.info(f"✅ OCR exitoso: {len(texto_extraido)} caracteres extraídos")
+                logger.info(f" OCR exitoso: {len(texto_extraido)} caracteres extraídos")
                 return texto_extraido
             else:
                 no_texto_msg = "No se detectó texto en la imagen"
-                logger.warning(f"⚠️ {no_texto_msg}")
+                logger.warning(f" {no_texto_msg}")
                 
                 # Guardar resultado vacío
                 self._guardar_texto_extraido(
@@ -642,7 +895,7 @@ FIN DE LA EXTRACCIÓN
                 
         except Exception as e:
             error_msg = f"Error en OCR con Google Vision: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -701,14 +954,14 @@ FIN DE LA EXTRACCIÓN
                 nombre_archivo, texto_final, "EXCEL", metadatos
             )
             
-            logger.info(f"✅ Excel procesado: {len(texto_final)} caracteres extraídos")
-            logger.info(f"📊 Hojas: {total_hojas}, Filas: {total_filas}")
+            logger.info(f" Excel procesado: {len(texto_final)} caracteres extraídos")
+            logger.info(f" Hojas: {total_hojas}, Filas: {total_filas}")
             
             return texto_final
             
         except Exception as e:
             error_msg = f"Error procesando Excel: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -769,14 +1022,14 @@ FIN DE LA EXTRACCIÓN
                 nombre_archivo, texto_final, "WORD", metadatos
             )
             
-            logger.info(f"✅ Word procesado: {len(texto_final)} caracteres extraídos")
-            logger.info(f"📄 Párrafos: {total_parrafos}, Tablas: {total_tablas}")
+            logger.info(f" Word procesado: {len(texto_final)} caracteres extraídos")
+            logger.info(f" Párrafos: {total_parrafos}, Tablas: {total_tablas}")
             
             return texto_final
             
         except Exception as e:
             error_msg = f"Error procesando Word: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             
             # Guardar error
             self._guardar_texto_extraido(
@@ -785,6 +1038,511 @@ FIN DE LA EXTRACCIÓN
             )
             
             return error_msg
+    
+    async def extraer_texto_emails(self, contenido: bytes, nombre_archivo: str = "email") -> str:
+        """
+        Extrae texto y metadatos de archivos de email (.msg y .eml).
+        GUARDA AUTOMÁTICAMENTE el texto extraído con formato estructurado.
+        
+        Args:
+            contenido: Contenido binario del archivo de email
+            nombre_archivo: Nombre del archivo original para guardado
+            
+        Returns:
+            str: Texto extraído con metadatos del email formateado
+        """
+        try:
+            extension = Path(nombre_archivo).suffix.lower()
+            
+            if extension == '.msg':
+                return await self._procesar_msg(contenido, nombre_archivo)
+            elif extension == '.eml':
+                return await self._procesar_eml(contenido, nombre_archivo)
+            else:
+                error_msg = f"Extensión de email no soportada: {extension}"
+                logger.error(f" {error_msg}")
+                
+                # Guardar error
+                self._guardar_texto_extraido(
+                    nombre_archivo, error_msg, "EMAIL_ERROR", 
+                    {"error": "Extensión no soportada", "extension": extension}
+                )
+                
+                return error_msg
+                
+        except Exception as e:
+            error_msg = f"Error procesando email: {str(e)}"
+            logger.error(f" {error_msg}")
+            
+            # Guardar error
+            self._guardar_texto_extraido(
+                nombre_archivo, error_msg, "EMAIL_ERROR", 
+                {"error": str(e)}
+            )
+            
+            return error_msg
+    
+    async def _procesar_msg(self, contenido: bytes, nombre_archivo: str) -> str:
+        """
+        Procesa archivos .msg usando extract-msg.
+        
+        Args:
+            contenido: Contenido binario del archivo .msg
+            nombre_archivo: Nombre del archivo para logging
+            
+        Returns:
+            str: Texto extraído formateado del email
+        """
+        if not EXTRACT_MSG_DISPONIBLE:
+            error_msg = "Librería extract-msg no disponible. Instale con: pip install extract-msg"
+            logger.error(f" {error_msg}")
+            
+            self._guardar_texto_extraido(
+                nombre_archivo, error_msg, "MSG_ERROR", 
+                {"error": "extract-msg no instalado"}
+            )
+            
+            return error_msg
+        
+        try:
+            # Crear archivo temporal para extract-msg
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.msg', delete=False) as temp_file:
+                temp_file.write(contenido)
+                temp_path = temp_file.name
+            
+            try:
+                # Extraer con extract-msg
+                msg = extract_msg.Message(temp_path)
+                
+                # Extraer metadatos
+                asunto = msg.subject or "[Sin asunto]"
+                remitente = self._formatear_direccion(msg.sender)
+                destinatarios = self._extraer_destinatarios_msg(msg)
+                fecha = self._formatear_fecha(msg.date)
+                cuerpo = self._extraer_cuerpo_msg(msg)
+                adjuntos = self._listar_adjuntos_msg(msg)
+                
+                # Formatear texto final
+                texto_formateado = self._formatear_email(
+                    asunto, remitente, destinatarios, fecha, cuerpo, adjuntos, "MSG"
+                )
+                
+                # Preparar metadatos
+                metadatos = {
+                    "tipo_archivo": "MSG",
+                    "asunto": asunto,
+                    "remitente": remitente,
+                    "destinatarios": destinatarios,
+                    "fecha": fecha,
+                    "adjuntos_detectados": len(adjuntos),
+                    "tamaño_archivo_bytes": len(contenido),
+                    "metodo": "extract-msg"
+                }
+                
+                # Guardar texto extraído
+                self._guardar_texto_extraido(
+                    nombre_archivo, texto_formateado, "EMAIL_MSG", metadatos
+                )
+                
+                logger.info(f" Email .msg procesado: {len(texto_formateado)} caracteres")
+                logger.info(f" Asunto: {asunto[:50]}...")
+                
+                return texto_formateado
+                
+            finally:
+                # Limpiar archivo temporal
+                import os
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            error_msg = f"Error procesando archivo .msg: {str(e)}"
+            logger.error(f" {error_msg}")
+            
+            self._guardar_texto_extraido(
+                nombre_archivo, error_msg, "MSG_ERROR", 
+                {"error": str(e)}
+            )
+            
+            return error_msg
+    
+    async def _procesar_eml(self, contenido: bytes, nombre_archivo: str) -> str:
+        """
+        Procesa archivos .eml usando la librería email estándar.
+        
+        Args:
+            contenido: Contenido binario del archivo .eml
+            nombre_archivo: Nombre del archivo para logging
+            
+        Returns:
+            str: Texto extraído formateado del email
+        """
+        try:
+            # Decodificar contenido a string
+            contenido_str = self._decodificar_email(contenido)
+            
+            # Parsear email
+            msg = email.message_from_string(contenido_str)
+            
+            # Extraer metadatos
+            asunto = self._decodificar_header(msg.get('Subject', '[Sin asunto]'))
+            remitente = self._decodificar_header(msg.get('From', '[Remitente desconocido]'))
+            destinatarios = self._extraer_destinatarios_eml(msg)
+            fecha = self._formatear_fecha_eml(msg.get('Date'))
+            cuerpo = self._extraer_cuerpo_eml(msg)
+            adjuntos = self._listar_adjuntos_eml(msg)
+            
+            # Formatear texto final
+            texto_formateado = self._formatear_email(
+                asunto, remitente, destinatarios, fecha, cuerpo, adjuntos, "EML"
+            )
+            
+            # Preparar metadatos
+            metadatos = {
+                "tipo_archivo": "EML",
+                "asunto": asunto,
+                "remitente": remitente,
+                "destinatarios": destinatarios,
+                "fecha": fecha,
+                "adjuntos_detectados": len(adjuntos),
+                "tamaño_archivo_bytes": len(contenido),
+                "metodo": "email estándar"
+            }
+            
+            # Guardar texto extraído
+            self._guardar_texto_extraido(
+                nombre_archivo, texto_formateado, "EMAIL_EML", metadatos
+            )
+            
+            logger.info(f" Email .eml procesado: {len(texto_formateado)} caracteres")
+            logger.info(f" Asunto: {asunto[:50]}...")
+            
+            return texto_formateado
+            
+        except Exception as e:
+            error_msg = f"Error procesando archivo .eml: {str(e)}"
+            logger.error(f"{error_msg}")
+            
+            self._guardar_texto_extraido(
+                nombre_archivo, error_msg, "EML_ERROR", 
+                {"error": str(e)}
+            )
+            
+            return error_msg
+    
+    def _decodificar_email(self, contenido: bytes) -> str:
+        """
+        Decodifica el contenido de un email manejando diferentes codificaciones.
+        """
+        codificaciones = ['utf-8', 'latin1', 'cp1252', 'iso-8859-1']
+        
+        for codificacion in codificaciones:
+            try:
+                return contenido.decode(codificacion)
+            except UnicodeDecodeError:
+                continue
+        
+        # Fallback con errores ignorados
+        return contenido.decode('utf-8', errors='ignore')
+    
+    def _decodificar_header(self, header_str: str) -> str:
+        """
+        Decodifica headers de email que pueden estar codificados.
+        """
+        if not header_str:
+            return ""
+        
+        try:
+            decoded_fragments = decode_header(header_str)
+            decoded_string = ""
+            
+            for fragment, encoding in decoded_fragments:
+                if isinstance(fragment, bytes):
+                    if encoding:
+                        try:
+                            decoded_string += fragment.decode(encoding)
+                        except:
+                            decoded_string += fragment.decode('utf-8', errors='ignore')
+                    else:
+                        decoded_string += fragment.decode('utf-8', errors='ignore')
+                else:
+                    decoded_string += fragment
+            
+            return decoded_string.strip()
+            
+        except Exception:
+            return header_str
+    
+    def _formatear_direccion(self, direccion: str) -> str:
+        """
+        Formatea una dirección de email para mostrar nombre y email.
+        """
+        if not direccion:
+            return "[Desconocido]"
+        
+        try:
+            nombre, email_addr = parseaddr(direccion)
+            if nombre and email_addr:
+                return f"{nombre} <{email_addr}>"
+            elif email_addr:
+                return email_addr
+            else:
+                return direccion
+        except:
+            return direccion
+    
+    def _extraer_destinatarios_msg(self, msg) -> str:
+        """
+        Extrae destinatarios de un mensaje .msg.
+        """
+        destinatarios = []
+        
+        # To
+        if hasattr(msg, 'to') and msg.to:
+            destinatarios.append(f"Para: {msg.to}")
+        
+        # CC
+        if hasattr(msg, 'cc') and msg.cc:
+            destinatarios.append(f"CC: {msg.cc}")
+        
+        # BCC
+        if hasattr(msg, 'bcc') and msg.bcc:
+            destinatarios.append(f"BCC: {msg.bcc}")
+        
+        return "; ".join(destinatarios) if destinatarios else "[Sin destinatarios]"
+    
+    def _extraer_destinatarios_eml(self, msg) -> str:
+        """
+        Extrae destinatarios de un mensaje .eml.
+        """
+        destinatarios = []
+        
+        # To
+        to_header = msg.get('To')
+        if to_header:
+            destinatarios.append(f"Para: {self._decodificar_header(to_header)}")
+        
+        # CC
+        cc_header = msg.get('Cc')
+        if cc_header:
+            destinatarios.append(f"CC: {self._decodificar_header(cc_header)}")
+        
+        # BCC
+        bcc_header = msg.get('Bcc')
+        if bcc_header:
+            destinatarios.append(f"BCC: {self._decodificar_header(bcc_header)}")
+        
+        return "; ".join(destinatarios) if destinatarios else "[Sin destinatarios]"
+    
+    def _formatear_fecha(self, fecha) -> str:
+        """
+        Formatea fecha de mensaje .msg.
+        """
+        if not fecha:
+            return "[Fecha desconocida]"
+        
+        try:
+            if hasattr(fecha, 'strftime'):
+                return fecha.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                return str(fecha)
+        except:
+            return str(fecha)
+    
+    def _formatear_fecha_eml(self, fecha_str: str) -> str:
+        """
+        Formatea fecha de mensaje .eml.
+        """
+        if not fecha_str:
+            return "[Fecha desconocida]"
+        
+        try:
+            fecha_obj = parsedate_to_datetime(fecha_str)
+            return fecha_obj.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            return fecha_str
+    
+    def _extraer_cuerpo_msg(self, msg) -> str:
+        """
+        Extrae el cuerpo del mensaje .msg.
+        """
+        cuerpo = ""
+        
+        try:
+            # Intentar texto plano primero
+            if hasattr(msg, 'body') and msg.body:
+                cuerpo = msg.body
+            # Fallback a HTML
+            elif hasattr(msg, 'htmlBody') and msg.htmlBody:
+                cuerpo = self._html_a_texto(msg.htmlBody)
+                cuerpo = f"[CONVERTIDO DE HTML]\n{cuerpo}"
+            else:
+                cuerpo = "[Sin contenido de mensaje]"
+                
+        except Exception as e:
+            cuerpo = f"[Error extrayendo cuerpo: {str(e)}]"
+        
+        return cuerpo.strip() if cuerpo else "[Mensaje vacío]"
+    
+    def _extraer_cuerpo_eml(self, msg) -> str:
+        """
+        Extrae el cuerpo del mensaje .eml.
+        """
+        cuerpo = ""
+        
+        try:
+            if msg.is_multipart():
+                # Buscar partes de texto
+                for part in msg.walk():
+                    content_type = part.get_content_type()
+                    
+                    if content_type == "text/plain":
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            charset = part.get_content_charset() or 'utf-8'
+                            try:
+                                cuerpo = payload.decode(charset)
+                                break  # Priorizar texto plano
+                            except:
+                                cuerpo = payload.decode('utf-8', errors='ignore')
+                                break
+                    
+                    elif content_type == "text/html" and not cuerpo:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            charset = part.get_content_charset() or 'utf-8'
+                            try:
+                                html_content = payload.decode(charset)
+                                cuerpo = self._html_a_texto(html_content)
+                                cuerpo = f"[CONVERTIDO DE HTML]\n{cuerpo}"
+                            except:
+                                html_content = payload.decode('utf-8', errors='ignore')
+                                cuerpo = self._html_a_texto(html_content)
+                                cuerpo = f"[CONVERTIDO DE HTML]\n{cuerpo}"
+            else:
+                # Mensaje simple
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    charset = msg.get_content_charset() or 'utf-8'
+                    try:
+                        cuerpo = payload.decode(charset)
+                    except:
+                        cuerpo = payload.decode('utf-8', errors='ignore')
+                        
+        except Exception as e:
+            cuerpo = f"[Error extrayendo cuerpo: {str(e)}]"
+        
+        return cuerpo.strip() if cuerpo else "[Mensaje vacío]"
+    
+    def _html_a_texto(self, html_content: str) -> str:
+        """
+        Convierte contenido HTML a texto plano simple.
+        """
+        try:
+            import re
+            
+            # Remover scripts y styles
+            html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+            html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+            
+            # Reemplazar saltos de línea HTML
+            html_content = re.sub(r'<br[^>]*>', '\n', html_content, flags=re.IGNORECASE)
+            html_content = re.sub(r'</p>', '\n\n', html_content, flags=re.IGNORECASE)
+            html_content = re.sub(r'</div>', '\n', html_content, flags=re.IGNORECASE)
+            
+            # Remover todas las etiquetas HTML
+            texto_limpio = re.sub(r'<[^>]+>', '', html_content)
+            
+            # Limpiar espacios múltiples y líneas vacías
+            texto_limpio = re.sub(r'\n\s*\n', '\n\n', texto_limpio)
+            texto_limpio = re.sub(r' +', ' ', texto_limpio)
+            
+            return texto_limpio.strip()
+            
+        except Exception:
+            # Fallback simple
+            import re
+            return re.sub(r'<[^>]+>', '', html_content)
+    
+    def _listar_adjuntos_msg(self, msg) -> list:
+        """
+        Lista los adjuntos de un mensaje .msg.
+        """
+        adjuntos = []
+        
+        try:
+            if hasattr(msg, 'attachments') and msg.attachments:
+                for attachment in msg.attachments:
+                    try:
+                        nombre = getattr(attachment, 'longFilename', None) or getattr(attachment, 'shortFilename', 'adjunto_sin_nombre')
+                        tamaño = getattr(attachment, 'size', 0)
+                        adjuntos.append(f"{nombre} ({tamaño} bytes)")
+                    except:
+                        adjuntos.append("adjunto_sin_info")
+        except Exception:
+            pass
+        
+        return adjuntos
+    
+    def _listar_adjuntos_eml(self, msg) -> list:
+        """
+        Lista los adjuntos de un mensaje .eml.
+        """
+        adjuntos = []
+        
+        try:
+            for part in msg.walk():
+                content_disposition = part.get('Content-Disposition', '')
+                
+                if content_disposition and 'attachment' in content_disposition:
+                    filename = part.get_filename()
+                    if filename:
+                        filename = self._decodificar_header(filename)
+                        tamaño = len(part.get_payload(decode=True) or b'')
+                        adjuntos.append(f"{filename} ({tamaño} bytes)")
+                    else:
+                        adjuntos.append("adjunto_sin_nombre")
+        except Exception:
+            pass
+        
+        return adjuntos
+    
+    def _formatear_email(self, asunto: str, remitente: str, destinatarios: str, 
+                        fecha: str, cuerpo: str, adjuntos: list, tipo: str) -> str:
+        """
+        Formatea toda la información del email en un texto estructurado.
+        """
+        separador = "=" * 60
+        
+        texto_formateado = f"""=== INFORMACIÓN DEL EMAIL ({tipo}) ===
+ASUNTO: {asunto}
+REMITENTE: {remitente}
+DESTINATARIOS: {destinatarios}
+FECHA: {fecha}
+
+{separador}
+=== CUERPO DEL EMAIL ===
+{separador}
+
+{cuerpo}
+
+{separador}
+=== ARCHIVOS ADJUNTOS ===
+{separador}
+"""
+        
+        if adjuntos:
+            for i, adjunto in enumerate(adjuntos, 1):
+                texto_formateado += f"\n{i}. {adjunto}"
+        else:
+            texto_formateado += "\n[Sin archivos adjuntos]"
+        
+        texto_formateado += f"\n\n{separador}\n=== FIN DEL EMAIL ===\n{separador}"
+        
+        return texto_formateado
     
     def validar_archivo(self, archivo: UploadFile) -> Dict[str, Any]:
         """
@@ -797,7 +1555,7 @@ FIN DE LA EXTRACCIÓN
             Dict con información de validación
         """
         extensiones_soportadas = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.bmp', 
-                                '.tiff', '.xlsx', '.xls', '.docx', '.doc']
+                                '.tiff', '.xlsx', '.xls', '.docx', '.doc', '.msg', '.eml']
         
         if not archivo.filename:
             return {
@@ -819,16 +1577,30 @@ FIN DE LA EXTRACCIÓN
         guardado_automatico = True
         
         if extension == '.pdf':
-            if PDF2IMAGE_DISPONIBLE or PYMUPDF_DISPONIBLE:
-                tipo_procesamiento = "Extracción PDF + OCR con conversión a imagen"
+            if PDFPLUMBER_DISPONIBLE:
+                tipo_procesamiento = "PDF Plumber (principal) + PyPDF2 (fallback)"
+                if PDF2IMAGE_DISPONIBLE or PYMUPDF_DISPONIBLE:
+                    tipo_procesamiento += " + OCR con conversión a imagen"
             else:
-                tipo_procesamiento = "Extracción PDF (OCR fallback limitado)"
+                tipo_procesamiento = "PyPDF2 (sin PDF Plumber)"
+                if PDF2IMAGE_DISPONIBLE or PYMUPDF_DISPONIBLE:
+                    tipo_procesamiento += " + OCR con conversión a imagen"
+                else:
+                    tipo_procesamiento += " (OCR fallback limitado)"
         elif extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']:
             tipo_procesamiento = "OCR con Google Vision"
         elif extension in ['.xlsx', '.xls']:
             tipo_procesamiento = "Procesamiento Excel"
         elif extension in ['.docx', '.doc']:
             tipo_procesamiento = "Procesamiento Word"
+        elif extension in ['.msg', '.eml']:
+            if extension == '.msg' and EXTRACT_MSG_DISPONIBLE:
+                tipo_procesamiento = "Procesamiento Email (.msg) con extract-msg"
+            elif extension == '.eml':
+                tipo_procesamiento = "Procesamiento Email (.eml) con email estándar"
+            else:
+                tipo_procesamiento = "Procesamiento Email (dependencias limitadas)"
+        
         
         return {
             "valido": True,
@@ -853,15 +1625,15 @@ FIN DE LA EXTRACCIÓN
         """
         textos_extraidos = {}
         
-        logger.info(f"📁 Procesando {len(archivos)} archivos con guardado automático")
-        logger.info(f"💾 Carpeta de guardado: {self.carpeta_fecha}")
+        logger.info(f" Procesando {len(archivos)} archivos con guardado automático")
+        logger.info(f" Carpeta de guardado: {self.carpeta_fecha}")
         
         for archivo in archivos:
             try:
                 # Validar archivo
                 validacion = self.validar_archivo(archivo)
                 if not validacion["valido"]:
-                    logger.error(f"❌ Archivo inválido {archivo.filename}: {validacion['error']}")
+                    logger.error(f" Archivo inválido {archivo.filename}: {validacion['error']}")
                     textos_extraidos[archivo.filename] = f"ERROR: {validacion['error']}"
                     continue
                 
@@ -869,10 +1641,10 @@ FIN DE LA EXTRACCIÓN
                 texto = await self.procesar_archivo(archivo)
                 textos_extraidos[archivo.filename] = texto
                 
-                logger.info(f"✅ Archivo procesado y guardado: {archivo.filename}")
+                logger.info(f" Archivo procesado y guardado: {archivo.filename}")
                 
             except Exception as e:
-                logger.error(f"❌ Error procesando archivo {archivo.filename}: {e}")
+                logger.error(f" Error procesando archivo {archivo.filename}: {e}")
                 textos_extraidos[archivo.filename] = f"ERROR PROCESANDO: {str(e)}"
                 
                 # Guardar también los errores de procesamiento
@@ -881,8 +1653,8 @@ FIN DE LA EXTRACCIÓN
                     "PROCESAMIENTO_ERROR", {"error": str(e)}
                 )
         
-        logger.info(f"🎉 Procesamiento completado: {len(textos_extraidos)} archivos")
-        logger.info(f"📂 Todos los textos extraídos guardados en: {self.carpeta_fecha}")
+        logger.info(f" Procesamiento completado: {len(textos_extraidos)} archivos")
+        logger.info(f" Todos los textos extraídos guardados en: {self.carpeta_fecha}")
         
         return textos_extraidos
     
@@ -904,8 +1676,10 @@ FIN DE LA EXTRACCIÓN
                 "tamaño_total_mb": 0,
                 "dependencias": {
                     "google_vision": self.vision_client is not None,
+                    "pdfplumber": PDFPLUMBER_DISPONIBLE,
                     "pdf2image": PDF2IMAGE_DISPONIBLE,
-                    "pymupdf": PYMUPDF_DISPONIBLE
+                    "pymupdf": PYMUPDF_DISPONIBLE,
+                    "extract_msg": EXTRACT_MSG_DISPONIBLE
                 }
             }
             
@@ -927,3 +1701,182 @@ FIN DE LA EXTRACCIÓN
         except Exception as e:
             logger.error(f"Error obteniendo estadísticas: {e}")
             return {"error": str(e)}
+
+
+# ===============================
+# FUNCIONES DE PREPROCESAMIENTO EXCEL
+# ===============================
+
+def preprocesar_excel_limpio(contenido: bytes, nombre_archivo: str = "archivo.xlsx") -> str:
+    """
+    Preprocesa archivo Excel eliminando filas y columnas vacías.
+    Mantiene formato tabular limpio con toda la información intacta.
+
+    FUNCIONALIDAD:
+    Elimina filas completamente vacías
+    Elimina columnas completamente vacías
+    Mantiene formato tabular pero limpio
+    Conserva toda la información relevante
+    Óptimo y simple
+    Guarda automáticamente el archivo preprocesado
+
+    Args:
+        contenido: Contenido binario del archivo Excel
+        nombre_archivo: Nombre del archivo (para logging)
+
+    Returns:
+        str: Texto extraído y limpio del Excel
+    """
+    try:
+        logger.info(f" Preprocesando Excel: {nombre_archivo}")
+
+        # 1. LEER EXCEL CON TODAS LAS HOJAS
+        df_dict = pd.read_excel(io.BytesIO(contenido), sheet_name=None)
+
+        texto_completo = ""
+        total_hojas = 0
+        filas_eliminadas_total = 0
+        columnas_eliminadas_total = 0
+
+        # 2. PROCESAR CADA HOJA CON LIMPIEZA
+        if isinstance(df_dict, dict):
+            total_hojas = len(df_dict)
+
+            for nombre_hoja, dataframe in df_dict.items():
+                # Estadísticas originales
+                filas_orig = len(dataframe)
+                cols_orig = len(dataframe.columns)
+
+                #  LIMPIEZA SIMPLE: Eliminar filas y columnas completamente vacías
+                df_limpio = dataframe.dropna(how='all')  # Filas vacías
+                df_limpio = df_limpio.dropna(axis=1, how='all')  # Columnas vacías
+
+                # Estadísticas después de limpieza
+                filas_final = len(df_limpio)
+                cols_final = len(df_limpio.columns)
+
+                filas_eliminadas = filas_orig - filas_final
+                columnas_eliminadas = cols_orig - cols_final
+                filas_eliminadas_total += filas_eliminadas
+                columnas_eliminadas_total += columnas_eliminadas
+
+                # Agregar hoja al texto
+                texto_completo += f"\n--- HOJA: {nombre_hoja} ---\n"
+
+                if not df_limpio.empty:
+                    # Convertir a texto manteniendo formato tabular limpio
+                    texto_hoja = df_limpio.to_string(index=False, na_rep='', max_cols=None, max_rows=None)
+                    texto_completo += texto_hoja
+                else:
+                    texto_completo += "[HOJA VACÍA DESPUÉS DE LIMPIEZA]"
+
+                texto_completo += "\n"
+
+        else:
+            # UNA SOLA HOJA
+            total_hojas = 1
+            dataframe = df_dict
+
+            # Estadísticas originales
+            filas_orig = len(dataframe)
+            cols_orig = len(dataframe.columns)
+
+            #  LIMPIEZA SIMPLE: Eliminar filas y columnas vacías
+            df_limpio = dataframe.dropna(how='all')  # Filas vacías
+            df_limpio = df_limpio.dropna(axis=1, how='all')  # Columnas vacías
+
+            # Estadísticas finales
+            filas_final = len(df_limpio)
+            cols_final = len(df_limpio.columns)
+
+            filas_eliminadas_total = filas_orig - filas_final
+            columnas_eliminadas_total = cols_orig - cols_final
+
+            if not df_limpio.empty:
+                texto_completo = df_limpio.to_string(index=False, na_rep='', max_cols=None, max_rows=None)
+            else:
+                texto_completo = "[ARCHIVO VACÍO DESPUÉS DE LIMPIEZA]"
+
+        texto_final = texto_completo.strip()
+
+        # 3. GUARDADO AUTOMÁTICO DEL ARCHIVO PREPROCESADO
+        _guardar_archivo_preprocesado(nombre_archivo, texto_final, filas_eliminadas_total, columnas_eliminadas_total, total_hojas)
+
+        # 4. LOGGING OPTIMIZADO
+        logger.info(f" Preprocesamiento completado: {len(texto_final)} caracteres")
+        logger.info(f" Hojas: {total_hojas} | Filas eliminadas: {filas_eliminadas_total} | Columnas eliminadas: {columnas_eliminadas_total}")
+        logger.info(f" Archivo preprocesado guardado automáticamente")
+
+        return texto_final
+
+    except Exception as e:
+        error_msg = f"Error en preprocesamiento Excel: {str(e)}"
+        logger.error(f" {error_msg}")
+        return error_msg
+
+def _guardar_archivo_preprocesado(nombre_archivo: str, texto_preprocesado: str,
+                                 filas_eliminadas: int, columnas_eliminadas: int, total_hojas: int):
+    """
+    Guarda el archivo Excel preprocesado según nomenclatura {archivo_original}_preprocesado.txt
+
+    FUNCIONALIDAD:
+     Guarda en carpeta extracciones/
+     Nomenclatura: {archivo_original}_preprocesado.txt
+     Logs básicos para confirmar guardado exitoso
+     Manejo de errores sin afectar flujo principal
+
+    Args:
+        nombre_archivo: Nombre del archivo original
+        texto_preprocesado: Texto limpio extraído
+        filas_eliminadas: Número de filas eliminadas
+        columnas_eliminadas: Número de columnas eliminadas
+        total_hojas: Número total de hojas procesadas
+    """
+    try:
+        # 1. CREAR CARPETA EXTRACCIONES SIMPLE
+        carpeta_extracciones = Path("extracciones")
+        carpeta_extracciones.mkdir(exist_ok=True)
+
+        # 2. CREAR NOMBRE SEGÚN NOMENCLATURA: {archivo_original}_preprocesado.txt
+        # Limpiar nombre de archivo original (quitar caracteres especiales)
+        nombre_base = "".join(c for c in nombre_archivo if c.isalnum() or c in "._-")
+
+        # Quitar extensión original (.xlsx, .xls)
+        if '.' in nombre_base:
+            nombre_sin_extension = nombre_base.rsplit('.', 1)[0]
+        else:
+            nombre_sin_extension = nombre_base
+
+        # Crear nombre final: {archivo_original}_preprocesado.txt
+        nombre_final = f"{nombre_sin_extension}_preprocesado.txt"
+        ruta_archivo = carpeta_extracciones / nombre_final
+
+        # 3. CONTENIDO SIMPLE PERO COMPLETO
+        contenido_final = f"""ARCHIVO EXCEL PREPROCESADO
+=============================
+
+Archivo original: {nombre_archivo}
+Fecha procesamiento: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Hojas procesadas: {total_hojas}
+Filas vacías eliminadas: {filas_eliminadas}
+Columnas vacías eliminadas: {columnas_eliminadas}
+Caracteres finales: {len(texto_preprocesado)}
+
+=============================
+TEXTO ENVIADO A GEMINI:
+=============================
+
+{texto_preprocesado}
+"""
+
+        # 4. GUARDAR ARCHIVO
+        with open(ruta_archivo, 'w', encoding='utf-8') as f:
+            f.write(contenido_final)
+
+        # 5. LOG BÁSICO DE CONFIRMACIÓN
+        logger.info(f" Archivo preprocesado guardado: extracciones/{nombre_final}")
+        logger.info(f" Estadísticas: {filas_eliminadas} filas y {columnas_eliminadas} columnas eliminadas")
+
+    except Exception as e:
+        logger.error(f" Error guardando archivo preprocesado: {e}")
+        # No fallar el preprocesamiento por un error de guardado

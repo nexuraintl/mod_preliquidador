@@ -11,59 +11,193 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Any
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# ===============================
-# CONCEPTOS HARDCODEADOS (FALLBACK)
-# ===============================
 
-CONCEPTOS_FALLBACK = [
-    "Servicios de consultoría",
-    "Honorarios profesionales", 
-    "Asesorías técnicas",
-    "Servicios de mantenimiento",
-    "Arrendamiento de bienes muebles",
-    "Arrendamiento de bienes inmuebles",
-    "Transporte de carga",
-    "Transporte de pasajeros",
-    "Compra de combustibles",
-    "Compra de productos agrícolas",
-    "Servicios de vigilancia",
-    "Servicios de aseo",
-    "Servicios de temporales",
-    "Servicios de restaurante",
-    "Servicios hoteleros",
-    "Servicios de publicidad",
-    "Comisiones",
-    "Servicios portuarios",
-    "Servicios de telecomunicaciones",
-    "Servicios públicos",
-    "Intereses",
-    "Rendimientos financieros",
-    "Arrendamiento de vehículos",
-    "Contratos de obra",
-    "Contratos de construcción",
-    "Servicios de ingeniería",
-    "Servicios médicos",
-    "Servicios educativos",
-    "Servicios de software",
-    "Licencias de software",
-    "Regalías",
-    "Derechos de autor",
-    "Servicios de seguridad",
-    "Servicios de mensajería",
-    "Servicios de alimentación",
-    "Arrendamiento de maquinaria",
-    "Servicios financieros",
-    "Servicios de seguros",
-    "Servicios de auditoría",
-    "Servicios jurídicos",
-    "Servicios contables",
-    "Capacitación y entrenamiento",
-    "Servicios de traducción",
-    "Otros servicios gravados"
-]
+
+# Conceptos exactos con base mínima y tarifa específica
+# Estructura: {concepto: {base_pesos: int, tarifa_retencion: float}}
+CONCEPTOS_RETEFUENTE = {
+    "Compras generales (declarantes)": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.025
+    },
+    "Compras generales (no declarantes)": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.035
+    },
+    "Compras con tarjeta débito o crédito": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.015
+    },
+    "Compras de bienes o productos agrícolas o pecuarios sin procesamiento industrial": {
+        "base_pesos": 3486000,
+        "tarifa_retencion": 0.015
+    },
+    "Compras de bienes o productos agrícolas o pecuarios con procesamiento industrial (declarantes)": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.025
+    },
+    "Compras de bienes o productos agrícolas o pecuarios con procesamiento industrial declarantes (no declarantes)": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.035
+    },
+    "Compras de café pergamino o cereza": {
+        "base_pesos": 3486000,
+        "tarifa_retencion": 0.005
+    },
+    "Compras de combustibles derivados del petróleo": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.001
+    },
+    "Enajenación de activos fijos de personas naturales (notarías y tránsito son agentes retenedores)": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.01
+    },
+    "Compras de vehículos": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.01
+    },
+    "Servicios generales (declarantes)": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.04
+    },
+    "Servicios generales (no declarantes)": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.06
+    },
+    "Servicios de transporte de carga": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.01
+    },
+    "Servicios de transporte nacional de pasajeros por vía terrestre": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.035
+    },
+    "Servicios de transporte nacional de pasajeros por vía aérea o marítima": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.01
+    },
+    "Servicios prestados por empresas de servicios temporales (sobre AIU)": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.01
+    },
+    "Servicios prestados por empresas de vigilancia y aseo (sobre AIU)": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.02
+    },
+    "Servicios integrales de salud prestados por IPS": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.02
+    },
+    "Arrendamiento de bienes muebles": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.04
+    },
+    "Arrendamiento de bienes inmuebles": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.035
+    },
+    "Otros ingresos tributarios (declarantes)": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.025
+    },
+    "Otros ingresos tributarios (no declarantes)": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.035
+    },
+    "Honorarios y comisiones por servicios (persona juridica)": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.11
+    },
+     "Honorarios y comisiones por servicios (declarantes)": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.11
+    },
+    "Honorarios y comisiones por servicios (no declarantes)": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.10
+    },
+    "Servicios de hoteles y restaurantes (declarantes)": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.035
+    },
+    "Servicios de hoteles y restaurantes (no declarantes)": {
+        "base_pesos": 100000,
+        "tarifa_retencion": 0.035
+    },
+     "Servicios de licenciamiento o derecho de uso de software": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.035
+    },
+       "Intereses o rendimientos financieros": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.07
+    },
+    "Loterías, rifas, apuestas y similares": {
+        "base_pesos": 2390000,
+        "tarifa_retencion": 0.2
+    },
+    "Emolumentos eclesiásticos (declarantes)": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.04
+    },
+    "Emolumentos eclesiásticos ( no declarantes)": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.035
+    },
+    "Retención en colocación independiente de juegos de suerte y azar": {
+        "base_pesos": 249000,
+        "tarifa_retencion": 0.03
+    },
+     "Contratos de construcción y urbanización.": {
+        "base_pesos": 498000,
+        "tarifa_retencion": 0.02
+    },
+    "compra de oro por las sociedades de comercialización internacional.": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.025
+    },
+    "Compras de bienes raíces cuya destinación y uso sea vivienda de habitación (por las primeras $497990000 pesos colombianos)": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.01
+    },
+    "Compras de bienes raíces cuya destinación y uso sea vivienda de habitación (exceso de $497990000 pesos colombianos)": {
+        "base_pesos": 497990000,
+        "tarifa_retencion": 0.025
+    },
+    "Compras de bienes raíces cuya destinación y uso sea distinto a vivienda de habitación": {
+        "base_pesos": 0,
+        "tarifa_retencion": 0.025
+    },
+    "Servicios de consultoría en informática":{
+        "base_pesos":0,
+        "tarifa_retencion":0.035
+    },
+    "Alquiler":{
+        "base_pesos": 0,
+        "tarifa_retencion": 0.03
+    },
+    "transporte de pasajeros":{
+        "base_pesos": 100000000,
+        "tarifa_retencion": 0.035
+    },
+    "comision a terceros":{
+        "base_pesos": 0,
+        "tarifa_retencion": 0.11
+    },
+    "personal de servicio":{
+        "base_pesos": 0,
+        "tarifa_retencion": 0.035
+    },
+    "pago a terceros":{
+        "base_pesos": 0,
+        "tarifa_retencion": 0.035
+    }
+}
+
 
 # ===============================
 # CONCEPTOS Y TARIFAS EXTRANJEROS
@@ -142,63 +276,6 @@ PREGUNTAS_FUENTE_NACIONAL = [
     "¿El bien vendido o utilizado está ubicado en Colombia?"
 ]
 
-# ===============================
-# TARIFAS DE RETENCIÓN NACIONAL (%)
-# ===============================
-
-TARIFAS_RETEFUENTE = {
-    # Servicios profesionales
-    "honorarios": 11.0,
-    "servicios_generales": 4.0,
-    "consultoria": 11.0,
-    "asesoria": 11.0,
-    
-    # Arrendamientos
-    "arrendamiento_inmuebles": 3.5,
-    "arrendamiento_muebles": 4.0,
-    "arrendamiento_vehiculos": 4.0,
-    "arrendamiento_maquinaria": 4.0,
-    
-    # Transporte
-    "transporte_carga": 1.0,
-    "transporte_pasajeros": 3.5,
-    
-    # Compras
-    "compras": 2.5,
-    "combustibles": 0.1,
-    "productos_agricolas": 1.5,
-    
-    # Servicios específicos
-    "servicios_temporales": 1.0,
-    "servicios_vigilancia": 6.0,
-    "servicios_aseo": 2.0,
-    "servicios_restaurante": 3.5,
-    "servicios_hoteleros": 3.5,
-    
-    # Construcción y obra
-    "contratos_obra": 2.0,
-    "construccion": 2.0,
-    "ingenieria": 11.0,
-    
-    # Financieros
-    "intereses": 7.0,
-    "comisiones": 10.0,
-    "rendimientos_financieros": 7.0,
-    
-    # Otros
-    "servicios_medicos": 11.0,
-    "servicios_educativos": 11.0,
-    "software": 11.0,
-    "regalias": 11.0,
-    "derechos_autor": 11.0,
-    "publicidad": 4.0,
-    "telecomunicaciones": 3.5,
-    "servicios_publicos": 1.0,
-    
-    # Por defecto
-    "otros": 6.0,
-    "default": 6.0
-}
 
 # ===============================
 # CONFIGURACIÓN GENERAL
@@ -215,233 +292,65 @@ CONFIG = {
 }
 
 # ===============================
-# CARGADOR DE CONCEPTOS
-# ===============================
-
-class CargadorConceptos:
-    """Carga conceptos desde Excel o fallback"""
-    
-    def __init__(self, ruta_proyecto: str = None):
-        self.ruta_proyecto = Path(ruta_proyecto or "C:/Users/USUSARIO/Proyectos/PRELIQUIDADOR")
-        self.archivo_excel = self.ruta_proyecto / CONFIG["archivo_excel"]
-        self.conceptos = []
-        self.cargar_conceptos()
-    
-    def cargar_conceptos(self) -> List[str]:
-        """Carga conceptos desde Excel o usa fallback"""
-        
-        # Intentar cargar desde Excel
-        conceptos_excel = self._cargar_desde_excel()
-        if conceptos_excel:
-            self.conceptos = conceptos_excel
-            logger.info(f"✅ Conceptos cargados desde Excel: {len(self.conceptos)}")
-            return self.conceptos
-        
-        # Usar fallback
-        self.conceptos = CONCEPTOS_FALLBACK.copy()
-        logger.warning(f"⚠️ Usando conceptos fallback: {len(self.conceptos)}")
-        return self.conceptos
-    
-    def _cargar_desde_excel(self) -> List[str]:
-        """Intenta cargar conceptos desde Excel"""
-        
-        if not self.archivo_excel.exists():
-            logger.warning(f"📄 Archivo Excel no encontrado: {self.archivo_excel}")
-            return None
-        
-        try:
-            df = pd.read_excel(self.archivo_excel)
-            
-            # Buscar columna de conceptos (primera columna no vacía)
-            for columna in df.columns:
-                conceptos = df[columna].dropna().astype(str).tolist()
-                if len(conceptos) > 10:  # Mínimo 10 conceptos
-                    # Limpiar conceptos
-                    conceptos_limpios = []
-                    for concepto in conceptos:
-                        concepto_limpio = str(concepto).strip()
-                        if concepto_limpio and concepto_limpio.lower() not in ['nan', 'none', '']:
-                            conceptos_limpios.append(concepto_limpio)
-                    
-                    if len(conceptos_limpios) > 10:
-                        logger.info(f"📊 Excel procesado: {len(conceptos_limpios)} conceptos desde columna '{columna}'")
-                        return conceptos_limpios
-            
-            logger.warning("📊 No se encontraron conceptos válidos en Excel")
-            return None
-            
-        except Exception as e:
-            logger.error(f"❌ Error leyendo Excel: {e}")
-            return None
-    
-    def obtener_conceptos(self) -> List[str]:
-        """Obtiene la lista de conceptos cargados"""
-        return self.conceptos.copy()
-    
-    def obtener_conceptos_para_prompt(self) -> str:
-        """Formatea conceptos para uso en prompts de Gemini"""
-        return "\n".join([f"- {concepto}" for concepto in self.conceptos])
-    
-    def buscar_concepto(self, texto: str) -> str:
-        """Busca el concepto más similar en la lista"""
-        texto_lower = texto.lower()
-        
-        # Búsqueda exacta
-        for concepto in self.conceptos:
-            if texto_lower == concepto.lower():
-                return concepto
-        
-        # Búsqueda parcial
-        for concepto in self.conceptos:
-            if texto_lower in concepto.lower() or concepto.lower() in texto_lower:
-                return concepto
-        
-        return "CONCEPTO_NO_IDENTIFICADO"
-    
-    def exportar_conceptos(self, archivo_salida: str = "conceptos_exportados.json"):
-        """Exporta conceptos a archivo JSON"""
-        try:
-            datos = {
-                "conceptos": self.conceptos,
-                "total": len(self.conceptos),
-                "fuente": "Excel" if self.archivo_excel.exists() else "Fallback",
-                "archivo_excel": str(self.archivo_excel),
-                "fecha_exportacion": pd.Timestamp.now().isoformat()
-            }
-            
-            ruta_salida = self.ruta_proyecto / archivo_salida
-            with open(ruta_salida, 'w', encoding='utf-8') as f:
-                json.dump(datos, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"💾 Conceptos exportados a: {ruta_salida}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error exportando conceptos: {e}")
-            return False
-
-# ===============================
-# MAPEADOR DE TARIFAS
-# ===============================
-
-class MapeadorTarifas:
-    """Mapea conceptos a tarifas de retención"""
-    
-    def __init__(self):
-        self.tarifas = TARIFAS_RETEFUENTE.copy()
-    
-    def obtener_tarifa(self, concepto: str) -> float:
-        """Obtiene la tarifa para un concepto específico"""
-        
-        concepto_lower = concepto.lower()
-        
-        # Mapeo directo por palabras clave
-        mapeo_palabras = {
-            "honorario": "honorarios",
-            "consultor": "consultoria", 
-            "asesor": "asesoria",
-            "arrenda": "arrendamiento_muebles",
-            "inmueble": "arrendamiento_inmuebles",
-            "vehiculo": "arrendamiento_vehiculos",
-            "maquinaria": "arrendamiento_maquinaria",
-            "transporte": "transporte_carga",
-            "pasajero": "transporte_pasajeros",
-            "carga": "transporte_carga",
-            "vigilancia": "servicios_vigilancia",
-            "aseo": "servicios_aseo",
-            "temporal": "servicios_temporales",
-            "restaurante": "servicios_restaurante",
-            "hotel": "servicios_hoteleros",
-            "obra": "contratos_obra",
-            "construccion": "construccion",
-            "ingenier": "ingenieria",
-            "interes": "intereses",
-            "comision": "comisiones",
-            "medico": "servicios_medicos",
-            "educativ": "servicios_educativos",
-            "software": "software",
-            "regalia": "regalias",
-            "autor": "derechos_autor",
-            "publicidad": "publicidad",
-            "telecomunicacion": "telecomunicaciones",
-            "combustible": "combustibles",
-            "agricola": "productos_agricolas"
-        }
-        
-        # Buscar por palabras clave
-        for palabra, tarifa_key in mapeo_palabras.items():
-            if palabra in concepto_lower:
-                return self.tarifas.get(tarifa_key, self.tarifas["default"])
-        
-        # Tarifa por defecto
-        return self.tarifas["default"]
-    
-    def obtener_concepto_tarifa(self, concepto: str) -> tuple:
-        """Obtiene concepto y tarifa"""
-        tarifa = self.obtener_tarifa(concepto)
-        return concepto, tarifa
-    
-    def listar_tarifas(self) -> Dict[str, float]:
-        """Lista todas las tarifas disponibles"""
-        return self.tarifas.copy()
-
-# ===============================
 # CONFIGURACIÓN DE NITS ADMINISTRATIVOS
 # ===============================
 
 NITS_CONFIGURACION = {
-    "800.178.148-8": {
+    "800178148": {
         "nombre": "Fiduciaria Colombiana de Comercio Exterior S.A.",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "IVA",
-            "RETENCION_ICA", 
+            "RETENCION_ICA",
             "CONTRIBUCION_OBRA_PUBLICA",
-            "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
+            "ESTAMPILLA_UNIVERSIDAD_NACIONAL",
+            "IMPUESTO_TIMBRE"
         ]
     },
-    "830.054.060-5": {
+    "830054060": {
         "nombre": "FIDEICOMISOS SOCIEDAD FIDUCIARIA FIDUCOLDEX",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "IVA",
             "RETENCION_ICA",
-            "CONTRIBUCION_OBRA_PUBLICA", 
-            "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
+            "CONTRIBUCION_OBRA_PUBLICA",
+            "ESTAMPILLA_UNIVERSIDAD_NACIONAL",
+            "IMPUESTO_TIMBRE"
         ]
     },
-    "900.649.119-9": {
+    "900649119": {
         "nombre": "PATRIMONIO AUTÓNOMO FONTUR",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "IVA",
             "RETENCION_ICA",
             "CONTRIBUCION_OBRA_PUBLICA",
-            "ESTAMPILLA_UNIVERSIDAD_NACIONAL"
+            "ESTAMPILLA_UNIVERSIDAD_NACIONAL",
+            "IMPUESTO_TIMBRE"
         ]
     },
-    "901.281.733-3": {
+    "901281733": {
         "nombre": "FONDOS DE INVERSIÓN - ABIERTA Y 60 MODERADO",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "RETENCION_ICA"
         ]
     },
-    "900.566.230-1": {
+    "900566230": {
         "nombre": "CONSORCIO",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "RETENCION_ICA"
         ]
     },
-    "901.427.860-1": {
+    "901427860": {
         "nombre": "CONSORCIO", 
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
             "RETENCION_ICA"
         ]
     },
-    "900.139.498-7": {
+    "900139498": {
         "nombre": "FIC FIDUCOLDEX",
         "impuestos_aplicables": [
             "RETENCION_FUENTE",
@@ -489,55 +398,15 @@ def nit_aplica_retencion_fuente(nit: str) -> bool:
     es_valido, _, impuestos = validar_nit_administrativo(nit)
     return es_valido and "RETENCION_FUENTE" in impuestos
 
-# ===============================
-# INSTANCIAS GLOBALES
-# ===============================
 
-# Cargar al importar el módulo
-_cargador_conceptos = None
-_mapeador_tarifas = None
-
-def inicializar_configuracion(ruta_proyecto: str = None):
-    """Inicializa la configuración global"""
-    global _cargador_conceptos, _mapeador_tarifas
-    
-    _cargador_conceptos = CargadorConceptos(ruta_proyecto)
-    _mapeador_tarifas = MapeadorTarifas()
-    
-    logger.info("⚙️ Configuración inicializada")
-
-def obtener_conceptos() -> List[str]:
-    """Obtiene la lista de conceptos cargados"""
-    if not _cargador_conceptos:
-        inicializar_configuracion()
-    return _cargador_conceptos.obtener_conceptos()
-
-def obtener_conceptos_para_prompt() -> str:
-    """Obtiene conceptos formateados para Gemini"""
-    if not _cargador_conceptos:
-        inicializar_configuracion()
-    return _cargador_conceptos.obtener_conceptos_para_prompt()
-
-def obtener_tarifa_concepto(concepto: str) -> float:
-    """Obtiene la tarifa para un concepto"""
-    if not _mapeador_tarifas:
-        inicializar_configuracion()
-    return _mapeador_tarifas.obtener_tarifa(concepto)
-
-def obtener_todas_tarifas() -> Dict[str, float]:
-    """Obtiene todas las tarifas disponibles"""
-    if not _mapeador_tarifas:
-        inicializar_configuracion()
-    return _mapeador_tarifas.listar_tarifas()
-
-# ===============================
+# =====================================
 # FUNCIONES PARA FACTURACIÓN EXTRANJERA
-# ===============================
+# =====================================
 
 def obtener_conceptos_extranjeros() -> Dict[str, Dict[str, Any]]:
     """Obtiene todos los conceptos de retención para facturación extranjera"""
     return CONCEPTOS_EXTRANJEROS.copy()
-
+#no se usa
 def obtener_conceptos_extranjeros_para_prompt() -> str:
     """Formatea conceptos extranjeros para uso en prompts de Gemini"""
     conceptos_formateados = []
@@ -548,7 +417,7 @@ def obtener_conceptos_extranjeros_para_prompt() -> str:
             f"- {concepto}\n  * Tarifa normal: {tarifa_normal}%\n  * Tarifa con convenio: {tarifa_convenio}%"
         )
     return "\n\n".join(conceptos_formateados)
-
+#si se usa
 def obtener_paises_con_convenio() -> List[str]:
     """Obtiene la lista de países con convenio de doble tributación"""
     return PAISES_CON_CONVENIO.copy()
@@ -556,7 +425,7 @@ def obtener_paises_con_convenio() -> List[str]:
 def obtener_preguntas_fuente_nacional() -> List[str]:
     """Obtiene las preguntas para determinar fuente nacional"""
     return PREGUNTAS_FUENTE_NACIONAL.copy()
-
+#no se usa 
 def es_pais_con_convenio(pais: str) -> bool:
     """Verifica si un país tiene convenio de doble tributación"""
     if not pais:
@@ -564,7 +433,7 @@ def es_pais_con_convenio(pais: str) -> bool:
     
     pais_normalizado = pais.strip().title()
     return pais_normalizado in PAISES_CON_CONVENIO
-
+#no se usa 
 def obtener_tarifa_extranjera(concepto: str, tiene_convenio: bool = False) -> float:
     """Obtiene la tarifa para un concepto de facturación extranjera"""
     
@@ -675,10 +544,7 @@ def calcular_limite_deduccion(tipo_deduccion: str, ingreso_bruto: float, valor_d
         return min(valor_deducido, limites["medicina_prepagada"] * UVT_2025)
     
     elif tipo_deduccion == "rentas_exentas":
-        # Solo aplica si el ingreso supera SMMLV
-        if ingreso_bruto <= SMMLV_2025:
-            return 0
-        
+        #AGREGAR CONDICION DE DIVIDIR EL MONTO IDENTIFICADO POR LA IA POR 12 
         limite_porcentaje = ingreso_bruto * limites["rentas_exentas_porcentaje"]
         limite_uvt_mensual = (limites["rentas_exentas_uvt_anual"] * UVT_2025) / 12
         return min(valor_deducido, limite_porcentaje, limite_uvt_mensual)
@@ -699,25 +565,39 @@ def obtener_constantes_articulo_383() -> Dict[str, Any]:
 # CONFIGURACIÓN IMPUESTOS ESPECIALES INTEGRADOS
 # ===============================
 
-# IMPORTANTE: Desde 2025, estampilla pro universidad nacional y contribución 
-# a obra pública aplican para los MISMOS NITs administrativos
+# IMPORTANTE: Desde 2025, estampilla pro universidad nacional y contribución
+# a obra pública aplican para los MISMOS códigos de negocio
 
-# NITs válidos para AMBOS impuestos (estampilla + obra pública)
-NITS_ESTAMPILLA_UNIVERSIDAD = {
-    "800.178.148-8": "Fiduciaria Colombiana de Comercio Exterior S.A",
-    "830.054.060-5": "Fideicomisos Sociedad Fiduciaria Fiducoldex",
-    "900.649.119-9": "Fondo Nacional del Turismo Fontur de la fiduciaria"
+# Códigos de negocio válidos para AMBOS impuestos (estampilla + obra pública)
+# Estos códigos identifican a los negocios que aplican estos dos impuestos
+CODIGOS_NEGOCIO_ESTAMPILLA = {
+    69164: "PATRIMONIO AUTONOMO INNPULSA COLOMBIA",
+    69166: "PATRIMONIO AUTONOMO COLOMBIA PRODUCTIVA",
+    99664: "PATRIMONIO AUTÓNOMO FONDO MUJER EMPRENDE"
 }
 
 # Alias para compatibilidad hacia atrás - MISMO contenido
-NITS_CONTRIBUCION_OBRA_PUBLICA = NITS_ESTAMPILLA_UNIVERSIDAD.copy()
+CODIGOS_NEGOCIO_OBRA_PUBLICA = CODIGOS_NEGOCIO_ESTAMPILLA.copy()
 
-# Terceros que administran recursos públicos (COMPARTIDO para ambos impuestos)
+# NITs administrativos válidos para Estampilla Universidad y Obra Pública
+# Estos NITs determinan si se deben liquidar estos impuestos
+NITS_ADMINISTRATIVOS_VALIDOS = {
+    "800178148": "Fiduciaria Colombiana de Comercio Exterior S.A. (Fiduciaria y Encargos)",
+    "900649119": "PATRIMONIO AUTONOMO FONTUR",
+    "830054060": "FIDEICOMISOS SOCIEDAD FIDUCIARIA FIDUCOLDEX"
+}
+
+# NITs que requieren validación adicional por código de negocio
+# Estos NITs solo aplican si además el código de negocio está en CODIGOS_NEGOCIO_ESTAMPILLA
+NITS_REQUIEREN_VALIDACION_CODIGO = {"830054060"}
+
+# DEPRECATED: Mantener por compatibilidad legacy (NO USAR en nuevo código)
+NITS_ESTAMPILLA_UNIVERSIDAD = {}
+NITS_CONTRIBUCION_OBRA_PUBLICA = {}
 TERCEROS_RECURSOS_PUBLICOS = {
     "PATRIMONIO AUTONOMO INNPULSA COLOMBIA": True,
     "PATRIMONIO AUTONOMO COLOMBIA PRODUCTIVA": True,
     "PATRIMONIO AUTÓNOMO FONDO MUJER EMPRENDE": True
-    # 💡 Expandible: Agregar más terceros aquí en el futuro
 }
 
 # Objetos de contrato que aplican para estampilla universidad
@@ -771,9 +651,108 @@ RANGOS_ESTAMPILLA_UNIVERSIDAD = [
 # FUNCIONES ESTAMPILLA UNIVERSIDAD
 # ===============================
 
+def validar_nit_administrativo_para_impuestos(nit_administrativo: str, codigo_negocio: int) -> Dict[str, Any]:
+    """
+    Valida si un NIT administrativo aplica para estampilla y obra pública.
+
+    SRP: Solo valida NITs administrativos según reglas de negocio
+
+    Reglas de validación:
+    1. El NIT debe estar en NITS_ADMINISTRATIVOS_VALIDOS
+    2. Si el NIT es 830054060, además debe validar código de negocio
+    3. Los demás NITs (800178148, 900649119) aplican directamente
+
+    Args:
+        nit_administrativo: NIT del administrativo extraído de la base de datos
+        codigo_negocio: Código único del negocio
+
+    Returns:
+        Dict con información de validación:
+        {
+            "nit_valido": bool,
+            "requiere_validacion_codigo": bool,
+            "codigo_valido": bool (si aplica),
+            "razon_no_aplica": str (si no aplica),
+            "nombre_entidad": str
+        }
+    """
+    # Normalizar NIT (remover puntos y guiones)
+    nit_normalizado = nit_administrativo.replace(".", "").replace("-", "").strip()
+
+    # Verificar si el NIT está en la lista de NITs válidos
+    if nit_normalizado not in NITS_ADMINISTRATIVOS_VALIDOS:
+        return {
+            "nit_valido": False,
+            "requiere_validacion_codigo": False,
+            "codigo_valido": False,
+            "razon_no_aplica": f"El NIT {nit_administrativo} no está autorizado para liquidar estos impuestos",
+            "nombre_entidad": None
+        }
+
+    nombre_entidad = NITS_ADMINISTRATIVOS_VALIDOS[nit_normalizado]
+
+    # Si el NIT requiere validación adicional de código de negocio
+    if nit_normalizado in NITS_REQUIEREN_VALIDACION_CODIGO:
+        codigo_valido = codigo_negocio in CODIGOS_NEGOCIO_ESTAMPILLA
+
+        if not codigo_valido:
+            return {
+                "nit_valido": True,
+                "requiere_validacion_codigo": True,
+                "codigo_valido": False,
+                "razon_no_aplica": f"El NIT {nit_administrativo} ({nombre_entidad}) requiere que el código de negocio sea uno de los patrimonios autónomos válidos (69164, 69166, 99664)",
+                "nombre_entidad": nombre_entidad
+            }
+
+        return {
+            "nit_valido": True,
+            "requiere_validacion_codigo": True,
+            "codigo_valido": True,
+            "razon_no_aplica": None,
+            "nombre_entidad": nombre_entidad
+        }
+
+    # NITs que aplican directamente sin validación de código
+    return {
+        "nit_valido": True,
+        "requiere_validacion_codigo": False,
+        "codigo_valido": True,  # No requiere validación, por lo tanto es válido
+        "razon_no_aplica": None,
+        "nombre_entidad": nombre_entidad
+    }
+
+def codigo_negocio_aplica_estampilla_universidad(codigo_negocio: int) -> bool:
+    """
+    Verifica si un código de negocio aplica para estampilla pro universidad nacional.
+
+    SRP: Solo valida si el código está en la lista de negocios válidos
+
+    Args:
+        codigo_negocio: Código único del negocio
+
+    Returns:
+        bool: True si el código aplica para estampilla universidad
+    """
+    return codigo_negocio in CODIGOS_NEGOCIO_ESTAMPILLA
+
+def codigo_negocio_aplica_obra_publica(codigo_negocio: int) -> bool:
+    """
+    Verifica si un código de negocio aplica para contribución a obra pública.
+
+    SRP: Solo valida si el código está en la lista de negocios válidos
+
+    Args:
+        codigo_negocio: Código único del negocio
+
+    Returns:
+        bool: True si el código aplica para contribución a obra pública
+    """
+    return codigo_negocio in CODIGOS_NEGOCIO_OBRA_PUBLICA
+
+# DEPRECATED: Mantener por compatibilidad legacy
 def nit_aplica_estampilla_universidad(nit: str) -> bool:
-    """Verifica si un NIT aplica para estampilla pro universidad nacional"""
-    return nit in NITS_ESTAMPILLA_UNIVERSIDAD
+    """DEPRECATED: Usar codigo_negocio_aplica_estampilla_universidad en su lugar"""
+    return False  # Ya no se valida por NIT
 
 def es_tercero_recursos_publicos(nombre_tercero: str) -> bool:
     """Verifica si un tercero administra recursos públicos"""
@@ -804,9 +783,16 @@ def obtener_tarifa_estampilla_universidad(valor_contrato_pesos: float) -> Dict[s
     }
 
 def obtener_configuracion_estampilla_universidad() -> Dict[str, Any]:
-    """Obtiene toda la configuración de estampilla para uso en prompts"""
+    """
+    Obtiene toda la configuración de estampilla para uso en prompts.
+
+    SRP: Solo retorna configuración consolidada
+
+    Returns:
+        Dict con configuración completa de estampilla universidad
+    """
     return {
-        "nits_validos": NITS_ESTAMPILLA_UNIVERSIDAD,
+        "codigos_negocio_validos": CODIGOS_NEGOCIO_ESTAMPILLA,
         "terceros_recursos_publicos": list(TERCEROS_RECURSOS_PUBLICOS.keys()),
         "objetos_contrato": OBJETOS_CONTRATO_ESTAMPILLA,
         "rangos_uvt": RANGOS_ESTAMPILLA_UNIVERSIDAD,
@@ -817,9 +803,10 @@ def obtener_configuracion_estampilla_universidad() -> Dict[str, Any]:
 # FUNCIONES CONTRIBUCIÓN A OBRA PÚBLICA
 # ===============================
 
+# DEPRECATED: Mantener por compatibilidad legacy
 def nit_aplica_contribucion_obra_publica(nit: str) -> bool:
-    """Verifica si un NIT aplica para contribución a obra pública del 5%"""
-    return nit in NITS_CONTRIBUCION_OBRA_PUBLICA
+    """DEPRECATED: Usar codigo_negocio_aplica_obra_publica en su lugar"""
+    return False  # Ya no se valida por NIT
 
 def calcular_contribucion_obra_publica(valor_factura_sin_iva: float, porcentaje_participacion: float = 100.0) -> float:
     """Calcula la contribución a obra pública del 5%
@@ -836,9 +823,16 @@ def calcular_contribucion_obra_publica(valor_factura_sin_iva: float, porcentaje_
     return valor_factura_sin_iva * tarifa_fija * participacion_decimal
 
 def obtener_configuracion_obra_publica() -> Dict[str, Any]:
-    """Obtiene toda la configuración de obra pública para uso en prompts"""
+    """
+    Obtiene toda la configuración de obra pública para uso en prompts.
+
+    SRP: Solo retorna configuración consolidada
+
+    Returns:
+        Dict con configuración completa de contribución a obra pública
+    """
     return {
-        "nits_validos": NITS_CONTRIBUCION_OBRA_PUBLICA,
+        "codigos_negocio_validos": CODIGOS_NEGOCIO_OBRA_PUBLICA,
         "terceros_recursos_publicos": list(TERCEROS_RECURSOS_PUBLICOS.keys()),
         "objetos_contrato": OBJETOS_CONTRATO_OBRA_PUBLICA,
         "tarifa_fija": 0.05,  # 5%
@@ -849,32 +843,178 @@ def obtener_configuracion_obra_publica() -> Dict[str, Any]:
 # FUNCIÓN INTEGRADA DE DETECCIÓN AUTOMÁTICA
 # ===============================
 
-def detectar_impuestos_aplicables(nit: str) -> Dict[str, Any]:
-    """Detecta automáticamente qué impuestos aplican según el NIT
-    
-    Args:
-        nit: NIT administrativo
-        
-    Returns:
-        Dict con información de qué impuestos aplican
+def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio: str = None, nit_administrativo: str = None, business_service = None) -> Dict[str, Any]:
     """
-    aplica_estampilla = nit_aplica_estampilla_universidad(nit)
-    aplica_obra_publica = nit_aplica_contribucion_obra_publica(nit)
-    
+    Detecta automáticamente qué impuestos aplican según el código de negocio y NIT administrativo.
+
+    SRP: Solo detecta y estructura información de impuestos aplicables
+    DIP: Recibe business_service como dependencia inyectada
+
+    FLUJO DE VALIDACIÓN (v3.1):
+    1. Validar NIT administrativo (si se proporciona)
+    2. Validar código de negocio
+    3. NUEVO: Validar tipo de recurso (Públicos/Privados) en BD
+    4. Retornar resultado consolidado
+
+    Args:
+        codigo_negocio: Código único del negocio
+        nombre_negocio: Nombre del negocio (opcional, para logging)
+        nit_administrativo: NIT del administrativo extraído de la base de datos (opcional)
+        business_service: Servicio de datos de negocio para validar tipo de recurso (DIP)
+
+    Returns:
+        Dict con información de qué impuestos aplican, incluyendo validaciones de NIT y tipo de recurso
+
+    Notas:
+        - Si no se proporciona nit_administrativo, solo valida por código de negocio (compatibilidad)
+        - Si se proporciona nit_administrativo, valida PRIMERO el NIT, DESPUÉS el código
+        - Si se proporciona business_service, valida tipo de recurso (Públicos/Privados) en BD
+    """
+    nombre_registrado = CODIGOS_NEGOCIO_ESTAMPILLA.get(codigo_negocio, nombre_negocio or "Desconocido")
+
+    # Si no se proporciona NIT, retornar validación solo por código (compatibilidad legacy)
+    if nit_administrativo is None:
+        # SOLO EN MODO LEGACY: validar por código de negocio
+        aplica_por_codigo_estampilla = codigo_negocio_aplica_estampilla_universidad(codigo_negocio)
+        aplica_por_codigo_obra_publica = codigo_negocio_aplica_obra_publica(codigo_negocio)
+
+        return {
+            "codigo_negocio": codigo_negocio,
+            "nombre_negocio": nombre_registrado,
+            "aplica_estampilla_universidad": aplica_por_codigo_estampilla,
+            "aplica_contribucion_obra_publica": aplica_por_codigo_obra_publica,
+            "impuestos_aplicables": [
+                impuesto for impuesto, aplica in [
+                    ("ESTAMPILLA_UNIVERSIDAD", aplica_por_codigo_estampilla),
+                    ("CONTRIBUCION_OBRA_PUBLICA", aplica_por_codigo_obra_publica)
+                ] if aplica
+            ],
+            "procesamiento_paralelo": aplica_por_codigo_estampilla and aplica_por_codigo_obra_publica,
+            "nombre_entidad_estampilla": nombre_registrado if aplica_por_codigo_estampilla else None,
+            "nombre_entidad_obra_publica": nombre_registrado if aplica_por_codigo_obra_publica else None,
+            "validacion_nit": None,
+            "razon_no_aplica_estampilla": None,
+            "razon_no_aplica_obra_publica": None
+        }
+
+    # VALIDACIÓN POR NIT ADMINISTRATIVO
+    # La función validar_nit_administrativo_para_impuestos() ya hace TODA la validación:
+    # - Para NITs 800178148, 900649119: Solo valida NIT (aplican directamente)
+    # - Para NIT 830054060: Valida NIT + Código internamente
+    validacion_nit = validar_nit_administrativo_para_impuestos(nit_administrativo, codigo_negocio)
+
+    # Si la validación del NIT falló, NO aplicar ningún impuesto
+    if not validacion_nit["codigo_valido"]:
+        # El NIT no es válido O el código no es válido para NIT 830054060
+        return {
+            "codigo_negocio": codigo_negocio,
+            "nombre_negocio": nombre_registrado,
+            "aplica_estampilla_universidad": False,
+            "aplica_contribucion_obra_publica": False,
+            "impuestos_aplicables": [],
+            "procesamiento_paralelo": False,
+            "nombre_entidad_estampilla": None,
+            "nombre_entidad_obra_publica": None,
+            "validacion_nit": validacion_nit,
+            "razon_no_aplica_estampilla": validacion_nit["razon_no_aplica"],
+            "razon_no_aplica_obra_publica": validacion_nit["razon_no_aplica"]
+        }
+
+    # Si llegamos aquí, el NIT es válido (y el código también si era necesario validarlo)
+
+    # ===================================================================
+    # VALIDACIÓN 3: TIPO DE RECURSO (PÚBLICOS/PRIVADOS) - NUEVA v3.1
+    # ===================================================================
+    # Si business_service está disponible, validar tipo de recurso del negocio
+    if business_service:
+        logger.info(f"Validando tipo de recurso para código de negocio {codigo_negocio}")
+
+        try:
+            validacion_recurso = business_service.validar_tipo_recurso_negocio(codigo_negocio)
+
+            # CASO 1: No aplica porque administra recursos privados
+            if validacion_recurso.get("tipo_recurso") == "Privados":
+                logger.info(f"Negocio {codigo_negocio} administra recursos privados - No aplican impuestos especiales")
+                return {
+                    "codigo_negocio": codigo_negocio,
+                    "nombre_negocio": nombre_registrado,
+                    "aplica_estampilla_universidad": False,
+                    "aplica_contribucion_obra_publica": False,
+                    "impuestos_aplicables": [],
+                    "procesamiento_paralelo": False,
+                    "nombre_entidad_estampilla": None,
+                    "nombre_entidad_obra_publica": None,
+                    "validacion_nit": validacion_nit,
+                    "validacion_recurso": validacion_recurso,  # Incluir resultado completo
+                    "razon_no_aplica_estampilla": validacion_recurso.get("razon"),
+                    "razon_no_aplica_obra_publica": validacion_recurso.get("razon")
+                }
+
+            # CASO 2: No parametrizado o error técnico
+            elif not validacion_recurso.get("success"):
+                logger.warning(f"No se pudo validar tipo de recurso para código {codigo_negocio}: {validacion_recurso.get('observaciones')}")
+                return {
+                    "codigo_negocio": codigo_negocio,
+                    "nombre_negocio": nombre_registrado,
+                    "aplica_estampilla_universidad": False,
+                    "aplica_contribucion_obra_publica": False,
+                    "impuestos_aplicables": [],
+                    "procesamiento_paralelo": False,
+                    "nombre_entidad_estampilla": None,
+                    "nombre_entidad_obra_publica": None,
+                    "validacion_nit": validacion_nit,
+                    "validacion_recurso": validacion_recurso,  # Incluir resultado completo
+                    "estado_especial": "preliquidacion_sin_finalizar",
+                    "razon_no_aplica_estampilla": validacion_recurso.get("observaciones"),
+                    "razon_no_aplica_obra_publica": validacion_recurso.get("observaciones")
+                }
+
+            # CASO 3: Recursos Públicos - Continuar con flujo normal
+            logger.info(f"Negocio {codigo_negocio} administra recursos públicos - Aplican impuestos especiales")
+
+        except Exception as e:
+            # Error inesperado en validación de recurso
+            logger.error(f"Error inesperado validando tipo de recurso: {e}")
+            return {
+                "codigo_negocio": codigo_negocio,
+                "nombre_negocio": nombre_registrado,
+                "aplica_estampilla_universidad": False,
+                "aplica_contribucion_obra_publica": False,
+                "impuestos_aplicables": [],
+                "procesamiento_paralelo": False,
+                "nombre_entidad_estampilla": None,
+                "nombre_entidad_obra_publica": None,
+                "validacion_nit": validacion_nit,
+                "validacion_recurso": {
+                    "success": False,
+                    "error": str(e),
+                    "observaciones": f"Error técnico al validar tipo de recurso: {str(e)}"
+                },
+                "estado_especial": "preliquidacion_sin_finalizar",
+                "razon_no_aplica_estampilla": f"Error técnico al validar tipo de recurso: {str(e)}",
+                "razon_no_aplica_obra_publica": f"Error técnico al validar tipo de recurso: {str(e)}"
+            }
+
+    # Si no hay business_service, continuar sin validar tipo de recurso (compatibilidad)
+    else:
+        logger.warning("BusinessService no disponible - no se validó tipo de recurso")
+
+    # APLICAR AMBOS IMPUESTOS (todas las validaciones pasaron)
     return {
-        "nit": nit,
-        "aplica_estampilla_universidad": aplica_estampilla,
-        "aplica_contribucion_obra_publica": aplica_obra_publica,
-        "impuestos_aplicables": [
-            impuesto for impuesto, aplica in [
-                ("ESTAMPILLA_UNIVERSIDAD", aplica_estampilla),
-                ("CONTRIBUCION_OBRA_PUBLICA", aplica_obra_publica)
-            ] if aplica
-        ],
-        "procesamiento_paralelo": aplica_estampilla and aplica_obra_publica,
-        "nombre_entidad_estampilla": NITS_ESTAMPILLA_UNIVERSIDAD.get(nit),
-        "nombre_entidad_obra_publica": NITS_CONTRIBUCION_OBRA_PUBLICA.get(nit)
+        "codigo_negocio": codigo_negocio,
+        "nombre_negocio": nombre_registrado,
+        "aplica_estampilla_universidad": True,
+        "aplica_contribucion_obra_publica": True,
+        "impuestos_aplicables": ["ESTAMPILLA_UNIVERSIDAD", "CONTRIBUCION_OBRA_PUBLICA"],
+        "procesamiento_paralelo": True,
+        "nombre_entidad_estampilla": nombre_registrado,
+        "nombre_entidad_obra_publica": nombre_registrado,
+        "validacion_nit": validacion_nit,
+        "validacion_recurso": validacion_recurso if business_service else None,
+        "razon_no_aplica_estampilla": None,
+        "razon_no_aplica_obra_publica": None
     }
+
 
 def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
     """Obtiene configuración integrada para ambos impuestos"""
@@ -890,17 +1030,17 @@ def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
 
 # NITs de la fiduciaria que aplican IVA y ReteIVA
 NITS_IVA_RETEIVA = {
-    "800.178.148-8": {
+    "800178148": {
         "nombre": "Fiduciaria Colombiana de Comercio Exterior S.A.",
         "aplica_iva": True,
         "aplica_reteiva": True
     },
-    "830.054.060-5": {
+    "830054060": {
         "nombre": "FIDEICOMISOS SOCIEDAD FIDUCIARIA FIDUCOLDEX",
         "aplica_iva": True,
         "aplica_reteiva": True
     },
-    "900.649.119-9": {
+    "900649119": {
         "nombre": "PATRIMONIO AUTÓNOMO FONTUR",
         "aplica_iva": True,
         "aplica_reteiva": True
@@ -1191,12 +1331,181 @@ CONFIG_RETEIVA = {
 }
 
 # ===============================
+# CONFIGURACION TASA PRODEPORTE
+# ===============================
+
+# Diccionario de rubros presupuestales con sus tarifas y centros de costo
+# RUBRO_PRESUPUESTO: Codigo del rubro presupuestal (primeros 2 digitos deben ser 28)
+# TARIFA: Tarifa aplicable (decimal)
+# CENTRO_COSTO: Centro de costo asociado
+# MUNICIPIO_DEPARTAMENTO: Ubicacion geografica
+RUBRO_PRESUPUESTAL = {
+    "280101010185": {
+        "tarifa": 0.025,
+        "centro_costo": 11758,
+        "municipio_departamento": "Risaralda"
+    },
+    "280101010210": {
+        "tarifa": 0.015,
+        "centro_costo": 11783,
+        "municipio_departamento": "El Jardin"
+    },
+    "280101010214": {
+        "tarifa": 0.025,
+        "centro_costo": 11787,
+        "municipio_departamento": "Miranda - Cauca"
+    },
+    "280101010216": {
+        "tarifa": 0.025,
+        "centro_costo": 11789,
+        "municipio_departamento": "Arboletes - Antioquia"
+    },
+    "280101010218": {
+        "tarifa": 0.02,
+        "centro_costo": 11791,
+        "municipio_departamento": "Popayan"
+    },
+    "280101010221": {
+        "tarifa": 0.025,
+        "centro_costo": 11794,
+        "municipio_departamento": "Togui - Boyaca"
+    }
+}
+
+# ===============================
+# FUNCIONES TASA PRODEPORTE
+# ===============================
+
+def rubro_existe_en_presupuesto(rubro: str) -> bool:
+    """
+    Verifica si un rubro presupuestal existe en el diccionario.
+
+    SRP: Solo valida existencia del rubro
+
+    Args:
+        rubro: Codigo del rubro presupuestal
+
+    Returns:
+        bool: True si el rubro existe
+    """
+    return str(rubro) in RUBRO_PRESUPUESTAL
+
+def obtener_datos_rubro(rubro: str) -> Dict[str, Any]:
+    """
+    Obtiene los datos asociados a un rubro presupuestal.
+
+    SRP: Solo retorna datos del rubro
+
+    Args:
+        rubro: Codigo del rubro presupuestal
+
+    Returns:
+        Dict con tarifa, centro_costo y municipio_departamento o None si no existe
+    """
+    rubro_str = str(rubro)
+    if rubro_existe_en_presupuesto(rubro_str):
+        return RUBRO_PRESUPUESTAL[rubro_str]
+    return None
+
+def validar_rubro_presupuestal(rubro: str) -> tuple[bool, str]:
+    """
+    Valida que un rubro presupuestal cumpla con el formato requerido.
+
+    SRP: Solo valida formato y existencia del rubro
+
+    Args:
+        rubro: Codigo del rubro presupuestal
+
+    Returns:
+        tuple: (es_valido, mensaje_error)
+    """
+    rubro_str = str(rubro)
+
+    # Validar que inicie con 28
+    if not rubro_str.startswith("28"):
+        return False, f"Codigo del rubro presupuestal no inicia con 28: {rubro_str}"
+
+    # Validar que exista en el diccionario
+    if not rubro_existe_en_presupuesto(rubro_str):
+        return False, f"Rubro Presupuestal {rubro_str} no esta almacenado en la Base de datos"
+
+    return True, ""
+
+def obtener_configuracion_tasa_prodeporte() -> Dict[str, Any]:
+    """
+    Obtiene toda la configuracion de Tasa Prodeporte para uso en prompts.
+
+    SRP: Solo retorna configuracion consolidada
+
+    Returns:
+        Dict con configuracion completa de Tasa Prodeporte
+    """
+    return {
+        "rubros_validos": RUBRO_PRESUPUESTAL,
+        "total_rubros": len(RUBRO_PRESUPUESTAL),
+        "prefijo_requerido": "28"
+    }
+
+# NITs que aplican Tasa Prodeporte
+NITS_TASA_PRODEPORTE = {
+    "900649119": {
+        "nombre": "PATRIMONIO AUTÓNOMO FONTUR",
+        "aplica_tasa_prodeporte": True
+    }
+}
+
+def nit_aplica_tasa_prodeporte(nit: str) -> bool:
+    """Verifica si un NIT aplica para análisis de Tasa Prodeporte"""
+    return nit in NITS_TASA_PRODEPORTE
+
+# ===============================
 # FUNCIONES IVA Y RETEIVA
 # ===============================
 
 def nit_aplica_iva_reteiva(nit: str) -> bool:
     """Verifica si un NIT aplica para análisis de IVA y ReteIVA"""
     return nit in NITS_IVA_RETEIVA
+
+# ===============================
+# FUNCIONES ICA (INDUSTRIA Y COMERCIO)
+# ===============================
+
+def nit_aplica_ICA(nit: str) -> bool:
+    """
+    Verifica si un NIT aplica para retención de ICA (Industria y Comercio).
+
+    PRINCIPIO SRP: Responsabilidad única de validación de NIT para ICA
+    PRINCIPIO DIP: Depende de la abstracción NITS_CONFIGURACION
+
+    Args:
+        nit: NIT a verificar
+
+    Returns:
+        bool: True si el NIT aplica para ICA
+    """
+    es_valido, _, impuestos = validar_nit_administrativo(nit)
+    return es_valido and "RETENCION_ICA" in impuestos
+
+def nit_aplica_timbre(nit: str) -> bool:
+    """
+    Verifica si un NIT aplica para Impuesto al Timbre.
+
+    PRINCIPIO SRP: Responsabilidad unica de validacion de NIT para Timbre
+    PRINCIPIO DIP: Depende de la abstraccion NITS_CONFIGURACION
+
+    NITs que aplican timbre:
+    - 800178148: Fiduciaria Colombiana de Comercio Exterior S.A.
+    - 900649119: Fondo Nacional de Turismo FONTUR
+    - 830054060: Fideicomiso Sociedad Fiduciaria Fiducoldex
+
+    Args:
+        nit: NIT a verificar
+
+    Returns:
+        bool: True si el NIT aplica para Impuesto al Timbre
+    """
+    es_valido, _, impuestos = validar_nit_administrativo(nit)
+    return es_valido and "IMPUESTO_TIMBRE" in impuestos
 
 def obtener_configuracion_iva() -> Dict[str, Any]:
     """Obtiene toda la configuración de IVA para uso en prompts"""
@@ -1301,6 +1610,60 @@ def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
     }
 
 # ===============================
+# FUNCIONES HELPER PARA RECURSOS EXTRANJEROS
+# ===============================
+
+def crear_resultado_recurso_extranjero_retefuente() -> object:
+    """
+    Crea estructura de retefuente para recurso de fuente extranjera.
+
+    SRP: Responsabilidad única - generar estructura vacía con mensaje apropiado.
+    Se usa cuando es_recurso_extranjero == True para evitar cálculo innecesario.
+
+    Returns:
+        object: Estructura compatible con resultado de liquidación retefuente
+    """
+    from datetime import datetime
+
+    return type('ResultadoLiquidacion', (object,), {
+        'aplica': False,
+        'valor_retencion': 0.0,
+        'valor_factura_sin_iva': 0.0,
+        'conceptos_aplicados': [],
+        'valor_base_retencion': 0.0,
+        'fecha_calculo': datetime.now().isoformat(),
+        'mensajes_error': ["Recurso de fuente extranjera - No aplica retención en la fuente"],
+        'resumen_conceptos': 'N/A',
+        'estado': 'no_aplica_impuesto'
+    })()
+
+def crear_resultado_recurso_extranjero_iva() -> Dict[str, Any]:
+    """
+    Crea estructura de IVA/ReteIVA para recurso de fuente extranjera.
+
+    SRP: Responsabilidad única - generar estructura vacía con mensaje apropiado.
+    Se usa cuando es_recurso_extranjero == True para evitar cálculo innecesario.
+
+    Returns:
+        Dict: Estructura compatible con resultado de liquidación IVA/ReteIVA
+    """
+    return {
+        "iva_reteiva": {
+            "aplica": False,
+            "valor_iva_identificado": 0.0,
+            "valor_subtotal_sin_iva": 0.0,
+            "valor_reteiva": 0.0,
+            "porcentaje_iva": 0.0,
+            "tarifa_reteiva": 0.0,
+            "es_fuente_nacional": False,
+            "estado_liquidacion": "no_aplica_impuesto",
+            "es_responsable_iva": None,
+            "observaciones": ["Recurso de fuente extranjera - No aplica IVA ni ReteIVA"],
+            "calculo_exitoso": True
+        }
+    }
+
+# ===============================
 # INICIALIZACIÓN AUTOMÁTICA
 # ===============================
 
@@ -1310,24 +1673,85 @@ def inicializar_configuracion():
         # Validar que las constantes estén definidas
         assert UVT_2025 > 0, "UVT_2025 debe ser mayor a 0"
         assert SMMLV_2025 > 0, "SMMLV_2025 debe ser mayor a 0"
-        assert len(NITS_ESTAMPILLA_UNIVERSIDAD) > 0, "Debe haber NITs configurados para estampilla"
-        assert len(NITS_CONTRIBUCION_OBRA_PUBLICA) > 0, "Debe haber NITs configurados para obra pública"
         assert len(TERCEROS_RECURSOS_PUBLICOS) > 0, "Debe haber terceros configurados"
+        assert len(CONCEPTOS_RETEFUENTE) > 0, "Debe haber conceptos de retefuente configurados"
+        assert len(NITS_IVA_RETEIVA) > 0, "Debe haber NITs configurados para IVA y ReteIVA"
         
-        logger.info("✅ Configuración inicializada correctamente")
+        logger.info(" Configuración inicializada correctamente")
         logger.info(f"   - UVT 2025: ${UVT_2025:,}")
-        logger.info(f"   - NITs Estampilla: {len(NITS_ESTAMPILLA_UNIVERSIDAD)}")
-        logger.info(f"   - NITs Obra Pública: {len(NITS_CONTRIBUCION_OBRA_PUBLICA)}")
         logger.info(f"   - Terceros: {len(TERCEROS_RECURSOS_PUBLICOS)}")
+        logger.info(f"   - Conceptos ReteFuente: {len(CONCEPTOS_RETEFUENTE)}")
+        logger.info(f"   - NITs IVA y ReteIVA: {len(NITS_IVA_RETEIVA)}")
         
         return True
         
     except Exception as e:
-        logger.error(f"❌ Error en inicialización: {e}")
+        logger.error(f" Error en inicialización: {e}")
         return False
 
 # Inicializar al importar
-try:
-    inicializar_configuracion()
-except Exception as e:
-    logger.warning(f"⚠️ Error en inicialización automática: {e}")
+#try:
+    #inicializar_configuracion()
+#except Exception as e:
+   # logger.warning(f" Error en inicialización automática: {e}")
+
+
+# ===============================
+# FUNCIÓN PARA GUARDAR ARCHIVOS JSON
+# ===============================
+
+def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str = "") -> bool:
+    """
+    Guarda archivos JSON en la carpeta Results/ organizados por fecha.
+
+    FUNCIONALIDAD:
+     Crea estructura Results/YYYY-MM-DD/
+     Guarda archivos JSON con timestamp
+     Manejo de errores sin afectar flujo principal
+     Logs de confirmación
+    Path absoluto para evitar errores de subpath
+
+    Args:
+        contenido: Diccionario a guardar como JSON
+        nombre_archivo: Nombre base del archivo (sin extensión)
+        subcarpeta: Subcarpeta opcional dentro de la fecha
+
+    Returns:
+        bool: True si se guardó exitosamente, False en caso contrario
+    """
+    try:
+        # 1. CREAR ESTRUCTURA DE CARPETAS CON PATH ABSOLUTO
+        fecha_actual = datetime.now().strftime("%Y-%m-%d")
+        carpeta_base = Path.cwd()  # Path absoluto del proyecto
+        carpeta_results = carpeta_base / "Results"
+        carpeta_fecha = carpeta_results / fecha_actual
+
+        if subcarpeta:
+            carpeta_final = carpeta_fecha / subcarpeta
+        else:
+            carpeta_final = carpeta_fecha
+
+        carpeta_final.mkdir(parents=True, exist_ok=True)
+
+        # 2. CREAR NOMBRE CON TIMESTAMP
+        timestamp = datetime.now().strftime("%H-%M-%S")
+        nombre_final = f"{nombre_archivo}_{timestamp}.json"
+        ruta_archivo = carpeta_final / nombre_final
+
+        # 3. GUARDAR ARCHIVO JSON
+        with open(ruta_archivo, 'w', encoding='utf-8') as f:
+            json.dump(contenido, f, indent=2, ensure_ascii=False)
+
+        # 4. LOG DE CONFIRMACIÓN CON PATH RELATIVO SEGURO
+        try:
+            ruta_relativa = ruta_archivo.relative_to(carpeta_base)
+            logger.info(f" JSON guardado: {ruta_relativa}")
+        except ValueError:
+            # Fallback si relative_to falla
+            logger.info(f" JSON guardado: {nombre_final} en {carpeta_final.name}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f" Error guardando JSON {nombre_archivo}: {e}")
+        return False

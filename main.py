@@ -9,12 +9,12 @@ ARQUITECTURA MODULAR:
 - Clasificador/: Clasificación de documentos con Gemini
 - Liquidador/: Cálculo de retenciones según normativa
 - Extraccion/: Extracción de texto de archivos (PDF, OCR, Excel, Word)
-- Static/: Frontend y archivos estáticos
 - Results/: Almacenamiento de resultados organizados por fecha
 
-✅ FUNCIONALIDAD INTEGRADA:
+ FUNCIONALIDAD INTEGRADA:
 - Retención en la fuente (funcionalidad original)
 - Estampilla pro universidad nacional - obra publica (nueva funcionalidad)
+- IVA y ReteIVA (nueva funcionalidad)
 - Procesamiento paralelo cuando ambos impuestos aplican
 
 Autor: Miguel Angel Jaramillo Durango
@@ -24,11 +24,10 @@ import os
 import json
 import asyncio
 import traceback
-import uvicorn
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-
+from contextlib import asynccontextmanager
 
 # FastAPI y dependencias web
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
@@ -36,118 +35,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# Configuración de logging PROFESIONAL
+# Configuración de logging - INFRASTRUCTURE LAYER
 import logging
-import sys
+from app_logging import configurar_logging
 
-# ===============================
-# EJECUCIÓN PRINCIPAL
-# ===============================
-# Configurar logging profesional
 logger = logging.getLogger(__name__)
-
-
-# ===============================
-# API FASTAPI
-# ===============================
-
-app = FastAPI(
-    title="Preliquidador de Retefuente - Colombia",
-    description="Sistema automatizado para calcular retención en la fuente con arquitectura modular",
-    version="2.0.0"
-)
-
-@app.get("/")
-
-
-def configurar_logging():
-    """
-    Configuración profesional de logging para evitar duplicación
-    
-    BENEFICIOS:
-    ✅ Evita duplicación de handlers
-    ✅ Formato profesional con timestamp
-    ✅ Previene propagación conflictiva
-    ✅ Configuración centralizada
-    """
-    # Evitar duplicación de handlers
-    if not logging.getLogger().handlers:
-        # Crear handler único para stdout
-        handler = logging.StreamHandler(sys.stdout)
-        
-        # Formato profesional con timestamp
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        handler.setFormatter(formatter)
-        
-        # Configurar root logger
-        root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
-        root_logger.setLevel(logging.INFO)
-        
-        # Evitar propagación duplicada de frameworks
-        logging.getLogger("uvicorn").propagate = False
-        logging.getLogger("fastapi").propagate = False
-        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-        logging.getLogger("uvicorn.error").propagate = False
-        
-        print("✅ Logging profesional configurado - Sin duplicaciones")
-    else:
-        print("⚠️ Logging ya configurado, evitando duplicación")
-
-
-if __name__ == "__main__":
-    logger.info("Iniciando servidor en puerto 8080...")
-    port = int(os.environ.get("PORT", 8080))
-    reload_mode = os.environ.get("RELOAD", "false").lower() == "false"
-
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=port,
-        reload=reload_mode,
-        timeout_keep_alive=120,
-        limit_max_requests=1000,
-        limit_concurrency=100
-    )
-    
-    logger.info("🚀 Iniciando Preliquidador de Retefuente v2.0 - Sistema Integrado")
-    logger.info("✅ Funcionalidades: Retención en la fuente + Estampilla universidad + Obra pública 5%")
-    logger.info(f"🔑 Gemini configurado: {bool(GEMINI_API_KEY)}")
-    logger.info(f"👁️ Vision configurado: {bool(GOOGLE_CLOUD_CREDENTIALS)}")
-    logger.info(f"📊 Conceptos cargados: {len(CONCEPTOS_RETEFUENTE)}")
-    
-    # Verificar estructura de carpetas
-    carpetas_requeridas = ["Clasificador", "Liquidador", "Extraccion", "Static", "Results"]
-    for carpeta in carpetas_requeridas:
-        if os.path.exists(carpeta):
-            logger.info(f"✅ Módulo {carpeta}/ encontrado")
-        else:
-            logger.warning(f"⚠️ Módulo {carpeta}/ no encontrado")
-    
-    # Verificar funciones de impuestos especiales
-    try:
-        # Test de importación estampilla
-        test_nit = "800000001"  # NIT ficticio para test
-        nit_aplica_estampilla_universidad(test_nit)
-        logger.info(f"✅ Función nit_aplica_estampilla_universidad importada correctamente")
-        
-        # Test de importación obra pública
-        nit_aplica_contribucion_obra_publica(test_nit)
-        logger.info(f"✅ Función nit_aplica_contribucion_obra_publica importada correctamente")
-        
-        # Test de detección automática
-        detectar_impuestos_aplicables(test_nit)
-        logger.info(f"✅ Función detectar_impuestos_aplicables funcionando correctamente")
-        
-    except Exception as e:
-        logger.error(f"❌ Error con funciones de impuestos especiales: {e}")
-    
-
-
-
 
 # ===============================
 # IMPORTAR MÓDULOS LOCALES
@@ -155,19 +47,41 @@ if __name__ == "__main__":
 
 # Importar clases desde módulos
 from Clasificador import ProcesadorGemini
+from Clasificador.clasificador_ica import ClasificadorICA
+from Clasificador.clasificador_timbre import ClasificadorTimbre
 from Liquidador import LiquidadorRetencion
-from Extraccion import ProcesadorArchivos
+from Liquidador.liquidador_consorcios import LiquidadorConsorcios, convertir_resultado_a_dict as convertir_consorcio_a_dict
+from Liquidador.liquidador_ica import LiquidadorICA
+from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
+from Liquidador.liquidador_timbre import LiquidadorTimbre
+from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
+
+# Importar módulos de base de datos (SOLID: Clean Architecture Module)
+from database import (
+    DatabaseManager,
+    SupabaseDatabase,
+    BusinessDataService,
+    crear_business_service,
+    inicializar_database_manager  # INFRASTRUCTURE SETUP
+)
 
 # Cargar configuración global - INCLUYE ESTAMPILLA Y OBRA PÚBLICA
 from config import (
-    inicializar_configuracion, 
-    obtener_nits_disponibles, 
-    validar_nit_administrativo, 
+    inicializar_configuracion,
+    obtener_nits_disponibles,
+    validar_nit_administrativo,
     nit_aplica_retencion_fuente,
-    nit_aplica_estampilla_universidad,
-    nit_aplica_contribucion_obra_publica,  # ✅ NUEVA IMPORTACIÓN
-    nit_aplica_iva_reteiva,  # ✅ NUEVA IMPORTACIÓN IVA
-    detectar_impuestos_aplicables  # ✅ DETECCIÓN AUTOMÁTICA
+    codigo_negocio_aplica_estampilla_universidad,
+    codigo_negocio_aplica_obra_publica,
+    nit_aplica_iva_reteiva,  #  NUEVA IMPORTACIÓN IVA
+    nit_aplica_ICA,  #  NUEVA IMPORTACIÓN ICA
+    nit_aplica_tasa_prodeporte,  #  NUEVA IMPORTACIÓN TASA PRODEPORTE
+    nit_aplica_timbre,  #  NUEVA IMPORTACIÓN TIMBRE
+    detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
+    crear_resultado_recurso_extranjero_retefuente,  #  HELPER RECURSO EXTRANJERO
+    crear_resultado_recurso_extranjero_iva,  #  HELPER RECURSO EXTRANJERO
+    guardar_archivo_json,  # FUNCIÓN DE UTILIDAD PARA GUARDAR JSON
+
 )
 
 # Dependencias para preprocesamiento Excel
@@ -175,242 +89,13 @@ import pandas as pd
 import io
 
 # ===============================
-# FUNCIONES DE PREPROCESAMIENTO
+# INICIALIZACIÓN DE BASE DE DATOS
 # ===============================
 
-def preprocesar_excel_limpio(contenido: bytes, nombre_archivo: str = "archivo.xlsx") -> str:
-    """
-    Preprocesa archivo Excel eliminando filas y columnas vacías.
-    Mantiene formato tabular limpio con toda la información intacta.
-    
-    FUNCIONALIDAD:
-    ✅ Elimina filas completamente vacías
-    ✅ Elimina columnas completamente vacías
-    ✅ Mantiene formato tabular pero limpio
-    ✅ Conserva toda la información relevante
-    ✅ Óptimo y simple
-    ✅ Guarda automáticamente el archivo preprocesado
-    
-    Args:
-        contenido: Contenido binario del archivo Excel
-        nombre_archivo: Nombre del archivo (para logging)
-        
-    Returns:
-        str: Texto extraído y limpio del Excel
-    """
-    try:
-        logger.info(f"🧹 Preprocesando Excel: {nombre_archivo}")
-        
-        # 1. LEER EXCEL CON TODAS LAS HOJAS
-        df_dict = pd.read_excel(io.BytesIO(contenido), sheet_name=None)
-        
-        texto_completo = ""
-        total_hojas = 0
-        filas_eliminadas_total = 0
-        columnas_eliminadas_total = 0
-        
-        # 2. PROCESAR CADA HOJA CON LIMPIEZA
-        if isinstance(df_dict, dict):
-            total_hojas = len(df_dict)
-            
-            for nombre_hoja, dataframe in df_dict.items():
-                # Estadísticas originales
-                filas_orig = len(dataframe)
-                cols_orig = len(dataframe.columns)
-                
-                # 🧹 LIMPIEZA SIMPLE: Eliminar filas y columnas completamente vacías
-                df_limpio = dataframe.dropna(how='all')  # Filas vacías
-                df_limpio = df_limpio.dropna(axis=1, how='all')  # Columnas vacías
-                
-                # Estadísticas después de limpieza
-                filas_final = len(df_limpio)
-                cols_final = len(df_limpio.columns)
-                
-                filas_eliminadas = filas_orig - filas_final
-                columnas_eliminadas = cols_orig - cols_final
-                filas_eliminadas_total += filas_eliminadas
-                columnas_eliminadas_total += columnas_eliminadas
-                
-                # Agregar hoja al texto
-                texto_completo += f"\n--- HOJA: {nombre_hoja} ---\n"
-                
-                if not df_limpio.empty:
-                    # Convertir a texto manteniendo formato tabular limpio
-                    texto_hoja = df_limpio.to_string(index=False, na_rep='', max_cols=None, max_rows=None)
-                    texto_completo += texto_hoja
-                else:
-                    texto_completo += "[HOJA VACÍA DESPUÉS DE LIMPIEZA]"
-                
-                texto_completo += "\n"
-                
-        else:
-            # UNA SOLA HOJA
-            total_hojas = 1
-            dataframe = df_dict
-            
-            # Estadísticas originales
-            filas_orig = len(dataframe)
-            cols_orig = len(dataframe.columns)
-            
-            # 🧹 LIMPIEZA SIMPLE: Eliminar filas y columnas vacías
-            df_limpio = dataframe.dropna(how='all')  # Filas vacías
-            df_limpio = df_limpio.dropna(axis=1, how='all')  # Columnas vacías
-            
-            # Estadísticas finales
-            filas_final = len(df_limpio)
-            cols_final = len(df_limpio.columns)
-            
-            filas_eliminadas_total = filas_orig - filas_final
-            columnas_eliminadas_total = cols_orig - cols_final
-            
-            if not df_limpio.empty:
-                texto_completo = df_limpio.to_string(index=False, na_rep='', max_cols=None, max_rows=None)
-            else:
-                texto_completo = "[ARCHIVO VACÍO DESPUÉS DE LIMPIEZA]"
-        
-        texto_final = texto_completo.strip()
-        
-        # 3. GUARDADO AUTOMÁTICO DEL ARCHIVO PREPROCESADO
-        _guardar_archivo_preprocesado(nombre_archivo, texto_final, filas_eliminadas_total, columnas_eliminadas_total, total_hojas)
-        
-        # 4. LOGGING OPTIMIZADO
-        logger.info(f"✅ Preprocesamiento completado: {len(texto_final)} caracteres")
-        logger.info(f"📊 Hojas: {total_hojas} | Filas eliminadas: {filas_eliminadas_total} | Columnas eliminadas: {columnas_eliminadas_total}")
-        logger.info(f"💾 Archivo preprocesado guardado automáticamente")
-        
-        return texto_final
-        
-    except Exception as e:
-        error_msg = f"Error en preprocesamiento Excel: {str(e)}"
-        logger.error(f"❌ {error_msg}")
-        return error_msg
-
-def _guardar_archivo_preprocesado(nombre_archivo: str, texto_preprocesado: str, 
-                                 filas_eliminadas: int, columnas_eliminadas: int, total_hojas: int):
-    """
-    Guarda el archivo Excel preprocesado según nomenclatura {archivo_original}_preprocesado.txt
-    
-    FUNCIONALIDAD:
-    ✅ Guarda en carpeta extracciones/ 
-    ✅ Nomenclatura: {archivo_original}_preprocesado.txt
-    ✅ Logs básicos para confirmar guardado exitoso
-    ✅ Manejo de errores sin afectar flujo principal
-    
-    Args:
-        nombre_archivo: Nombre del archivo original
-        texto_preprocesado: Texto limpio extraído
-        filas_eliminadas: Número de filas eliminadas
-        columnas_eliminadas: Número de columnas eliminadas
-        total_hojas: Número total de hojas procesadas
-    """
-    try:
-        # 1. CREAR CARPETA EXTRACCIONES SIMPLE
-        carpeta_extracciones = Path("extracciones")
-        carpeta_extracciones.mkdir(exist_ok=True)
-        
-        # 2. CREAR NOMBRE SEGÚN NOMENCLATURA: {archivo_original}_preprocesado.txt
-        # Limpiar nombre de archivo original (quitar caracteres especiales)
-        nombre_base = "".join(c for c in nombre_archivo if c.isalnum() or c in "._-")
-        
-        # Quitar extensión original (.xlsx, .xls)
-        if '.' in nombre_base:
-            nombre_sin_extension = nombre_base.rsplit('.', 1)[0]
-        else:
-            nombre_sin_extension = nombre_base
-            
-        # Crear nombre final: {archivo_original}_preprocesado.txt
-        nombre_final = f"{nombre_sin_extension}_preprocesado.txt"
-        ruta_archivo = carpeta_extracciones / nombre_final
-        
-        # 3. CONTENIDO SIMPLE PERO COMPLETO
-        contenido_final = f"""ARCHIVO EXCEL PREPROCESADO
-=============================
-
-Archivo original: {nombre_archivo}
-Fecha procesamiento: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-Hojas procesadas: {total_hojas}
-Filas vacías eliminadas: {filas_eliminadas}
-Columnas vacías eliminadas: {columnas_eliminadas}
-Caracteres finales: {len(texto_preprocesado)}
-
-=============================
-TEXTO ENVIADO A GEMINI:
-=============================
-
-{texto_preprocesado}
-"""
-        
-        # 4. GUARDAR ARCHIVO
-        with open(ruta_archivo, 'w', encoding='utf-8') as f:
-            f.write(contenido_final)
-        
-        # 5. LOG BÁSICO DE CONFIRMACIÓN
-        logger.info(f"💾 Archivo preprocesado guardado: extracciones/{nombre_final}")
-        logger.info(f"📊 Estadísticas: {filas_eliminadas} filas y {columnas_eliminadas} columnas eliminadas")
-        
-    except Exception as e:
-        logger.error(f"❌ Error guardando archivo preprocesado: {e}")
-        # No fallar el preprocesamiento por un error de guardado
-
-# ===============================
-# FUNCIÓN PARA GUARDAR ARCHIVOS JSON
-# ===============================
-
-def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str = "") -> bool:
-    """
-    Guarda archivos JSON en la carpeta Results/ organizados por fecha.
-    
-    FUNCIONALIDAD:
-    ✅ Crea estructura Results/YYYY-MM-DD/
-    ✅ Guarda archivos JSON con timestamp
-    ✅ Manejo de errores sin afectar flujo principal
-    ✅ Logs de confirmación
-    ✅ Path absoluto para evitar errores de subpath
-    
-    Args:
-        contenido: Diccionario a guardar como JSON
-        nombre_archivo: Nombre base del archivo (sin extensión)
-        subcarpeta: Subcarpeta opcional dentro de la fecha
-        
-    Returns:
-        bool: True si se guardó exitosamente, False en caso contrario
-    """
-    try:
-        # 1. CREAR ESTRUCTURA DE CARPETAS CON PATH ABSOLUTO
-        fecha_actual = datetime.now().strftime("%Y-%m-%d")
-        carpeta_base = Path.cwd()  # Path absoluto del proyecto
-        carpeta_results = carpeta_base / "Results"
-        carpeta_fecha = carpeta_results / fecha_actual
-        
-        if subcarpeta:
-            carpeta_final = carpeta_fecha / subcarpeta
-        else:
-            carpeta_final = carpeta_fecha
-            
-        carpeta_final.mkdir(parents=True, exist_ok=True)
-        
-        # 2. CREAR NOMBRE CON TIMESTAMP
-        timestamp = datetime.now().strftime("%H-%M-%S")
-        nombre_final = f"{nombre_archivo}_{timestamp}.json"
-        ruta_archivo = carpeta_final / nombre_final
-        
-        # 3. GUARDAR ARCHIVO JSON
-        with open(ruta_archivo, 'w', encoding='utf-8') as f:
-            json.dump(contenido, f, indent=2, ensure_ascii=False)
-        
-        # 4. LOG DE CONFIRMACIÓN CON PATH RELATIVO SEGURO
-        try:
-            ruta_relativa = ruta_archivo.relative_to(carpeta_base)
-            logger.info(f"💾 JSON guardado: {ruta_relativa}")
-        except ValueError:
-            # Fallback si relative_to falla
-            logger.info(f"💾 JSON guardado: {nombre_final} en {carpeta_final.name}")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Error guardando JSON {nombre_archivo}: {e}")
-        return False
+# Variables globales para el gestor de base de datos y servicio de negocio
+# NOTA: Inicializadas en el lifespan de FastAPI
+db_manager = None
+business_service = None
 
 # ===============================
 # CONFIGURACIÓN Y CONSTANTES
@@ -425,1095 +110,121 @@ inicializar_configuracion()
 
 # Configurar APIs
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GOOGLE_CLOUD_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+#GOOGLE_CLOUD_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY no está configurada en el archivo .env")
 
-# Conceptos exactos con base mínima y tarifa específica
-# Estructura: {concepto: {base_pesos: int, tarifa_retencion: float}}
-CONCEPTOS_RETEFUENTE = {
-    "Compras generales (declarantes)": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.025
-    },
-    "Compras generales (no declarantes)": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.035
-    },
-    "Compras con tarjeta débito o crédito": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.015
-    },
-    "Compras de bienes o productos agrícolas o pecuarios sin procesamiento industrial": {
-        "base_pesos": 3486000,
-        "tarifa_retencion": 0.015
-    },
-    "Compras de bienes o productos agrícolas o pecuarios con procesamiento industrial (declarantes)": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.025
-    },
-    "Compras de bienes o productos agrícolas o pecuarios con procesamiento industrial declarantes (no declarantes)": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.035
-    },
-    "Compras de café pergamino o cereza": {
-        "base_pesos": 3486000,
-        "tarifa_retencion": 0.005
-    },
-    "Compras de combustibles derivados del petróleo": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.001
-    },
-    "Enajenación de activos fijos de personas naturales (notarías y tránsito son agentes retenedores)": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.01
-    },
-    "Compras de vehículos": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.01
-    },
-    "Servicios generales (declarantes)": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.04
-    },
-    "Servicios generales (no declarantes)": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.06
-    },
-    "Servicios de transporte de carga": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.01
-    },
-    "Servicios de transporte nacional de pasajeros por vía terrestre": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.035
-    },
-    "Servicios de transporte nacional de pasajeros por vía aérea o marítima": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.01
-    },
-    "Servicios prestados por empresas de servicios temporales (sobre AIU)": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.01
-    },
-    "Servicios prestados por empresas de vigilancia y aseo (sobre AIU)": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.02
-    },
-    "Servicios integrales de salud prestados por IPS": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.02
-    },
-    "Arrendamiento de bienes muebles": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.04
-    },
-    "Arrendamiento de bienes inmuebles": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.035
-    },
-    "Otros ingresos tributarios (declarantes)": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.025
-    },
-    "Otros ingresos tributarios (no declarantes)": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.035
-    },
-    "Honorarios y comisiones por servicios (persona juridica)": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.11
-    },
-     "Honorarios y comisiones por servicios (declarantes)": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.11
-    },
-    "Honorarios y comisiones por servicios (no declarantes)": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.10
-    },
-    "Servicios de hoteles y restaurantes (declarantes)": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.035
-    },
-    "Servicios de hoteles y restaurantes (no declarantes)": {
-        "base_pesos": 100000,
-        "tarifa_retencion": 0.035
-    },
-     "Servicios de licenciamiento o derecho de uso de software": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.035
-    },
-       "Intereses o rendimientos financieros": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.07
-    },
-    "Loterías, rifas, apuestas y similares": {
-        "base_pesos": 2390000,
-        "tarifa_retencion": 0.2
-    },
-    "Emolumentos eclesiásticos (declarantes)": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.04
-    },
-    "Emolumentos eclesiásticos ( no declarantes)": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.035
-    },
-    "Retención en colocación independiente de juegos de suerte y azar": {
-        "base_pesos": 249000,
-        "tarifa_retencion": 0.03
-    },
-     "Contratos de construcción y urbanización.": {
-        "base_pesos": 498000,
-        "tarifa_retencion": 0.02
-    },
-    "compra de oro por las sociedades de comercialización internacional.": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.025
-    },
-    "Compras de bienes raíces cuya destinación y uso sea vivienda de habitación (por las primeras $497990000 pesos colombianos)": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.01
-    },
-    "Compras de bienes raíces cuya destinación y uso sea vivienda de habitación (exceso de $497990000 pesos colombianos)": {
-        "base_pesos": 497990000,
-        "tarifa_retencion": 0.025
-    },
-    "Compras de bienes raíces cuya destinación y uso sea distinto a vivienda de habitación": {
-        "base_pesos": 0,
-        "tarifa_retencion": 0.025
-    },
-    "Servicios de consultoría en informática":{
-        "base_pesos":0,
-        "tarifa_retencion":0.035
-    }
-}
+# Importar conceptos retefuente  desde configuración
+from config import CONCEPTOS_RETEFUENTE
 
 # ===============================
-# MODELOS DE DATOS
+# NOTA: Los modelos Pydantic fueron movidos a modelos/modelos.py (Domain Layer - Clean Architecture)
+# Este archivo trabaja directamente con diccionarios en lugar de modelos Pydantic
 # ===============================
 
-class DocumentoClasificado(BaseModel):
-    nombre_archivo: str
-    tipo_documento: str  # FACTURA, RUT, COTIZACION, ANEXO, ANEXO CONCEPTO CONTRATO
-    confianza: float
-
-class ConceptoIdentificado(BaseModel):
-    concepto: str
-    tarifa_retencion: float
-    base_gravable: Optional[float] = None
-
-class NaturalezaTercero(BaseModel):
-    es_persona_natural: Optional[bool] = None
-    es_declarante: Optional[bool] = None
-    regimen_tributario: Optional[str] = None  # SIMPLE, ORDINARIO, ESPECIAL
-    es_autorretenedor: Optional[bool] = None
-    es_responsable_iva: Optional[bool] = None  # NUEVA VALIDACIÓN
-
-# NUEVOS MODELOS PARA ARTÍCULO 383
-class DeduccionArticulo383(BaseModel):
-    valor: float = 0.0
-    tiene_soporte: bool = False
-    limite_aplicable: float = 0.0
-
-class CondicionesArticulo383(BaseModel):
-    es_persona_natural: bool = False
-    concepto_aplicable: bool = False
-    es_primer_pago: bool = False  # NUEVO CAMPO
-    planilla_seguridad_social: bool = False
-    cuenta_cobro: bool = False
-
-class DeduccionesArticulo383(BaseModel):
-    intereses_vivienda: DeduccionArticulo383 = DeduccionArticulo383()
-    dependientes_economicos: DeduccionArticulo383 = DeduccionArticulo383()
-    medicina_prepagada: DeduccionArticulo383 = DeduccionArticulo383()
-    rentas_exentas: DeduccionArticulo383 = DeduccionArticulo383()
-
-class CalculoArticulo383(BaseModel):
-    ingreso_bruto: float = 0.0
-    aportes_seguridad_social: float = 0.0
-    total_deducciones: float = 0.0
-    deducciones_limitadas: float = 0.0
-    base_gravable_final: float = 0.0
-    base_gravable_uvt: float = 0.0
-    tarifa_aplicada: float = 0.0
-    valor_retencion_art383: float = 0.0
-
-class InformacionArticulo383(BaseModel):
-    aplica: bool = False
-    condiciones_cumplidas: CondicionesArticulo383 = CondicionesArticulo383()
-    deducciones_identificadas: Optional[DeduccionesArticulo383] = DeduccionesArticulo383()
-    calculo: Optional[CalculoArticulo383] = CalculoArticulo383()
-
-class AnalisisFactura(BaseModel):
-    conceptos_identificados: List[ConceptoIdentificado]
-    naturaleza_tercero: Optional[NaturalezaTercero]
-    articulo_383: Optional[InformacionArticulo383] = None  # NUEVA SECCIÓN
-    es_facturacion_exterior: bool
-    valor_total: Optional[float]
-    iva: Optional[float]
-    observaciones: List[str]
-
-class ResultadoLiquidacion(BaseModel):
-    valor_base_retencion: float
-    valor_retencion: float
-    tarifa_aplicada: float
-    concepto_aplicado: str
-    fecha_calculo: str
-    puede_liquidar: bool
-    mensajes_error: List[str]
-
-# ===============================
-# ✅ FUNCIÓN DE LIQUIDACIÓN SEGURA DE RETEFUENTE
-# ===============================
-
-def liquidar_retefuente_seguro(analisis_retefuente: Dict[str, Any], nit_administrativo: str) -> Dict[str, Any]:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """
-    Liquida retefuente con manejo seguro de estructura de datos.
-    
-    SOLUCIONA EL ERROR: 'dict' object has no attribute 'es_facturacion_exterior'
-    
-    FUNCIONALIDAD:
-    ✅ Maneja estructura JSON de análisis de Gemini
-    ✅ Extrae correctamente la sección "analisis" 
-    ✅ Convierte dict a objeto AnalisisFactura
-    ✅ Verifica campos requeridos antes de liquidar
-    ✅ Manejo robusto de errores con logging detallado
-    ✅ Fallback seguro en caso de errores
-    
-    Args:
-        analisis_retefuente: Resultado del análisis de Gemini (estructura JSON)
-        nit_administrativo: NIT administrativo
-        
-    Returns:
-        Dict con resultado de liquidación o información de error
+    Manejador del ciclo de vida de la aplicación.
+    Reemplaza los eventos startup/shutdown.
+
+    PRINCIPIOS SOLID:
+    - SRP: Solo maneja ciclo de vida de la aplicación
+    - DIP: Usa funciones de infraestructura inyectadas
     """
-    try:
-        logger.info(f"🧮 Iniciando liquidación segura de retefuente para NIT: {nit_administrativo}")
-        
-        # ✅ VERIFICAR ESTRUCTURA Y EXTRAER ANÁLISIS
-        if isinstance(analisis_retefuente, dict):
-            if "analisis" in analisis_retefuente:
-                # Estructura: {"analisis": {...}, "timestamp": ..., etc}
-                datos_analisis = analisis_retefuente["analisis"]
-                logger.info("📊 Extrayendo análisis desde estructura JSON con clave 'analisis'")
-            else:
-                # Estructura directa: {"es_facturacion_exterior": ..., etc}
-                datos_analisis = analisis_retefuente
-                logger.info("📊 Usando estructura directa de análisis")
-        else:
-            # Ya es un objeto, usar directamente
-            datos_analisis = analisis_retefuente
-            logger.info("📊 Usando objeto AnalisisFactura directamente")
-        
-        # ✅ VERIFICAR CAMPOS REQUERIDOS
-        campos_requeridos = ["es_facturacion_exterior", "conceptos_identificados", "naturaleza_tercero"]
-        campos_faltantes = []
-        
-        for campo in campos_requeridos:
-            if campo not in datos_analisis:
-                campos_faltantes.append(campo)
-        
-        if campos_faltantes:
-            error_msg = f"Campos requeridos faltantes: {', '.join(campos_faltantes)}"
-            logger.error(f"❌ {error_msg}")
-            logger.error(f"🔑 Claves disponibles: {list(datos_analisis.keys()) if isinstance(datos_analisis, dict) else 'No es dict'}")
-            
-            return {
-                "aplica": False,
-                "error": error_msg,
-                "valor_retencion": 0.0,
-                "observaciones": [
-                    "Error en estructura de datos del análisis",
-                    f"Faltan campos: {', '.join(campos_faltantes)}",
-                    "Revise el análisis de Gemini"
-                ]
-            }
-        
-        # ✅ CREAR OBJETO ANALYSISFACTURA MANUALMENTE
-        from Clasificador.clasificador import AnalisisFactura, ConceptoIdentificado, NaturalezaTercero
-        
-        # Convertir conceptos identificados
-        conceptos = []
-        conceptos_data = datos_analisis.get("conceptos_identificados", [])
-        
-        if not isinstance(conceptos_data, list):
-            logger.warning(f"⚠️ conceptos_identificados no es lista: {type(conceptos_data)}")
-            conceptos_data = []
-        
-        for concepto_data in conceptos_data:
-            if isinstance(concepto_data, dict):
-                concepto_obj = ConceptoIdentificado(
-                    concepto=concepto_data.get("concepto", ""),
-                    tarifa_retencion=concepto_data.get("tarifa_retencion", 0.0),
-                    base_gravable=concepto_data.get("base_gravable", None)
-                )
-                conceptos.append(concepto_obj)
-                logger.info(f"✅ Concepto convertido: {concepto_obj.concepto} - {concepto_obj.tarifa_retencion}%")
-        
-        # Convertir naturaleza del tercero
-        naturaleza_data = datos_analisis.get("naturaleza_tercero", {})
-        if not isinstance(naturaleza_data, dict):
-            logger.warning(f"⚠️ naturaleza_tercero no es dict: {type(naturaleza_data)}")
-            naturaleza_data = {}
-        
-        naturaleza_obj = NaturalezaTercero(
-            es_persona_natural=naturaleza_data.get("es_persona_natural", None),
-            es_declarante=naturaleza_data.get("es_declarante", None),
-            regimen_tributario=naturaleza_data.get("regimen_tributario", None),
-            es_autorretenedor=naturaleza_data.get("es_autorretenedor", None),
-            es_responsable_iva=naturaleza_data.get("es_responsable_iva", None)
-        )
-        
-        # Crear objeto completo
-        analisis_obj = AnalisisFactura(
-            conceptos_identificados=conceptos,
-            naturaleza_tercero=naturaleza_obj,
-            es_facturacion_exterior=datos_analisis.get("es_facturacion_exterior", False),
-            valor_total=datos_analisis.get("valor_total", None),
-            iva=datos_analisis.get("iva", None),
-            observaciones=datos_analisis.get("observaciones", [])
-        )
-        
-        logger.info(f"✅ Objeto AnalisisFactura creado: {len(conceptos)} conceptos, facturación_exterior={analisis_obj.es_facturacion_exterior}")
-        
-        # ✅ LIQUIDAR CON OBJETO VÁLIDO
-        liquidador_retencion = LiquidadorRetencion()
-        resultado = liquidador_retencion.liquidar_factura(analisis_obj, nit_administrativo)
-        
-        # Convertir resultado a dict
-        resultado_dict = {
-            "aplica": resultado.puede_liquidar,
-            "valor_retencion": resultado.valor_retencion,
-            "tarifa_aplicada": resultado.tarifa_aplicada,
-            "concepto": resultado.concepto_aplicado,
-            "base_gravable": resultado.valor_base_retencion,
-            "fecha_calculo": resultado.fecha_calculo,
-            "observaciones": resultado.mensajes_error,
-            "calculo_exitoso": resultado.puede_liquidar
-        }
-        
-        if resultado.puede_liquidar:
-            logger.info(f"✅ Retefuente liquidada exitosamente: ${resultado.valor_retencion:,.2f}")
-        else:
-            logger.warning(f"⚠️ Retefuente no se pudo liquidar: {resultado.mensajes_error}")
-        
-        return resultado_dict
-        
-    except ImportError as e:
-        error_msg = f"Error importando clases necesarias: {str(e)}"
-        logger.error(f"❌ {error_msg}")
-        return {
-            "aplica": False,
-            "error": error_msg,
-            "valor_retencion": 0.0,
-            "observaciones": ["Error importando módulos de análisis", "Revise la configuración del sistema"]
-        }
-        
-    except Exception as e:
-        error_msg = f"Error liquidando retefuente: {str(e)}"
-        logger.error(f"❌ {error_msg}")
-        logger.error(f"📄 Tipo de estructura recibida: {type(analisis_retefuente)}")
-        
-        # Log adicional para debugging
-        if isinstance(analisis_retefuente, dict):
-            logger.error(f"🔑 Claves disponibles en análisis: {list(analisis_retefuente.keys())}")
-            if "analisis" in analisis_retefuente and isinstance(analisis_retefuente["analisis"], dict):
-                logger.error(f"🔑 Claves en 'analisis': {list(analisis_retefuente['analisis'].keys())}")
-        
-        # Log del traceback completo para debugging
-        import traceback
-        logger.error(f"🐛 Traceback completo: {traceback.format_exc()}")
-        
-        return {
-            "aplica": False,
-            "error": error_msg,
-            "valor_retencion": 0.0,
-            "observaciones": [
-                "Error en liquidación de retefuente", 
-                "Revise estructura de datos",
-                f"Error técnico: {str(e)}"
-            ]
-        }
+    # Código que se ejecuta ANTES de que la aplicación inicie
+    configurar_logging()
+    global logger, db_manager, business_service
+    logger = logging.getLogger(__name__)
 
+    logger.info(" Worker de FastAPI iniciándose... Cargando configuración.")
+    if not inicializar_configuracion():
+        logger.critical(" FALLO EN LA CARGA DE CONFIGURACIÓN. La aplicación puede no funcionar correctamente.")
 
-# Servir archivos estáticos desde la carpeta Static
-app.mount("/static", StaticFiles(directory="Static"), name="static")
+    # Inicializar gestor de base de datos usando Infrastructure Layer
+    db_manager, business_service = inicializar_database_manager()
 
-async def inicio():
-    """Página de inicio - Servir frontend desde Static/"""
-    try:
-        with open("Static/index.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(
-            content="<h1>Frontend no encontrado</h1><p>Archivo Static/index.html no existe</p>",
-            status_code=404
-        )
+    yield # <--- La aplicación se ejecuta aquí
 
-@app.post("/procesar-documentos")
-async def procesar_documentos(
-    archivos: List[UploadFile] = File(...),
-    nit_administrativo: str = Form(...)
-):
-    """
-    Endpoint secundario para procesar documentos de facturas.
-    Redirige al endpoint principal manteniendo compatibilidad.
-    """
-    # Redirigir al endpoint principal
-    return await procesar_facturas(archivos, nit_administrativo)
+    # Código que se ejecuta DESPUÉS de que la aplicación se detiene (opcional)
+    logger.info(" Worker de FastAPI deteniéndose.")
 
 # ===============================
-# 🚀 ENDPOINT PRINCIPAL ÚNICO - RETEFUENTE + ESTAMPILLA INTEGRADOS
+# API FASTAPI
 # ===============================
 
-@app.post("/api/procesar-facturas-test")
-async def procesar_facturas(
-    archivos: List[UploadFile] = File(...),
-    nit_administrativo: str = Form(...)
-):
-    """
-    Endpoint principal para procesar documentos de facturas.
-    
-    ✅ FUNCIONALIDAD INTEGRADA:
-    - Retención en la fuente (funcionalidad original mantenida)
-    - Estampilla pro universidad nacional (funcionalidad integrada)
-    - Contribución a obra pública 5% (funcionalidad integrada)
-    - IVA y ReteIVA (nueva funcionalidad agregada)
-    - Procesamiento paralelo cuando múltiples impuestos aplican
-    - Guardado automático de JSONs en Results/
-    
-    ✅ ÚNICO ENDPOINT: Bug crítico corregido - Duplicación eliminada
-    """
-    inicio_tiempo = datetime.now()
-    logger.info(f"\n{'='*60}")
-    logger.info(f"🚀 PROCESANDO {len(archivos)} ARCHIVOS - SISTEMA INTEGRADO")
-    logger.info(f"📅 {inicio_tiempo.strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"🔍 NIT administrativo: {nit_administrativo}")
-    logger.info(f"{'='*60}")
-    
-    try:
-        # 1. VALIDAR NIT ADMINISTRATIVO
-        logger.info("🔍 Paso 1: Validando NIT administrativo...")
-        es_valido, nombre_entidad, impuestos_aplicables = validar_nit_administrativo(nit_administrativo)
-        if not es_valido:
-            error_detail = {
-                "error": "NIT no válido",
-                "mensaje": f"NIT administrativo '{nit_administrativo}' no está configurado",
-                "tipo": "validation_error"
-            }
-            logger.error(f"❌ {error_detail['mensaje']}")
-            raise HTTPException(status_code=400, detail=error_detail)
-        
-        logger.info(f"✅ NIT validado: {nombre_entidad}")
-        logger.info(f"📋 Impuestos aplicables: {', '.join(impuestos_aplicables)}")
-        
-        # Verificar si aplica retefuente
-        aplica_retencion_fuente = nit_aplica_retencion_fuente(nit_administrativo)
-        if not aplica_retencion_fuente:
-            resultado_sin_retencion = {
-                "exito": False,
-                "error": "NO aplica retención en la fuente",
-                "mensaje": f"El NIT {nit_administrativo} ({nombre_entidad}) no tiene retención en la fuente configurada",
-                "nit_administrativo": nit_administrativo,
-                "entidad": nombre_entidad,
-                "impuestos_aplicables": impuestos_aplicables,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            # Guardar resultado en JSON
-            guardar_archivo_json(resultado_sin_retencion, "sin_retencion_fuente")
-            
-            return resultado_sin_retencion
-        
-        # 2. DETECCIÓN AUTOMÁTICA DE IMPUESTOS APLICABLES (INTEGRADA)
-        deteccion_impuestos = detectar_impuestos_aplicables(nit_administrativo)
-        
-        aplica_retencion_fuente = nit_aplica_retencion_fuente(nit_administrativo)
-        aplica_estampilla = deteccion_impuestos['aplica_estampilla_universidad']
-        aplica_obra_publica = deteccion_impuestos['aplica_contribucion_obra_publica']  # 🏗️ NUEVO
-        procesamiento_paralelo = deteccion_impuestos['procesamiento_paralelo']
-        
-        logger.info(f"🏛️ Estampilla Pro Universidad Nacional: {'SÍ aplica' if aplica_estampilla else 'NO aplica'}")
-        logger.info(f"🏗️ Contribución a Obra Pública 5%: {'SÍ aplica' if aplica_obra_publica else 'NO aplica'}")
-        logger.info(f"⚡ Procesamiento paralelo: {'SÍ' if procesamiento_paralelo else 'NO'}")
-        
-        impuestos_a_procesar = deteccion_impuestos['impuestos_aplicables'].copy()
-        if aplica_retencion_fuente and "RETENCION_FUENTE" not in impuestos_a_procesar:
-            impuestos_a_procesar.append("RETENCION_FUENTE")
-            
-        logger.info(f"⚡ Impuestos a procesar: {', '.join(impuestos_a_procesar)}")
-        logger.info(f"📊 Total impuestos: {len(impuestos_a_procesar)}")
-        
-        # Log detallado de detección
-        if aplica_obra_publica:
-            logger.info(f"🏗️ NIT configurado para obra pública: {deteccion_impuestos.get('nombre_entidad_obra_publica', 'N/A')}")
-        if aplica_estampilla:
-            logger.info(f"🏛️ NIT configurado para estampilla: {deteccion_impuestos.get('nombre_entidad_estampilla', 'N/A')}")
-        
-        # 3. EXTRAER TEXTO DE ARCHIVOS
-        logger.info(f"📄 Paso 2: Extrayendo texto de {len(archivos)} archivos...")
-        extractor = ProcesadorArchivos()
-        
-        # Crear lista de archivos para el extractor
-        archivos_para_extractor = []
-        for archivo in archivos:
-            await archivo.seek(0)
-            archivos_para_extractor.append(archivo)
-        
-        # Extraer texto usando el extractor original
-        logger.info(f"🔍 Usando extractor modular para todos los archivos...")
-        textos_archivos_original = await extractor.procesar_multiples_archivos(archivos_para_extractor)
-        
-        # Aplicar preprocesamiento a Excel
-        logger.info("🧹 Aplicando preprocesamiento híbrido a archivos Excel...")
-        textos_archivos = {}
-        archivos_excel_preprocesados = 0
-        
-        for archivo in archivos:
-            nombre_archivo = archivo.filename
-            
-            if nombre_archivo in textos_archivos_original:
-                texto_original = textos_archivos_original[nombre_archivo]
-                
-                # Preprocesamiento Excel si es necesario
-                if (nombre_archivo.lower().endswith(('.xlsx', '.xls')) and 
-                    not texto_original.startswith("ERROR")):
-                    
-                    logger.info(f"📊 Preprocesando Excel: {nombre_archivo}")
-                    try:
-                        await archivo.seek(0)
-                        contenido = await archivo.read()
-                        texto_preprocesado = preprocesar_excel_limpio(contenido, nombre_archivo)
-                        
-                        if not texto_preprocesado.startswith("Error"):
-                            textos_archivos[nombre_archivo] = texto_preprocesado
-                            archivos_excel_preprocesados += 1
-                            logger.info(f"✅ Excel preprocesado: {nombre_archivo} ({len(texto_preprocesado)} caracteres)")
-                        else:
-                            textos_archivos[nombre_archivo] = texto_original
-                            logger.warning(f"⚠️ Usando original para: {nombre_archivo}")
-                    except Exception as e:
-                        textos_archivos[nombre_archivo] = texto_original
-                        logger.warning(f"⚠️ Error preprocesando {nombre_archivo}: {e}")
-                else:
-                    textos_archivos[nombre_archivo] = texto_original
-            else:
-                textos_archivos[nombre_archivo] = "ERROR: Archivo no procesado"
-        
-        logger.info(f"✅ Extracción completada: {len(textos_archivos)}/{len(archivos)} archivos exitosos")
-        logger.info(f"🧹 Excel preprocesados: {archivos_excel_preprocesados}")
-        
-        # 4. CLASIFICAR DOCUMENTOS Y DETECTAR TIPO
-        logger.info(f"🏷️ Paso 3: Clasificando documentos con Gemini...")
-        clasificador = ProcesadorGemini()
-        
-        clasificacion, es_consorcio, es_facturacion_extranjera = await clasificador.clasificar_documentos(textos_archivos)
-        
-        # Guardar clasificación en JSON
-        clasificacion_data = {
-            "timestamp": datetime.now().isoformat(),
-            "archivos_procesados": len(archivos),
-            "nit_administrativo": nit_administrativo,
-            "clasificacion": clasificacion,
-            "es_consorcio": es_consorcio,
-            "es_facturacion_extranjera": es_facturacion_extranjera,
-            "textos_extraidos": {nombre: len(texto) for nombre, texto in textos_archivos.items()}
-        }
-        guardar_archivo_json(clasificacion_data, "clasificacion_documentos")
-        
-        logger.info(f"✅ Clasificación completada: {len(clasificacion)} documentos")
-        logger.info(f"🏢 Consorcio detectado: {es_consorcio}")
-        logger.info(f"🌍 Facturación extranjera: {es_facturacion_extranjera}")
-        
-        # 5. PREPARAR DOCUMENTOS CLASIFICADOS
-        documentos_clasificados = {}
-        for nombre_archivo, categoria in clasificacion.items():
-            documentos_clasificados[nombre_archivo] = {
-                "categoria": categoria,
-                "texto": textos_archivos.get(nombre_archivo, "")
-            }
-        
-        # 6. PROCESAR SEGÚN TIPO DE FACTURA
-        if es_consorcio:
-            logger.info(f"🏢 Procesando como CONSORCIO {'EXTRANJERO' if es_facturacion_extranjera else 'NACIONAL'}")
-            resultado_analisis = await clasificador.analizar_consorcio(
-                documentos_clasificados, es_facturacion_extranjera
-            )
-            
-            # Para consorcios, por ahora solo retefuente
-            resultado_analisis.update({
-                "procesamiento_paralelo": False,
-                "aplica_estampilla_universidad": False,
-                "impuestos_procesados": ["RETENCION_FUENTE"],
-                "es_consorcio": True
-            })
-            
-        else:
-            # 7. PROCESAMIENTO SEGÚN IMPUESTOS APLICABLES
-            if len(impuestos_a_procesar) > 1:
-                # PROCESAMIENTO PARALELO: RETEFUENTE + ESTAMPILLA + OBRA PÚBLICA
-                logger.info(f"⚡ Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
-                
-                # Mostrar cuáles impuestos se van a procesar en paralelo
-                if aplica_estampilla and aplica_obra_publica:
-                    logger.info("🔥 PROCESAMIENTO COMPLETO: RETEFUENTE + ESTAMPILLA + OBRA PÚBLICA")
-                elif aplica_estampilla:
-                    logger.info("⚡ PROCESAMIENTO DUAL: RETEFUENTE + ESTAMPILLA UNIVERSIDAD")
-                elif aplica_obra_publica:
-                    logger.info("⚡ PROCESAMIENTO DUAL: RETEFUENTE + OBRA PÚBLICA")
-                
-                # Importar liquidador de estampilla con modelos
-                from Liquidador.liquidador_estampilla import LiquidadorEstampilla, AnalisisContrato, TerceroContrato, ObjetoContratoIdentificado
-                liquidador_estampilla = LiquidadorEstampilla()
-                
-                # EJECUTAR EN PARALELO: Retefuente + Estampilla + Obra Pública
-                logger.info("🔄 Ejecutando análisis paralelo con Gemini...")
-                retefuente_task = clasificador.analizar_factura(documentos_clasificados, es_facturacion_extranjera)
-                
-                # El análisis de estampilla YA incluye obra pública desde la integración
-                # porque analizar_estampilla ahora es analizar_impuestos_especiales
-                impuestos_especiales_task = clasificador.analizar_estampilla(documentos_clasificados)
-                
-                # Esperar ambos resultados
-                analisis_factura, analisis_impuestos_especiales = await asyncio.gather(
-                    retefuente_task, 
-                    impuestos_especiales_task,
-                    return_exceptions=True
-                )
-                
-                # ✅ VALIDAR EXCEPCIONES ANTES DE USAR LOS RESULTADOS
-                if isinstance(analisis_factura, Exception):
-                    logger.error(f"❌ Error en análisis de retefuente: {analisis_factura}")
-                    analisis_factura = None
-                    
-                if isinstance(analisis_impuestos_especiales, Exception):
-                    logger.error(f"❌ Error en análisis de impuestos especiales: {analisis_impuestos_especiales}")
-                    analisis_impuestos_especiales = {}
-                else:
-                    # Solo hacer logging si NO es una excepción
-                    logger.info(f"✅ Análisis de impuestos especiales exitoso")
-                
-                # Renombrar para compatibilidad con el código existente
-                analisis_estampilla = analisis_impuestos_especiales
-                
-                # Guardar análisis en JSON
-                analisis_data = {
-                    "timestamp": datetime.now().isoformat(),
-                    "procesamiento_paralelo": True,
-                    "impuestos_aplicables": impuestos_a_procesar,
-                    "deteccion_automatica": deteccion_impuestos,
-                    "retefuente_analisis": analisis_factura.dict() if analisis_factura else None,
-                    "impuestos_especiales_analisis": analisis_impuestos_especiales,
-                    "es_facturacion_extranjera": es_facturacion_extranjera
-                }
-                guardar_archivo_json(analisis_data, "analisis_paralelo")
-                
-                # LIQUIDACIÓN PARALELA (HASTA 3 IMPUESTOS)
-                logger.info("💰 Iniciando liquidación paralela de impuestos...")
-                liquidador_retencion = LiquidadorRetencion()
-                resultado_retefuente = None
-                resultado_estampilla = None
-                resultado_obra_publica = None
-                
-                # ✅ LIQUIDAR RETEFUENTE DE FORMA SEGURA
-                if analisis_factura:
-                    logger.info("🔄 Ejecutando liquidación segura de retefuente...")
-                    
-                    # Guardar análisis individual de retefuente
-                    analisis_retefuente_data = {
-                        "timestamp": datetime.now().isoformat(),
-                        "tipo_analisis": "retefuente",
-                        "nit_administrativo": nit_administrativo,
-                        "procesamiento_paralelo": True,
-                        "analisis": analisis_factura.dict() if hasattr(analisis_factura, 'dict') else analisis_factura
-                    }
-                    guardar_archivo_json(analisis_retefuente_data, "analisis_retefuente")
-                    logger.info("💾 Análisis individual guardado: analisis_retefuente")
-                    
-                    # ✅ USAR FUNCIÓN SEGURA EN LUGAR DE LLAMADA DIRECTA
-                    resultado_retefuente_dict = liquidar_retefuente_seguro(
-                        analisis_retefuente_data, nit_administrativo
-                    )
-                    
-                    if resultado_retefuente_dict.get("calculo_exitoso", False):
-                        logger.info(f"✅ Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0):,.2f}")
-                        
-                        # Crear objeto compatible para el resto del código
-                        resultado_retefuente = type('obj', (object,), {
-                            'puede_liquidar': resultado_retefuente_dict.get("aplica", False),
-                            'valor_retencion': resultado_retefuente_dict.get("valor_retencion", 0.0),
-                            'concepto_aplicado': resultado_retefuente_dict.get("concepto", ""),
-                            'tarifa_aplicada': resultado_retefuente_dict.get("tarifa_aplicada", 0.0),
-                            'mensajes_error': resultado_retefuente_dict.get("observaciones", [])
-                        })()
-                    else:
-                        logger.error(f"❌ Error liquidando retefuente: {resultado_retefuente_dict.get('error', 'Error desconocido')}")
-                        resultado_retefuente = None
-                else:
-                    logger.warning("⚠️ No hay análisis de factura para liquidar retefuente")
-                    resultado_retefuente = None
-                
-                # Liquidar impuestos especiales según detección automática
-                if analisis_impuestos_especiales:
-                    # ADAPTADOR: Convertir respuesta de Gemini a objetos esperados por liquidadores
-                    logger.info("🔄 Aplicando adaptadores de datos para liquidación integrada...")
-                    logger.info(f"🔍 Procesando {len(analisis_impuestos_especiales)} impuestos especiales detectados")
-                    
-                    # Liquidar estampilla si aplica
-                    if aplica_estampilla and analisis_impuestos_especiales.get("estampilla_universidad"):
-                        logger.info("🏦 Procesando estampilla universidad con adaptador de datos...")
-                        try:
-                            estampilla_data = analisis_impuestos_especiales["estampilla_universidad"]
-                            tercero_data = analisis_impuestos_especiales.get("tercero_identificado", {})
-                            
-                            logger.info(f"🧐 Debug estampilla_data: {estampilla_data}")
-                            logger.info(f"🧐 Debug tercero_data: {tercero_data}")
-                            
-                            # CREAR OBJETO AnalisisContrato desde respuesta de Gemini
-                            
-                            # Crear objeto tercero
-                            tercero = TerceroContrato(
-                                nombre=tercero_data.get("nombre", ""),
-                                es_consorcio=tercero_data.get("es_consorcio", False),
-                                administra_recursos_publicos=tercero_data.get("administra_recursos_publicos", False)
-                            )
-                            
-                            # Crear objeto contrato
-                            objeto_contrato = ObjetoContratoIdentificado(
-                                objeto=estampilla_data.get("objeto_contrato", {}).get("tipo", "no_identificado"),
-                                aplica_estampilla=estampilla_data.get("objeto_contrato", {}).get("aplica_estampilla", False),
-                                palabras_clave_encontradas=estampilla_data.get("objeto_contrato", {}).get("palabras_clave_encontradas", [])
-                            )
-                            
-                            # Crear análisis completo
-                            analisis_contrato = AnalisisContrato(
-                                valor_total_contrato=estampilla_data.get("valor_contrato", {}).get("valor_total_pesos", 0.0),
-                                valor_total_uvt=estampilla_data.get("valor_contrato", {}).get("valor_total_uvt", 0.0),
-                                objeto_identificado=objeto_contrato,
-                                tercero=tercero,
-                                observaciones=[]
-                            )
-                            
-                            logger.info(f"📊 Datos estampilla - Valor: ${analisis_contrato.valor_total_contrato:,.2f}, Tercero: {tercero.nombre}, Objeto: {objeto_contrato.objeto}")
-                            
-                            # LLAMAR LIQUIDADOR CON OBJETO CORRECTO
-                            if analisis_contrato.valor_total_contrato and analisis_contrato.valor_total_contrato > 0:
-                                resultado_estampilla = liquidador_estampilla.liquidar_estampilla(
-                                    analisis_contrato, nit_administrativo
-                                )
-                                logger.info(f"✅ Estampilla liquidada: ${resultado_estampilla.valor_estampilla:,.2f}")
-                            else:
-                                logger.warning("⚠️ Valor de contrato es 0 o no identificado para estampilla")
-                                resultado_estampilla = None
-                            
-                        except Exception as e:
-                            logger.error(f"❌ Error liquidando estampilla: {e}")
-                    
-                    # Liquidar obra pública si aplica
-                    if aplica_obra_publica and analisis_impuestos_especiales.get("contribucion_obra_publica"):
-                        logger.info("🏗️ Procesando contribución obra pública con adaptador de datos...")
-                        try:
-                            obra_data = analisis_impuestos_especiales["contribucion_obra_publica"]
-                            tercero_data = analisis_impuestos_especiales.get("tercero_identificado", {})
-                            
-                            logger.info(f"🧐 Debug obra_data: {obra_data}")
-                            logger.info(f"🧐 Debug tercero_data: {tercero_data}")
-                            
-                            # EXTRAER PARÁMETROS PARA OBRA PÚBLICA
-                            valor_factura_sin_iva = obra_data.get("valor_factura", {}).get("valor_sin_iva", 0.0)
-                            nombre_tercero = tercero_data.get("nombre", "")
-                            es_consorcio = tercero_data.get("es_consorcio", False)
-                            consorciados_info = tercero_data.get("consorciados", [])
-                            
-                            logger.info(f"📊 Datos extraídos - Valor: ${valor_factura_sin_iva:,.2f}, Tercero: {nombre_tercero}, Consorcio: {es_consorcio}")
-                            
-                            # Crear descripción del objeto
-                            palabras_clave = obra_data.get("objeto_contrato", {}).get("palabras_clave_encontradas", [])
-                            objeto_contrato = " ".join(palabras_clave) if palabras_clave else "contrato de obra"
-                            
-                            # LLAMAR LIQUIDADOR DE OBRA PÚBLICA
-                            if valor_factura_sin_iva and valor_factura_sin_iva > 0:
-                                resultado_obra_publica = liquidador_estampilla.liquidar_contribucion_obra_publica(
-                                    valor_factura_sin_iva=valor_factura_sin_iva,
-                                    nit_administrativo=nit_administrativo,
-                                    nombre_tercero=nombre_tercero,
-                                    objeto_contrato=objeto_contrato,
-                                    es_consorcio=es_consorcio,
-                                    consorciados_info=consorciados_info
-                                )
-                                logger.info(f"✅ Obra pública liquidada: ${resultado_obra_publica.valor_contribucion:,.2f}")
-                            else:
-                                logger.warning("⚠️ Valor de factura es 0 o no identificado para obra pública")
-                                resultado_obra_publica = None
-                            
-                        except Exception as e:
-                            logger.error(f"❌ Error liquidando obra pública: {e}")
-                
-                # Consolidar resultados de todos los impuestos
-                valor_total_impuestos = (
-                    (resultado_retefuente.valor_retencion if resultado_retefuente else 0) + 
-                    (resultado_estampilla.valor_estampilla if resultado_estampilla and hasattr(resultado_estampilla, 'valor_estampilla') else 0) +
-                    (resultado_obra_publica.valor_contribucion if resultado_obra_publica and hasattr(resultado_obra_publica, 'valor_contribucion') else 0)
-                )
-                
-                resultado_analisis = {
-                    "procesamiento_paralelo": True,
-                    "aplica_estampilla_universidad": aplica_estampilla,
-                    "impuestos_procesados": impuestos_a_procesar,
-                    "exito": True,
-                    "aplica_retencion": resultado_retefuente.puede_liquidar if resultado_retefuente else False,
-                    "valor_total_factura": analisis_factura.valor_total if analisis_factura else 0,
-                    "iva_total": analisis_factura.iva if analisis_factura else 0,
-                    "valor_retencion": resultado_retefuente.valor_retencion if resultado_retefuente else 0,
-                    "concepto": resultado_retefuente.concepto_aplicado if resultado_retefuente else "No identificado",
-                    "tarifa_retencion": resultado_retefuente.tarifa_aplicada if resultado_retefuente else 0,
-                    "retefuente": {
-                        "aplica": resultado_retefuente.puede_liquidar if resultado_retefuente else False,
-                        "valor_retencion": resultado_retefuente.valor_retencion if resultado_retefuente else 0,
-                        "concepto": resultado_retefuente.concepto_aplicado if resultado_retefuente else "No identificado",
-                        "tarifa_retencion": resultado_retefuente.tarifa_aplicada if resultado_retefuente else 0,
-                        "observaciones": resultado_retefuente.mensajes_error if resultado_retefuente else []
-                    },
-                    "estampilla_universidad": {
-                        "aplica": resultado_estampilla.aplica if resultado_estampilla else False,
-                        "estado": resultado_estampilla.estado if resultado_estampilla else "No procesada",
-                        "valor_estampilla": resultado_estampilla.valor_estampilla if resultado_estampilla else 0,
-                        "tarifa_aplicada": resultado_estampilla.tarifa_aplicada if resultado_estampilla else 0,
-                        "rango_uvt": resultado_estampilla.rango_uvt if resultado_estampilla else "No calculado",
-                        "valor_contrato_pesos": resultado_estampilla.valor_contrato_pesos if resultado_estampilla else 0,
-                        "valor_contrato_uvt": resultado_estampilla.valor_contrato_uvt if resultado_estampilla else 0,
-                        "observaciones": resultado_estampilla.mensajes_error if resultado_estampilla else ["No se pudo procesar estampilla"]
-                    },
-                    "contribucion_obra_publica": {
-                        "aplica": resultado_obra_publica.aplica if resultado_obra_publica else aplica_obra_publica,
-                        "estado": resultado_obra_publica.estado if resultado_obra_publica else ("No procesada" if aplica_obra_publica else "No aplica"),
-                        "valor_contribucion": resultado_obra_publica.valor_contribucion if resultado_obra_publica else 0,
-                        "tarifa_aplicada": resultado_obra_publica.tarifa_aplicada if resultado_obra_publica else 0.05,
-                        "valor_factura_sin_iva": resultado_obra_publica.valor_factura_sin_iva if resultado_obra_publica else 0,
-                        "observaciones": resultado_obra_publica.mensajes_error if resultado_obra_publica else (["No se pudo procesar obra pública"] if aplica_obra_publica else ["NIT no configurado para obra pública"])
-                    },
-                    "es_facturacion_extranjera": es_facturacion_extranjera,
-                    "resumen_total": {
-                        "valor_total_impuestos": valor_total_impuestos,
-                        "impuestos_aplicables": {
-                            "retefuente": resultado_retefuente.puede_liquidar if resultado_retefuente else False,
-                            "estampilla": resultado_estampilla.aplica if resultado_estampilla else False,
-                            "obra_publica": resultado_obra_publica.aplica if resultado_obra_publica else False
-                        }
-                    },
-                    "observaciones": (analisis_factura.observaciones if analisis_factura else []) + (resultado_retefuente.mensajes_error if resultado_retefuente else []),
-                    "naturaleza_tercero": analisis_factura.naturaleza_tercero.dict() if analisis_factura and analisis_factura.naturaleza_tercero else None
-                }
-                
-                logger.info("⚡ Procesamiento paralelo completado exitosamente")
-                logger.info(f"💰 Total impuestos calculados: ${valor_total_impuestos:,.2f}")
-                
-            else:
-                # FLUJO ORIGINAL: Solo retefuente
-                logger.info("🧠 Procesando solo RETEFUENTE (estampilla no aplica)")
-                
-                analisis_factura = await clasificador.analizar_factura(
-                    documentos_clasificados, es_facturacion_extranjera
-                )
-                
-                # Guardar análisis en JSON
-                analisis_data = {
-                    "timestamp": datetime.now().isoformat(),
-                    "procesamiento_paralelo": False,
-                    "analisis_factura": analisis_factura.dict(),
-                    "es_facturacion_extranjera": es_facturacion_extranjera
-                }
-                guardar_archivo_json(analisis_data, "analisis_factura")
-                
-                logger.info(f"✅ Análisis completado: {len(analisis_factura.conceptos_identificados)} conceptos identificados")
-                
-                # Liquidar retención
-                logger.info(f"💰 Calculando retención en la fuente...")
-                liquidador = LiquidadorRetencion()
-                
-                # ✅ LIQUIDACIÓN SEGURA INDIVIDUAL
-                logger.info("🔄 Ejecutando liquidación segura individual...")
-                
-                # Crear estructura de datos compatible
-                analisis_retefuente_data = {
-                    "timestamp": datetime.now().isoformat(),
-                    "tipo_analisis": "retefuente",
-                    "nit_administrativo": nit_administrativo,
-                    "procesamiento_paralelo": False,
-                    "analisis": analisis_factura.dict() if hasattr(analisis_factura, 'dict') else analisis_factura
-                }
-                guardar_archivo_json(analisis_retefuente_data, "analisis_retefuente")
-                
-                # ✅ USAR FUNCIÓN SEGURA
-                resultado_retefuente_dict = liquidar_retefuente_seguro(
-                    analisis_retefuente_data, nit_administrativo
-                )
-                
-                if resultado_retefuente_dict.get("calculo_exitoso", False):
-                    if es_facturacion_extranjera:
-                        logger.info(f"🌍 Liquidación extranjera segura: ${resultado_retefuente_dict.get('valor_retencion', 0):,.0f}")
-                    else:
-                        logger.info(f"🇨🇴 Liquidación nacional segura: ${resultado_retefuente_dict.get('valor_retencion', 0):,.0f}")
-                    
-                    # Crear objeto compatible
-                    resultado_liquidacion = type('obj', (object,), {
-                        'puede_liquidar': resultado_retefuente_dict.get("aplica", False),
-                        'valor_retencion': resultado_retefuente_dict.get("valor_retencion", 0.0),
-                        'concepto_aplicado': resultado_retefuente_dict.get("concepto", ""),
-                        'tarifa_aplicada': resultado_retefuente_dict.get("tarifa_aplicada", 0.0),
-                        'mensajes_error': resultado_retefuente_dict.get("observaciones", [])
-                    })()
-                else:
-                    logger.error(f"❌ Error en liquidación segura: {resultado_retefuente_dict.get('error', 'Error desconocido')}")
-                    # Crear objeto con valores por defecto
-                    resultado_liquidacion = type('obj', (object,), {
-                        'puede_liquidar': False,
-                        'valor_retencion': 0.0,
-                        'concepto_aplicado': "Error en liquidación",
-                        'tarifa_aplicada': 0.0,
-                        'mensajes_error': [resultado_retefuente_dict.get('error', 'Error desconocido')]
-                    })()
-                
-                # Convertir a formato compatible para respuesta
-                resultado_analisis = {
-                    "procesamiento_paralelo": False,
-                    "aplica_estampilla_universidad": aplica_estampilla,
-                    "impuestos_procesados": ["RETENCION_FUENTE"],
-                    "exito": True,
-                    "aplica_retencion": resultado_liquidacion.puede_liquidar,
-                    "valor_total_factura": analisis_factura.valor_total or 0,
-                    "iva_total": analisis_factura.iva or 0,
-                    "valor_retencion": resultado_liquidacion.valor_retencion,
-                    "concepto": resultado_liquidacion.concepto_aplicado,
-                    "tarifa_retencion": resultado_liquidacion.tarifa_aplicada,
-                    "observaciones": analisis_factura.observaciones + resultado_liquidacion.mensajes_error,
-                    "es_facturacion_extranjera": es_facturacion_extranjera,
-                    "naturaleza_tercero": analisis_factura.naturaleza_tercero.dict() if analisis_factura.naturaleza_tercero else None,
-                    "estampilla_universidad": {
-                        "aplica": aplica_estampilla,
-                        "razon": "NIT administrativo no configurado para estampilla pro universidad nacional" if not aplica_estampilla else "No se procesó en modo individual"
-                    },
-                    "contribucion_obra_publica": {
-                        "aplica": aplica_obra_publica,
-                        "razon": "NIT administrativo no configurado para obra pública" if not aplica_obra_publica else "No se procesó en modo individual"
-                    }
-                }
-        
-        # 8. RESPUESTA FINAL
-        tiempo_total = (datetime.now() - inicio_tiempo).total_seconds()
-        
-        respuesta_final = {
-            **resultado_analisis,
-            "tiempo_procesamiento_segundos": tiempo_total,
-            "archivos_procesados": len(archivos),
-            "nit_administrativo": nit_administrativo,
-            "entidad_administrativa": nombre_entidad,
-            "es_consorcio": es_consorcio,
-            "documentos_clasificados": {
-                nombre: info["categoria"] for nombre, info in documentos_clasificados.items()
-            },
-            "version": "2.0.0",
-            "timestamp": datetime.now().isoformat(),
-            "sistema": "integrado_retefuente_estampilla"
-        }
-        
-        # Guardar respuesta final en JSON
-        guardar_archivo_json(respuesta_final, "resultado_final")
-        
-        logger.info(f"🎉 Procesamiento completado exitosamente en {tiempo_total:.2f} segundos")
-        logger.info(f"💾 Todos los archivos JSON guardados en Results/")
-        logger.info(f"{'='*60}\n")
-        
-        return respuesta_final
-        
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        tiempo_total = (datetime.now() - inicio_tiempo).total_seconds()
-        logger.error(f"❌ Error procesando documentos: {e}")
-        logger.error(f"Traceback completo: {traceback.format_exc()}")
-        
-        # Determinar el tipo de error y mensaje user-friendly
-        error_msg = str(e)
-        user_message = "Error interno del servidor durante el procesamiento"
-        error_type = "server_error"
-        
-        if "json" in error_msg.lower():
-            user_message = "Error procesando respuesta de IA. Inténtalo de nuevo."
-            error_type = "json_error"
-        elif "timeout" in error_msg.lower():
-            user_message = "La IA tardó demasiado en responder. Inténtalo de nuevo."
-            error_type = "timeout_error"
-        elif "api" in error_msg.lower() or "gemini" in error_msg.lower():
-            user_message = "Error de conexión con servicios de IA. Verifica tu conexión."
-            error_type = "api_error"
-        elif "archivo" in error_msg.lower() or "file" in error_msg.lower():
-            user_message = "Error procesando uno de los archivos. Verifica que estén en buen estado."
-            error_type = "file_error"
-        
-        # Guardar error en JSON para debugging
-        error_data = {
-            "timestamp": datetime.now().isoformat(),
-            "error_type": error_type,
-            "error_message": error_msg,
-            "user_message": user_message,
-            "tiempo_procesamiento_segundos": tiempo_total,
-            "archivos_procesados": len(archivos) if archivos else 0,
-            "nit_administrativo": nit_administrativo,
-            "traceback": traceback.format_exc()
-        }
-        guardar_archivo_json(error_data, "error_procesamiento")
-        
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": f"Error de procesamiento ({error_type})",
-                "mensaje": user_message,
-                "detalle_tecnico": error_msg,
-                "tipo": error_type,
-                "version": "2.0.0",
-                "timestamp": datetime.now().isoformat()
-            }
-        )
+app = FastAPI(
+    title="Preliquidador de Retefuente - Colombia",
+    description="Sistema automatizado para calcular retención en la fuente con arquitectura modular",
+    version="2.0.0",
+    lifespan=lifespan
+)
 
-# ===============================
-# ENDPOINT PRINCIPAL INTEGRADO - SISTEMA PARALELO v2.0
-# ===============================
 
 @app.post("/api/procesar-facturas")
 async def procesar_facturas_integrado(
-    archivos: List[UploadFile] = File(...), 
-    nit_administrativo: str = Form(...)
+    archivos: List[UploadFile] = File(...),
+    codigo_del_negocio: int = Form(...),
+    proveedor: str = Form(...),
+    nit_proveedor: str = Form(...),
+    estructura_contable: int = Form(...),
+    observaciones_tp: Optional[str] = Form(None),
+    genera_presupuesto: Optional[str] = Form(None),
+    rubro: Optional[str] = Form(None),
+    centro_costos: Optional[int] = Form(None),
+    numero_contrato: Optional[str] = Form(None),
+    valor_contrato_municipio: Optional[float] = Form(None)
 ) -> JSONResponse:
     """
-    🚀 ENDPOINT PRINCIPAL ÚNICO - SISTEMA INTEGRADO v2.0
-    
+     ENDPOINT PRINCIPAL - SISTEMA INTEGRADO v3.0
+
     Procesa facturas y calcula múltiples impuestos en paralelo:
-    ✅ RETENCIÓN EN LA FUENTE (funcionalidad original)
-    ✅ ESTAMPILLA PRO UNIVERSIDAD NACIONAL (integrada)
-    ✅ CONTRIBUCIÓN A OBRA PÚBLICA 5% (integrada) 
-    ✅ IVA Y RETEIVA (nueva funcionalidad)
-    ✅ PROCESAMIENTO PARALELO cuando múltiples impuestos aplican
-    ✅ GUARDADO AUTOMÁTICO de JSONs en Results/
-    
+     RETENCIÓN EN LA FUENTE (funcionalidad original)
+     ESTAMPILLA PRO UNIVERSIDAD NACIONAL (integrada)
+     CONTRIBUCIÓN A OBRA PÚBLICA 5% (integrada)
+     IVA Y RETEIVA (nueva funcionalidad)
+     PROCESAMIENTO PARALELO cuando múltiples impuestos aplican
+     GUARDADO AUTOMÁTICO de JSONs en Results/
+     CONSULTA DE BASE DE DATOS para información del negocio
+     CONTEXTO DEL PROVEEDOR para mejor identificación (v3.0)
+
     Args:
         archivos: Lista de archivos (facturas, RUTs, anexos, contratos)
-        nit_administrativo: NIT de la entidad administrativa
-        
+        codigo_del_negocio: Código del negocio para consultar en base de datos (el NIT administrativo se obtiene de la DB)
+        proveedor: Nombre del proveedor que emite la factura (OBLIGATORIO - mejora identificación de consorcios y retenciones)
+
     Returns:
         JSONResponse: Resultado consolidado de todos los impuestos aplicables
     """
-    logger.info(f"🚀 ENDPOINT PRINCIPAL INTEGRADO - Procesando {len(archivos)} archivos para NIT: {nit_administrativo}")
-    
+    logger.info(f" ENDPOINT PRINCIPAL INTEGRADO v3.0 - Procesando {len(archivos)} archivos")
+    logger.info(f" Código negocio: {codigo_del_negocio} | Proveedor: {proveedor}")
+
     try:
         # =================================
         # PASO 1: VALIDACIÓN Y CONFIGURACIÓN
         # =================================
-        
-        # Validar NIT administrativo
+
+        # Consultar información del negocio usando BusinessService (SOLID: SRP)
+        resultado_negocio = business_service.obtener_datos_negocio(codigo_del_negocio)
+        datos_negocio = resultado_negocio.get('data') if resultado_negocio.get('success') else None
+
+        # Extraer NIT administrativo de la base de datos
+        if not datos_negocio or 'nit' not in datos_negocio:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "No se pudo obtener el NIT administrativo de la base de datos",
+                    "codigo_del_negocio": codigo_del_negocio,
+                    "datos_negocio": datos_negocio,
+                    "mensaje": "Código de negocio no encontrado o sin NIT asociado"
+                }
+            )
+
+        nit_administrativo = str(datos_negocio['nit'])
+        logger.info(f" NIT administrativo obtenido de DB: {nit_administrativo}")
+
+        # Validar NIT administrativo obtenido de DB
         es_valido, nombre_entidad, impuestos_aplicables = validar_nit_administrativo(nit_administrativo)
         if not es_valido:
             raise HTTPException(
@@ -1526,16 +237,29 @@ async def procesar_facturas_integrado(
                 }
             )
         
-        logger.info(f"✅ NIT válido: {nombre_entidad}")
-        logger.info(f"🏷️ Impuestos configurados: {impuestos_aplicables}")
-        
-        # Detectar automáticamente qué impuestos aplican
-        deteccion_impuestos = detectar_impuestos_aplicables(nit_administrativo)
+        logger.info(f" NIT válido: {nombre_entidad}")
+        logger.info(f"Impuestos configurados: {impuestos_aplicables}")
+
+        # Detectar automáticamente qué impuestos aplican usando código de negocio y NIT administrativo
+        # NUEVO v3.1: Se pasa business_service para validar tipo de recurso (Públicos/Privados)
+        nombre_negocio = datos_negocio.get('negocio', 'Desconocido')
+        deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(
+            codigo_del_negocio,
+            nombre_negocio,
+            nit_administrativo,  # Validación doble: NIT + código de negocio
+            business_service  # DIP: Inyección de dependencia para validar tipo de recurso
+        )
         aplica_retencion = "RETENCION_FUENTE" in impuestos_aplicables
         aplica_estampilla = deteccion_impuestos["aplica_estampilla_universidad"]
         aplica_obra_publica = deteccion_impuestos["aplica_contribucion_obra_publica"]
-        aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # ✅ NUEVA VALIDACIÓN IVA
-        
+        aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # VALIDACIÓN IVA
+        aplica_ica = nit_aplica_ICA(nit_administrativo)  # VALIDACIÓN ICA
+        aplica_tasa_prodeporte = nit_aplica_tasa_prodeporte(nit_administrativo)  # VALIDACIÓN TASA PRODEPORTE
+        aplica_timbre = nit_aplica_timbre(nit_administrativo)  # VALIDACIÓN TIMBRE
+
+        logger.info(f" Código de negocio: {codigo_del_negocio} - {nombre_negocio}")
+        logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}, Aplica ICA: {aplica_ica}, Aplica Timbre: {aplica_timbre}")
+
         # Determinar estrategia de procesamiento
         impuestos_a_procesar = []
         if aplica_retencion:
@@ -1545,67 +269,119 @@ async def procesar_facturas_integrado(
         if aplica_obra_publica:
             impuestos_a_procesar.append("CONTRIBUCION_OBRA_PUBLICA")
         if aplica_iva:
-            impuestos_a_procesar.append("IVA_RETEIVA")  # ✅ NUEVO IMPUESTO
-        
-        procesamiento_paralelo = len(impuestos_a_procesar) > 1
-        
-        logger.info(f"⚡ Estrategia: {'PARALELO' if procesamiento_paralelo else 'INDIVIDUAL'}")
-        logger.info(f"🏷️ Impuestos a procesar: {impuestos_a_procesar}")
+            impuestos_a_procesar.append("IVA_RETEIVA")
+        if aplica_ica:
+            impuestos_a_procesar.append("RETENCION_ICA")
+        if aplica_timbre:
+            impuestos_a_procesar.append("IMPUESTO_TIMBRE")
+
+        logger.info(f" Estrategia: PROCESAMIENTO PARALELO (todos los NITs aplican múltiples impuestos)")
+        logger.info(f" Impuestos a procesar: {impuestos_a_procesar}")
         
         # =================================
         # PASO 2: EXTRACCIÓN HÍBRIDA DE TEXTO
         # =================================
         
-        # Extraer texto de archivos con preprocesamiento Excel
-        extractor = ProcesadorArchivos()
-        textos_archivos_original = await extractor.procesar_multiples_archivos(archivos)
+        logger.info(f" Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
         
-        # Preprocesamiento específico para Excel
-        textos_archivos = {}
+        # SEPARAR ARCHIVOS POR ESTRATEGIA DE PROCESAMIENTO
+        archivos_directos = []      # PDFs e imágenes → Gemini directo (multimodal)
+        archivos_preprocesamiento = []  # Excel, Email, Word → Procesamiento local
+        
+        for archivo in archivos:
+            try:
+                nombre_archivo = archivo.filename
+                extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
+                
+                # Definir qué archivos van directo a Gemini (multimodal)
+                if extension == 'pdf' or extension in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
+                    archivos_directos.append(archivo)
+                    logger.info(f" Archivo directo (multimodal): {nombre_archivo}")
+                else:
+                    # Excel, Email, Word y otros van a procesamiento local
+                    archivos_preprocesamiento.append(archivo)
+                    logger.info(f" Archivo para preprocesamiento: {nombre_archivo}")
+            except Exception as e:
+                logger.warning(f" Error clasificando archivo: {e}")
+                # En caso de error, enviar a preprocesamiento (más seguro)
+                logger.warning(f"Enviando a preprocesamiento por seguridad: {archivo.filename}")
+                archivos_preprocesamiento.append(archivo)
+        
+        logger.info(f" Estrategia híbrida multimodal definida:")
+        logger.info(f" Archivos directos (multimodal): {len(archivos_directos)}")
+        logger.info(f" Archivos preprocesamiento local: {len(archivos_preprocesamiento)}")
+        
+        # PROCESAR SOLO ARCHIVOS QUE NECESITAN PREPROCESAMIENTO LOCAL
+        if archivos_preprocesamiento:
+            logger.info(f" Iniciando extracción local para {len(archivos_preprocesamiento)} archivos...")
+            extractor = ProcesadorArchivos()
+            textos_archivos_original = await extractor.procesar_multiples_archivos(archivos_preprocesamiento)
+        else:
+            logger.info(f" No hay archivos para procesamiento local - Solo archivos directos multimodales")
+            textos_archivos_original = {}
+        
+        # Preprocesamiento específico para Excel (solo archivos locales)
+        textos_preprocesados = {}
         for nombre_archivo, contenido_original in textos_archivos_original.items():
             # Si es Excel, aplicar preprocesamiento
             if nombre_archivo.lower().endswith(('.xlsx', '.xls')):
                 try:
                     # Obtener contenido binario original del archivo
-                    archivo_obj = next((arch for arch in archivos if arch.filename == nombre_archivo), None)
+                    archivo_obj = next((arch for arch in archivos_preprocesamiento if arch.filename == nombre_archivo), None)
                     if archivo_obj:
                         await archivo_obj.seek(0)  # Resetear puntero
                         contenido_binario = await archivo_obj.read()
                         texto_preprocesado = preprocesar_excel_limpio(contenido_binario, nombre_archivo)
-                        textos_archivos[nombre_archivo] = texto_preprocesado
-                        logger.info(f"🧡 Excel preprocesado: {nombre_archivo}")
+                        textos_preprocesados[nombre_archivo] = texto_preprocesado
+                        logger.info(f" Excel preprocesado: {nombre_archivo}")
                     else:
-                        textos_archivos[nombre_archivo] = contenido_original
+                        textos_preprocesados[nombre_archivo] = contenido_original
                 except Exception as e:
-                    logger.warning(f"⚠️ Error preprocesando {nombre_archivo}: {e}")
-                    textos_archivos[nombre_archivo] = contenido_original
+                    logger.warning(f" Error preprocesando {nombre_archivo}: {e}")
+                    textos_preprocesados[nombre_archivo] = contenido_original
             else:
-                textos_archivos[nombre_archivo] = contenido_original
+                textos_preprocesados[nombre_archivo] = contenido_original
         
-        logger.info(f"📄 Textos extraídos de {len(textos_archivos)} archivos")
+        logger.info(f" Extracción local completada: {len(textos_preprocesados)} textos extraídos")
         
         # =================================
-        # PASO 3: CLASIFICACIÓN INTELIGENTE
+        # PASO 3: CLASIFICACIÓN HÍBRIDA CON MULTIMODALIDAD
         # =================================
+
+        # Clasificar documentos usando enfoque híbrido multimodal
+        clasificador = ProcesadorGemini(estructura_contable=estructura_contable, db_manager=db_manager)
+        logger.info(" Iniciando clasificación híbrida multimodal:")
+        logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
+        logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
+
+        clasificacion, es_consorcio, es_recurso_extranjero, es_facturacion_extranjera = await clasificador.clasificar_documentos(
+            archivos_directos=archivos_directos,
+            textos_preprocesados=textos_preprocesados,
+            proveedor=proveedor
+        )
         
-        # Clasificar documentos y detectar consorcios/extranjera
-        clasificador = ProcesadorGemini()
-        clasificacion, es_consorcio, es_facturacion_extranjera = await clasificador.clasificar_documentos(textos_archivos)
+        logger.info(f" Documentos clasificados: {len(clasificacion)}")
+        logger.info(f" Es consorcio: {es_consorcio}")
+        logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
         
-        logger.info(f"🏷️ Documentos clasificados: {len(clasificacion)}")
-        logger.info(f"🏢 Es consorcio: {es_consorcio}")
-        logger.info(f"🌍 Facturación extranjera: {es_facturacion_extranjera}")
-        
-        # Estructurar documentos clasificados
+        # Estructurar documentos clasificados (híbrido: directos + preprocesados)
         documentos_clasificados = {}
         for nombre_archivo, categoria in clasificacion.items():
-            if nombre_archivo in textos_archivos:
+            # Para archivos directos, el texto no está disponible (se procesó directamente por Gemini)
+            if nombre_archivo in textos_preprocesados:
                 documentos_clasificados[nombre_archivo] = {
                     "categoria": categoria,
-                    "texto": textos_archivos[nombre_archivo]
+                    "texto": textos_preprocesados[nombre_archivo]
+                }
+            else:
+                # Archivo directo (PDF/imagen) - procesado nativamente por Gemini
+                documentos_clasificados[nombre_archivo] = {
+                    "categoria": categoria,
+                    "texto": "[ARCHIVO_DIRECTO_MULTIMODAL]",
+                    "procesamiento": "directo_gemini"
                 }
         
-        # Guardar clasificación
+        # Guardar clasificación con información híbrida
         clasificacion_data = {
             "timestamp": datetime.now().isoformat(),
             "nit_administrativo": nit_administrativo,
@@ -1613,271 +389,744 @@ async def procesar_facturas_integrado(
             "clasificacion": clasificacion,
             "es_consorcio": es_consorcio,
             "es_facturacion_extranjera": es_facturacion_extranjera,
+            "es_recurso_extranjero": es_recurso_extranjero,
             "impuestos_aplicables": impuestos_a_procesar,
-            "procesamiento_paralelo": procesamiento_paralelo
+            "procesamiento_hibrido": {
+                "multimodalidad_activa": True,
+                "archivos_directos": len(archivos_directos),
+                "archivos_preprocesados": len(textos_preprocesados),
+                "total_archivos": len(archivos_directos) + len(textos_preprocesados),
+                "nombres_archivos_directos": [archivo.filename for archivo in archivos_directos],
+                "nombres_archivos_preprocesados": list(textos_preprocesados.keys()),
+                "version_multimodal": "2.8.0"
+            }
         }
         guardar_archivo_json(clasificacion_data, "clasificacion_documentos")
-        
+        logger.info(f" Clasificación completada: {len(clasificacion)} documentos")
+        logger.info(f" Consorcio detectado: {es_consorcio}")
+        logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
         # =================================
-        # PASO 4A: PROCESAMIENTO PARALELO (MÚLTIPLES IMPUESTOS)
+        # PASO 4: PROCESAMIENTO PARALELO (TODOS LOS IMPUESTOS)
         # =================================
-        
-        if procesamiento_paralelo:
-            logger.info(f"⚡ Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
-            
-            # Crear tareas paralelas para análisis con Gemini
-            tareas_analisis = []
-            
-            # Tarea 1: Análisis de Retefuente (si aplica)
-            if aplica_retencion:
-                if es_consorcio:
-                    tarea_retefuente = clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera)
-                else:
-                    tarea_retefuente = clasificador.analizar_factura(documentos_clasificados, es_facturacion_extranjera)
-                tareas_analisis.append(("retefuente", tarea_retefuente))
-            
-            # Tarea 2: Análisis de Impuestos Especiales (si aplican)
-            if aplica_estampilla or aplica_obra_publica:
-                tarea_impuestos_especiales = clasificador.analizar_estampilla(documentos_clasificados)
-                tareas_analisis.append(("impuestos_especiales", tarea_impuestos_especiales))
-            
-            # Tarea 3: Análisis de IVA (si aplica) - ✅ NUEVA TAREA
-            if aplica_iva:
-                tarea_iva = clasificador.analizar_iva(documentos_clasificados)
-                tareas_analisis.append(("iva_reteiva", tarea_iva))
-            
-            # Ejecutar todas las tareas en paralelo
-            logger.info(f"🔄 Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
-            
-            # Esperar todos los resultados
-            resultados_analisis = {}
-            try:
-                
-                tareas_asyncio = [tarea for _, tarea in tareas_analisis]
-                resultados_brutos = await asyncio.gather(*tareas_asyncio, return_exceptions=True)
-                
-                #mapear resultados a sus nombres
-                for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis):
-                    resultado = resultados_brutos[i]
-                    if isinstance(resultado, Exception):
-                        logger.error(f"❌ Error en análisis de {nombre_impuesto}: {resultado}")
-                        resultados_analisis[nombre_impuesto] = {"error": str(resultado)}
-                    else:
-                        resultados_analisis[nombre_impuesto] = resultado.dict() if hasattr(resultado, 'dict') else resultado
-                        logger.info(f"✅ Análisis de {nombre_impuesto} completado con éxito")
-            except Exception as e:
-                logger.error(f"❌ Error ejecutando análisis paralelo: {e}")
-                raise HTTPException(status_code=500, detail=
-                    f"Error ejecutando análisis paralelo : {str(e)}"
+
+        logger.info(f" Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
+        logger.info(f"Documentos a analizar: {documentos_clasificados}  ")
+        # Crear tareas paralelas para análisis con Gemini
+        tareas_analisis = []
+        logger.info(" Preparando cache para solucionar concurrencia en workers paralelos")
+        cache_archivos = await clasificador.preparar_archivos_para_workers_paralelos(archivos_directos)
+
+        # Tarea 1: Análisis de Retefuente (si aplica y no es recurso extranjero)
+        if aplica_retencion and not es_recurso_extranjero:
+            if es_consorcio:
+                tarea_retefuente = clasificador.analizar_consorcio(
+                    documentos_clasificados,
+                    es_facturacion_extranjera,
+                    None,
+                    cache_archivos,
+                    proveedor=proveedor
                 )
-           
-            # Guardar análisis paralelo
-            analisis_paralelo_data = {
-                "timestamp": datetime.now().isoformat(),
-                "procesamiento_paralelo": True,
-                "impuestos_analizados": list(resultados_analisis.keys()),
-                "resultados_analisis": resultados_analisis
-            }
-            guardar_archivo_json(analisis_paralelo_data, "analisis_paralelo")
-            
-            # =================================
-            # PASO 5A: LIQUIDACIÓN PARALELA
-            # =================================
-            
-            logger.info(f"💰 Iniciando liquidación paralela de impuestos...")
-            
-            resultado_final = {
-                "procesamiento_paralelo": True,
-                "impuestos_procesados": impuestos_a_procesar,
-                "nit_administrativo": nit_administrativo,
-                "nombre_entidad": nombre_entidad,
-                "timestamp": datetime.now().isoformat(),
-                "version": "2.0.0"
-            }
-            
-            # Liquidar Retefuente
-            if "retefuente" in resultados_analisis and aplica_retencion:
-                try:
-                    liquidador_retencion = LiquidadorRetencion()
-                    if es_consorcio:
-                        resultado_retefuente = resultados_analisis["retefuente"]  # Ya viene liquidado del consorcio
-                    else:
-                        analisis_factura = resultados_analisis["retefuente"]
-                        resultado_retefuente = liquidador_retencion.liquidar_factura(analisis_factura, nit_administrativo)
-                    
-                    # Convertir objeto ResultadoLiquidacion a diccionario para compatibilidad
-                    if hasattr(resultado_retefuente, 'valor_retencion'):
-                        resultado_final["retefuente"] = {
-                            "aplica": resultado_retefuente.puede_liquidar,
-                            "valor_retencion": resultado_retefuente.valor_retencion,
-                            "concepto": resultado_retefuente.concepto_aplicado,
-                            "tarifa_retencion": resultado_retefuente.tarifa_aplicada,
-                            "valor_base": resultado_retefuente.valor_base_retencion,
-                            "fecha_calculo": resultado_retefuente.fecha_calculo,
-                            "mensajes_error": resultado_retefuente.mensajes_error
-                        }
-                        logger.info(f"✅ Retefuente liquidada: ${resultado_retefuente.valor_retencion:,.2f}")
-                    else:
-                        # Es un diccionario (resultado de consorcio)
-                        resultado_final["retefuente"] = resultado_retefuente
-                        logger.info(f"✅ Retefuente liquidada: ${resultado_retefuente.get('valor_retencion', 0):,.2f}")
-                except Exception as e:
-                    logger.error(f"❌ Error liquidando retefuente: {e}")
-                    resultado_final["retefuente"] = {"error": str(e), "aplica": False}
-            
-            # Liquidar Impuestos Especiales (Estampilla + Obra Pública)
-            if "impuestos_especiales" in resultados_analisis and (aplica_estampilla or aplica_obra_publica):
-                try:
-                    from Liquidador.liquidador_estampilla import LiquidadorEstampilla
-                    liquidador_estampilla = LiquidadorEstampilla()
-                    
-                    analisis_especiales = resultados_analisis["impuestos_especiales"]
-                    resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, nit_administrativo)
-                    
-                    # Separar resultados por impuesto
-                    if aplica_estampilla and "estampilla_universidad" in resultado_estampilla:
-                        resultado_final["estampilla_universidad"] = resultado_estampilla["estampilla_universidad"]
-                        logger.info(f"✅ Estampilla liquidada: ${resultado_estampilla['estampilla_universidad'].get('valor_estampilla', 0):,.2f}")
-                    
-                    if aplica_obra_publica and "contribucion_obra_publica" in resultado_estampilla:
-                        resultado_final["contribucion_obra_publica"] = resultado_estampilla["contribucion_obra_publica"]
-                        logger.info(f"✅ Obra pública liquidada: ${resultado_estampilla['contribucion_obra_publica'].get('valor_contribucion', 0):,.2f}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error liquidando impuestos especiales: {e}")
-                    if aplica_estampilla:
-                        resultado_final["estampilla_universidad"] = {"error": str(e), "aplica": False}
-                    if aplica_obra_publica:
-                        resultado_final["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
-            
-            # Liquidar IVA y ReteIVA - ✅ NUEVA LIQUIDACIÓN
-            if "iva_reteiva" in resultados_analisis and aplica_iva:
-                try:
-                    from Liquidador.liquidador_iva import LiquidadorIVA
-                    liquidador_iva = LiquidadorIVA()
-                    
-                    analisis_iva = resultados_analisis["iva_reteiva"]
-                    resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
-                    
-                    # Convertir a formato compatible
-                    from Liquidador.liquidador_iva import convertir_resultado_a_dict
-                    resultado_final["iva_reteiva"] = convertir_resultado_a_dict(resultado_iva_completo)
-                    
-                    logger.info(f"✅ IVA identificado: ${resultado_iva_completo.valor_iva_identificado:,.2f}")
-                    logger.info(f"✅ ReteIVA liquidada: ${resultado_iva_completo.valor_reteiva:,.2f}")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error liquidando IVA/ReteIVA: {e}")
-                    resultado_final["iva_reteiva"] = {"error": str(e), "aplica": False}
-            
-            # Calcular resumen total
-            valor_total_impuestos = 0.0
-            
-            if "retefuente" in resultado_final and isinstance(resultado_final["retefuente"], dict):
-                valor_total_impuestos += resultado_final["retefuente"].get("valor_retencion", 0)
-            
-            if "estampilla_universidad" in resultado_final and isinstance(resultado_final["estampilla_universidad"], dict):
-                valor_total_impuestos += resultado_final["estampilla_universidad"].get("valor_estampilla", 0)
-            
-            if "contribucion_obra_publica" in resultado_final and isinstance(resultado_final["contribucion_obra_publica"], dict):
-                valor_total_impuestos += resultado_final["contribucion_obra_publica"].get("valor_contribucion", 0)
-            
-            if "iva_reteiva" in resultado_final and isinstance(resultado_final["iva_reteiva"], dict):
-                valor_total_impuestos += resultado_final["iva_reteiva"].get("valor_reteiva", 0)
-            
-            resultado_final["resumen_total"] = {
-                "valor_total_impuestos": valor_total_impuestos,
-                "impuestos_liquidados": [imp for imp in impuestos_a_procesar if imp.lower().replace("_", "") in [k.lower().replace("_", "") for k in resultado_final.keys()]],
-                "procesamiento_exitoso": True
-            }
-            
-            logger.info(f"💰 Total impuestos calculados: ${valor_total_impuestos:,.2f}")
-        
-        # =================================
-        # PASO 4B: PROCESAMIENTO INDIVIDUAL (SOLO UN IMPUESTO)
-        # =================================
-        
-        else:
-            logger.info(f"📄 Procesamiento individual: {impuestos_a_procesar[0]}")
-            
-            impuesto_unico = impuestos_a_procesar[0]
-            
-            if impuesto_unico == "RETENCION_FUENTE":
-                # Flujo original de retefuente mantenido
-                if es_consorcio:
-                    analisis_factura = await clasificador.analizar_consorcio(documentos_clasificados, es_facturacion_extranjera)
-                else:
-                    analisis_factura = await clasificador.analizar_factura(documentos_clasificados, es_facturacion_extranjera)
-                
-                liquidador_retencion = LiquidadorRetencion()
-                if es_consorcio:
-                    resultado_liquidacion = analisis_factura  # Ya viene liquidado como dict
-                    resultado_final = {
-                        "procesamiento_paralelo": False,
-                        "impuestos_procesados": ["RETENCION_FUENTE"],
-                        **resultado_liquidacion,
-                        "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                        "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
-                        "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
-                    }
-                else:
-                    resultado_liquidacion = liquidador_retencion.liquidar_factura(analisis_factura, nit_administrativo)
-                    
-                    # Convertir objeto ResultadoLiquidacion a dict
-                    resultado_final = {
-                        "procesamiento_paralelo": False,
-                        "impuestos_procesados": ["RETENCION_FUENTE"],
-                        "aplica_retencion": resultado_liquidacion.puede_liquidar,
-                        "valor_retencion": resultado_liquidacion.valor_retencion,
-                        "concepto": resultado_liquidacion.concepto_aplicado,
-                        "tarifa_retencion": resultado_liquidacion.tarifa_aplicada,
-                        "valor_base_retencion": resultado_liquidacion.valor_base_retencion,
-                        "fecha_calculo": resultado_liquidacion.fecha_calculo,
-                        "mensajes_error": resultado_liquidacion.mensajes_error,
-                        "retefuente": {
-                            "aplica": resultado_liquidacion.puede_liquidar,
-                            "valor_retencion": resultado_liquidacion.valor_retencion,
-                            "concepto": resultado_liquidacion.concepto_aplicado,
-                            "tarifa_retencion": resultado_liquidacion.tarifa_aplicada
-                        },
-                        "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                        "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"},
-                        "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
-                    }
-            
-            elif impuesto_unico == "IVA_RETEIVA":
-                # Procesamiento individual de IVA - ✅ NUEVO FLUJO
-                analisis_iva = await clasificador.analizar_iva(documentos_clasificados)
-                
-                from Liquidador.liquidador_iva import LiquidadorIVA, convertir_resultado_a_dict
-                liquidador_iva = LiquidadorIVA()
-                resultado_iva_completo = liquidador_iva.liquidar_iva_completo(analisis_iva, nit_administrativo)
-                
-                resultado_final = {
-                    "procesamiento_paralelo": False,
-                    "impuestos_procesados": ["IVA_RETEIVA"],
-                    "iva_reteiva": convertir_resultado_a_dict(resultado_iva_completo),
-                    "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
-                    "estampilla_universidad": {"aplica": False, "razon": "NIT no configurado para estampilla"},
-                    "contribucion_obra_publica": {"aplica": False, "razon": "NIT no configurado para obra pública"}
-                }
-            
             else:
-                # Otros impuestos individuales (estampilla, obra pública)
-                analisis_especiales = await clasificador.analizar_estampilla(documentos_clasificados)
+                #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
+                tarea_retefuente = clasificador.analizar_factura(
+                    documentos_clasificados,
+                    es_facturacion_extranjera,
+                    None,
+                    cache_archivos,
+                    proveedor=proveedor
+                )
+            tareas_analisis.append(("retefuente", tarea_retefuente))
+        elif aplica_retencion and es_recurso_extranjero:
+            logger.info(" Retefuente: No se procesará - Recurso de fuente extranjera detectado")
+        
+        # Tarea 2: Análisis de Impuestos Especiales (si aplican)
+        if aplica_estampilla or aplica_obra_publica:
+            tarea_impuestos_especiales = clasificador.analizar_estampilla(documentos_clasificados, None, cache_archivos)
+            tareas_analisis.append(("impuestos_especiales", tarea_impuestos_especiales))
+        
+        # Tarea 3: Análisis de IVA (si aplica y no es recurso extranjero) - NUEVA TAREA
+        if aplica_iva and not es_recurso_extranjero:
+            tarea_iva = clasificador.analizar_iva(documentos_clasificados, None, cache_archivos)
+            tareas_analisis.append(("iva_reteiva", tarea_iva))
+        elif aplica_iva and es_recurso_extranjero:
+            logger.info(" IVA/ReteIVA: No se procesará - Recurso de fuente extranjera detectado")
+        
+        # Tarea 4: Análisis de Estampillas Generales -  NUEVA FUNCIONALIDAD
+        # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
+        tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
+        tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
+
+        # Tarea 5: Análisis de Tasa Prodeporte - NUEVA FUNCIONALIDAD
+        if aplica_tasa_prodeporte:
+            tarea_tasa_prodeporte = clasificador.analizar_tasa_prodeporte(documentos_clasificados, None, cache_archivos, observaciones_tp)
+            tareas_analisis.append(("tasa_prodeporte", tarea_tasa_prodeporte))
+            logger.info(f"✓ Tasa Prodeporte: Análisis activado para NIT {nit_administrativo}")
+
+        # Tarea 6: Análisis de ICA - NUEVA FUNCIONALIDAD (MULTIMODAL)
+        if aplica_ica:
+            # ICA requiere procesamiento especial con ClasificadorICA
+            async def analizar_ica_async():
+                try:
+                    clasificador_ica = ClasificadorICA(
+                        database_manager=db_manager,
+                        procesador_gemini=clasificador  # Procesador completo para multimodal
+                    )
+                    return await clasificador_ica.analizar_ica(
+                        nit_administrativo=nit_administrativo,
+                        textos_documentos=documentos_clasificados,
+                        estructura_contable=estructura_contable,
+                        cache_archivos=cache_archivos  # Cache para procesamiento híbrido
+                    )
+                except Exception as e:
+                    logger.error(f"Error en análisis ICA: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return {
+                        "aplica": False,
+                        "estado": "preliquidacion_sin_finalizar",
+                        "observaciones": [f"Error en análisis ICA: {str(e)}"]
+                    }
+
+            tarea_ica = analizar_ica_async()
+            tareas_analisis.append(("ica", tarea_ica))
+            logger.info(f"✓ ICA: Análisis activado para NIT {nit_administrativo}")
+
+        # Tarea 7: Análisis de Timbre - NUEVA FUNCIONALIDAD
+        if aplica_timbre:
+            # Timbre requiere procesamiento especial con ClasificadorTimbre
+            async def analizar_timbre_async():
+                try:
+                    clasificador_timbre = ClasificadorTimbre(
+                        procesador_gemini=clasificador  # Procesador completo para reutilizar funciones
+                    )
+                    # Primera llamada: analizar observaciones
+                    return await clasificador_timbre.analizar_observaciones_timbre(
+                        observaciones=observaciones_tp or ""
+                    )
+                except Exception as e:
+                    logger.error(f"Error en análisis Timbre (observaciones): {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return {
+                        "aplica_timbre": False,
+                        "base_gravable_obs": 0.0,
+                        "observaciones_analisis": f"Error en análisis Timbre: {str(e)}"
+                    }
+
+            tarea_timbre = analizar_timbre_async()
+            tareas_analisis.append(("timbre", tarea_timbre))
+            logger.info(f"✓ Timbre: Análisis activado para NIT {nit_administrativo}")
+
+        # Ejecutar todas las tareas en paralelo
+        logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
+        
+        # Esperar todos los resultados
+        resultados_analisis = {}
+        try:
+
+            # 🔧 OPTIMIZACIÓN: Procesamiento con semáforo de 4 workers
+            semaforo = asyncio.Semaphore(4)  # Máximo 4 llamados simultáneos a Gemini
+
+            async def ejecutar_tarea_con_worker(nombre_impuesto: str, tarea_async, worker_id: int):
+                """
+                Ejecuta una tarea de análisis con control de concurrencia.
                 
+                Args:
+                    nombre_impuesto: Nombre del impuesto (retefuente, impuestos_especiales, etc.)
+                    tarea_async: Tarea asíncrona a ejecutar
+                    worker_id: ID del worker (1 o 2)
+                    
+                Returns:
+                    tuple: (nombre_impuesto, resultado_o_excepcion, tiempo_ejecucion)
+                """
+                async with semaforo:
+                    inicio_worker = datetime.now()
+                    logger.info(f" Worker {worker_id}: Iniciando análisis de {nombre_impuesto}")
+                    
+                    try:
+                        resultado = await tarea_async
+                        tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
+                        logger.info(f" Worker {worker_id}: {nombre_impuesto} completado en {tiempo_ejecucion:.2f}s")
+                        return (nombre_impuesto, resultado, tiempo_ejecucion)
+                        
+                    except Exception as e:
+                        tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
+                        logger.error(f" Worker {worker_id}: Error en {nombre_impuesto} tras {tiempo_ejecucion:.2f}s: {str(e)}")
+                        return (nombre_impuesto, e, tiempo_ejecucion)
+            
+            # Crear tareas con workers
+            inicio_total = datetime.now()
+            tareas_con_workers = [
+                ejecutar_tarea_con_worker(nombre_impuesto, tarea, i + 1) 
+                for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis)
+            ]
+            
+            logger.info(f" Ejecutando {len(tareas_con_workers)} tareas con máximo 2 workers simultáneos...")
+            
+            # Esperar todos los resultados con workers limitados
+            resultados_con_workers = await asyncio.gather(*tareas_con_workers, return_exceptions=True)
+            
+            # Mapear resultados a sus nombres
+            for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis):
+                resultado_worker = resultados_con_workers[i]
+                if isinstance(resultado_worker, Exception):
+                    logger.error(f" Error crítico en worker: {resultado_worker}")
+                    resultados_analisis[nombre_impuesto] = {"error": str(resultado_worker)}
+                    continue
+                
+                # Extraer información del worker: (nombre_impuesto, resultado, tiempo)
+                _, resultado, tiempo_ejecucion = resultado_worker
+                
+                if isinstance(resultado, Exception):
+                    logger.error(f" Error en análisis de {nombre_impuesto}: {resultado}")
+                    resultados_analisis[nombre_impuesto] = {"error": str(resultado)}
+                else:
+                    resultados_analisis[nombre_impuesto] = resultado.dict() if hasattr(resultado, 'dict') else resultado
+                    logger.info(f"Análisis de {nombre_impuesto} completado con éxito")
+        except Exception as e:
+            logger.error(f" Error ejecutando análisis paralelo: {e}")
+            raise HTTPException(status_code=500, detail=
+                f"Error ejecutando análisis paralelo : {str(e)}"
+            )
+           
+        # Guardar análisis paralelo
+        analisis_paralelo_data = {
+            "timestamp": datetime.now().isoformat(),
+            "impuestos_analizados": list(resultados_analisis.keys()),
+            "resultados_analisis": resultados_analisis
+        }
+        guardar_archivo_json(analisis_paralelo_data, "analisis_paralelo")
+        
+        # =================================
+        # PASO 5: LIQUIDACIÓN DE IMPUESTOS
+        # =================================
+
+        logger.info(f" Iniciando liquidación de impuestos en paralelo...")
+        
+        resultado_final = {
+            "impuestos_procesados": impuestos_a_procesar,
+            "nit_administrativo": nit_administrativo,
+            "nombre_entidad": nombre_entidad,
+            "timestamp": datetime.now().isoformat(),
+            "version": "2.9.3",
+            "impuestos": {}  # NUEVA ESTRUCTURA PARA TODOS LOS IMPUESTOS
+        }
+        
+        # Liquidar Retefuente
+        if "retefuente" in resultados_analisis and aplica_retencion:
+            try:
+                if es_consorcio:
+                    # Usar nuevo liquidador de consorcios con validaciones manuales
+                    liquidador_consorcio = LiquidadorConsorcios(estructura_contable=estructura_contable, db_manager=db_manager)
+                    analisis_consorcio_gemini = resultados_analisis["retefuente"]  # Solo extracción de Gemini
+
+                    # Liquidar con validaciones manuales de Python (con caché de archivos)
+                    resultado_liquidacion_consorcio = await liquidador_consorcio.liquidar_consorcio(
+                        analisis_consorcio_gemini, CONCEPTOS_RETEFUENTE, archivos_directos, cache_archivos
+                    )
+
+                    # Convertir resultado a formato de respuesta y extraer la parte retefuente
+                    resultado_dict_completo = convertir_consorcio_a_dict(resultado_liquidacion_consorcio)
+                    resultado_retefuente = resultado_dict_completo["retefuente"]  # Extraer solo la parte de retefuente
+                else:
+                    analisis_factura = resultados_analisis["retefuente"]
+                    
+                    #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO PARALELO
+                    logger.info(" Ejecutando liquidación segura en procesamiento paralelo...")
+                    
+                    # Crear estructura compatible
+                    analisis_retefuente_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "tipo_analisis": "retefuente_paralelo",
+                        "nit_administrativo": nit_administrativo,
+                        "es_facturacion_exterior": es_facturacion_extranjera,  # Pasar desde clasificación
+                        "analisis": analisis_factura.dict() if hasattr(analisis_factura, 'dict') else analisis_factura
+                    }
+                    
+                    # Guardar análisis para debugging
+                    guardar_archivo_json(analisis_retefuente_data, "analisis_retefuente_paralelo")
+
+                    # Liquidar con método seguro de la clase
+                    liquidador_retencion = LiquidadorRetencion(estructura_contable=estructura_contable, db_manager=db_manager)
+                    resultado_retefuente_dict = liquidador_retencion.liquidar_retefuente_seguro(
+                        analisis_retefuente_data, nit_administrativo
+                    )
+                    
+                    # Verificar solo si hay error técnico (excepción de liquidador)
+                    if "error" in resultado_retefuente_dict:
+                        # Error técnico - excepción durante liquidación
+                        error_msg = resultado_retefuente_dict.get('error')
+                        logger.error(f"Error técnico en liquidación: {error_msg}")
+
+                        resultado_retefuente = type('ResultadoLiquidacion', (object,), {
+                            'aplica': False,
+                            'valor_retencion': 0.0,
+                            'valor_factura_sin_iva': 0.0,
+                            'conceptos_aplicados': [],
+                            'valor_base_retencion': 0.0,
+                            'fecha_calculo': datetime.now().isoformat(),
+                            'mensajes_error': [error_msg],
+                            'resumen_conceptos': 'Error técnico',
+                            'estado': 'preliquidacion_sin_finalizar'
+                        })()
+                    else:
+                        # Caso normal - confiar en liquidador.py
+                        resultado_retefuente = type('ResultadoLiquidacion', (object,), {
+                            'aplica': resultado_retefuente_dict.get("aplica", False),
+                            'valor_retencion': resultado_retefuente_dict.get('valor_retencion', 0.0),
+                            'valor_factura_sin_iva': resultado_retefuente_dict.get('valor_factura_sin_iva', 0.0),
+                            'conceptos_aplicados': resultado_retefuente_dict.get("conceptos_aplicados", []),
+                            'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
+                            'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
+                            'mensajes_error': resultado_retefuente_dict.get("observaciones", []),
+                            'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A"),
+                            'estado': resultado_retefuente_dict.get("estado", "preliquidado")
+                        })()
+
+                        # Log apropiado según resultado
+                        if resultado_retefuente.valor_retencion > 0:
+                            logger.info(f"Retefuente liquidada: ${resultado_retefuente.valor_retencion:,.2f}")
+                        else:
+                            logger.info(f"Retefuente procesada - Estado: {resultado_retefuente.estado}")
+                
+                #  ESTRUCTURA FINAL CONSOLIDADA
+                if hasattr(resultado_retefuente, 'valor_retencion'):
+
+                    resultado_final["impuestos"]["retefuente"] = {
+                    "aplica": resultado_retefuente_dict.get("aplica", False),
+                    "estado": resultado_retefuente_dict.get("estado", "preliquidacion_sin_finalizar"),
+                    "valor_factura_sin_iva": resultado_retefuente_dict.get("valor_factura_sin_iva", 0.0),
+                    "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
+                    "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
+                    "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
+                    "observaciones": resultado_retefuente_dict.get("observaciones", []),
+                    }
+
+                    # Agregar pais_proveedor si es facturación extranjera
+                    if es_facturacion_extranjera and "pais_proveedor" in resultado_retefuente_dict:
+                        resultado_final["impuestos"]["retefuente"]["pais_proveedor"] = resultado_retefuente_dict.get("pais_proveedor", "")
+                        logger.info(f" País proveedor: {resultado_retefuente_dict.get('pais_proveedor')}")
+
+                    logger.info(f" Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0.0):,.2f}")
+
+                else:
+                    # Es un diccionario (resultado de consorcio)
+                    resultado_final["impuestos"]["retefuente"] = resultado_retefuente
+                    logger.info(f" Retefuente liquidada: ${resultado_retefuente.get('valor_retencion', 0):,.2f}")
+            except Exception as e:
+                logger.error(f" Error liquidando retefuente: {e}")
+                resultado_final["impuestos"]["retefuente"] = {"error": str(e), "aplica": False}
+
+        elif aplica_retencion and es_recurso_extranjero:
+            # Recurso extranjero: crear estructura vacía sin procesamiento
+            logger.info(" Retefuente: Aplicando estructura de recurso extranjero")
+            resultado_retefuente = crear_resultado_recurso_extranjero_retefuente()
+
+            resultado_final["impuestos"]["retefuente"] = {
+                "aplica": resultado_retefuente.aplica,
+                "estado": resultado_retefuente.estado,
+                "valor_factura_sin_iva": resultado_retefuente.valor_factura_sin_iva,
+                "valor_retencion": resultado_retefuente.valor_retencion,
+                "valor_base": resultado_retefuente.valor_base_retencion,
+                "conceptos_aplicados": resultado_retefuente.conceptos_aplicados,
+                "observaciones": resultado_retefuente.mensajes_error,
+            }
+            logger.info(" Retefuente: No aplica (Recurso de fuente extranjera)")
+
+        # Liquidar Impuestos Especiales (Estampilla Pro Universidad Nacional + Obra Pública)
+        if "impuestos_especiales" in resultados_analisis and (aplica_estampilla or aplica_obra_publica):
+            try:
                 from Liquidador.liquidador_estampilla import LiquidadorEstampilla
                 liquidador_estampilla = LiquidadorEstampilla()
-                resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, nit_administrativo)
+
+                analisis_especiales = resultados_analisis["impuestos_especiales"]
+                resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, codigo_del_negocio, nombre_negocio)
                 
-                resultado_final = {
-                    "procesamiento_paralelo": False,
-                    "impuestos_procesados": [impuesto_unico],
-                    **resultado_estampilla,
-                    "retefuente": {"aplica": False, "razon": "NIT no configurado para retefuente"},
-                    "iva_reteiva": {"aplica": False, "razon": "NIT no configurado para IVA/ReteIVA"}
-                }
+                #  ASIGNAR A NUEVA ESTRUCTURA: Separar resultados por impuesto
+                if aplica_estampilla and "estampilla_universidad" in resultado_estampilla:
+                    resultado_final["impuestos"]["estampilla_universidad"] = resultado_estampilla["estampilla_universidad"]
+                    logger.info(f" Estampilla liquidada: ${resultado_estampilla['estampilla_universidad'].get('valor_estampilla', 0):,.2f}")
+                
+                if aplica_obra_publica and "contribucion_obra_publica" in resultado_estampilla:
+                    resultado_final["impuestos"]["contribucion_obra_publica"] = resultado_estampilla["contribucion_obra_publica"]
+                    logger.info(f" Obra pública liquidada: ${resultado_estampilla['contribucion_obra_publica'].get('valor_contribucion', 0):,.2f}")
+                    
+            except Exception as e:
+                logger.error(f" Error liquidando impuestos especiales: {e}")
+                if aplica_estampilla:
+                    resultado_final["impuestos"]["estampilla_universidad"] = {"error": str(e), "aplica": False}
+                if aplica_obra_publica:
+                    resultado_final["impuestos"]["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
         
+        # Liquidar IVA y ReteIVA - ARQUITECTURA SOLID v2.0
+        if "iva_reteiva" in resultados_analisis and aplica_iva:
+            try:
+                from Liquidador.liquidador_iva import LiquidadorIVA
+                liquidador_iva = LiquidadorIVA()
+
+                # Análisis de Gemini (nueva estructura PROMPT_ANALISIS_IVA)
+                analisis_iva_gemini = resultados_analisis["iva_reteiva"]
+
+                # Clasificación inicial (para obtener es_facturacion_extranjera)
+                clasificacion_inicial = {
+                    "es_facturacion_extranjera": es_facturacion_extranjera
+                }
+
+                # Liquidar con nueva arquitectura SOLID (requiere 3 parámetros)
+                resultado_iva_dict = liquidador_iva.liquidar_iva_completo(
+                    analisis_gemini=analisis_iva_gemini,
+                    clasificacion_inicial=clasificacion_inicial,
+                    nit_administrativo=nit_administrativo
+                )
+
+                # El método ahora retorna directamente un diccionario con estructura {"iva_reteiva": {...}}
+                resultado_final["impuestos"]["iva_reteiva"] = resultado_iva_dict.get("iva_reteiva", {})
+
+                # Logs actualizados para usar diccionario
+                valor_iva = resultado_iva_dict.get("iva_reteiva", {}).get("valor_iva_identificado", 0.0)
+                valor_reteiva = resultado_iva_dict.get("iva_reteiva", {}).get("valor_reteiva", 0.0)
+                logger.info(f" IVA identificado: ${valor_iva:,.2f}")
+                logger.info(f" ReteIVA liquidada: ${valor_reteiva:,.2f}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando IVA/ReteIVA: {e}")
+                resultado_final["impuestos"]["iva_reteiva"] = {"error": str(e), "aplica": False}
+
+        elif aplica_iva and es_recurso_extranjero:
+            # Recurso extranjero: crear estructura vacía sin procesamiento
+            logger.info(" IVA/ReteIVA: Aplicando estructura de recurso extranjero")
+            resultado_iva = crear_resultado_recurso_extranjero_iva()
+
+            resultado_final["impuestos"]["iva_reteiva"] = resultado_iva.get("iva_reteiva", {})
+            logger.info(" IVA/ReteIVA: No aplica (Recurso de fuente extranjera)")
+
+        # Liquidar Estampillas Generales - NUEVA LIQUIDACIÓN
+        if "estampillas_generales" in resultados_analisis:
+            try:
+                from Liquidador.liquidador_estampillas_generales import (
+                    validar_formato_estampillas_generales, 
+                    presentar_resultado_estampillas_generales
+                )
+                
+                analisis_estampillas = resultados_analisis["estampillas_generales"]
+                
+                # Validar formato de respuesta de Gemini
+                validacion = validar_formato_estampillas_generales(analisis_estampillas)
+                
+                if validacion["formato_valido"]:
+                    logger.info(" Formato de estampillas generales válido")
+                    respuesta_validada = validacion["respuesta_validada"]
+                else:
+                    logger.warning(f" Formato de estampillas con errores: {len(validacion['errores'])} errores")
+                    logger.warning(f"Errores: {validacion['errores']}")
+                    respuesta_validada = validacion["respuesta_validada"]  # Usar respuesta corregida
+                
+                # Presentar resultado final
+                resultado_estampillas = presentar_resultado_estampillas_generales(respuesta_validada)
+
+                #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
+                resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas.get("estampillas_generales", {})
+
+            except Exception as e:
+                logger.error(f" Error liquidando estampillas generales: {e}")
+                resultado_final["impuestos"]["estampillas_generales"] = {
+                    "procesamiento_exitoso": False,
+                    "error": str(e),
+                    "observaciones_generales": ["Error procesando estampillas generales"]
+                }
+
+        # Liquidar ICA - NUEVA FUNCIONALIDAD
+        if "ica" in resultados_analisis and aplica_ica:
+            try:
+                logger.info(" Liquidando ICA...")
+
+                # Obtener análisis de ICA (ya validado por ClasificadorICA)
+                analisis_ica = resultados_analisis["ica"]
+
+                # Crear liquidador ICA
+                liquidador_ica = LiquidadorICA(database_manager=db_manager)
+
+                # Liquidar ICA
+                resultado_ica = liquidador_ica.liquidar_ica(analisis_ica, estructura_contable)
+
+                # Agregar resultado al resultado final
+                resultado_final["impuestos"]["ica"] = resultado_ica
+
+                # Logs informativos
+                estado_ica = resultado_ica.get("estado", "Desconocido")
+                valor_ica = resultado_ica.get("valor_total_ica", 0.0)
+                logger.info(f" ICA - Estado: {estado_ica}")
+                logger.info(f" ICA - Valor total: ${valor_ica:,.2f}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando ICA: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                resultado_final["impuestos"]["ica"] = {
+                    "aplica": False,
+                    "estado": "preliquidacion_sin_finalizar",
+                    "error": str(e),
+                    "observaciones": [f"Error en liquidación ICA: {str(e)}"]
+                }
+
+        # Liquidar Sobretasa Bomberil - NUEVA FUNCIONALIDAD (Solo si ICA fue procesado)
+        if "ica" in resultado_final["impuestos"]:
+            try:
+                logger.info(" Liquidando Sobretasa Bomberil...")
+
+                # Obtener resultado de ICA
+                resultado_ica = resultado_final["impuestos"]["ica"]
+
+                # Crear liquidador Sobretasa Bomberil
+                liquidador_sobretasa = LiquidadorSobretasaBomberil(database_manager=db_manager)
+
+                # Liquidar Sobretasa Bomberil
+                resultado_sobretasa = liquidador_sobretasa.liquidar_sobretasa_bomberil(resultado_ica)
+
+                # Agregar resultado al resultado final
+                resultado_final["impuestos"]["sobretasa_bomberil"] = resultado_sobretasa
+
+                # Logs informativos
+                estado_sobretasa = resultado_sobretasa.get("estado", "Desconocido")
+                valor_sobretasa = resultado_sobretasa.get("valor_total_sobretasa", 0.0)
+                logger.info(f" Sobretasa Bomberil - Estado: {estado_sobretasa}")
+                logger.info(f" Sobretasa Bomberil - Valor total: ${valor_sobretasa:,.2f}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando Sobretasa Bomberil: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                resultado_final["impuestos"]["sobretasa_bomberil"] = {
+                    "aplica": False,
+                    "estado": "preliquidacion_sin_finalizar",
+                    "error": str(e),
+                    "observaciones": f"Error en liquidación Sobretasa Bomberil: {str(e)}"
+                }
+
+        # Liquidar Tasa Prodeporte - NUEVA FUNCIONALIDAD
+        if "tasa_prodeporte" in resultados_analisis:
+            try:
+                from Liquidador.liquidador_TP import LiquidadorTasaProdeporte
+                from Liquidador.liquidador_TP import ParametrosTasaProdeporte
+
+                liquidador_tp = LiquidadorTasaProdeporte()
+
+                # Análisis de Gemini (extracción de datos)
+                analisis_tp_gemini = resultados_analisis["tasa_prodeporte"]
+
+                # Crear parámetros con los datos del endpoint
+                parametros_tp = ParametrosTasaProdeporte(
+                    observaciones=observaciones_tp,
+                    genera_presupuesto=genera_presupuesto,
+                    rubro=rubro,
+                    centro_costos=centro_costos,
+                    numero_contrato=numero_contrato,
+                    valor_contrato_municipio=valor_contrato_municipio
+                )
+
+                # Liquidar con arquitectura SOLID (separación IA-Validación)
+                resultado_tp = liquidador_tp.liquidar(parametros_tp, analisis_tp_gemini)
+
+                # Convertir Pydantic a dict
+                resultado_final["impuestos"]["tasa_prodeporte"] = resultado_tp.dict()
+
+                # Log según resultado
+                if resultado_tp.aplica:
+                    logger.info(f" Tasa Prodeporte liquidada: ${resultado_tp.valor_imp:,.2f} (Tarifa: {resultado_tp.tarifa*100}%)")
+                else:
+                    logger.info(f" Tasa Prodeporte: {resultado_tp.estado}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando Tasa Prodeporte: {e}")
+                resultado_final["impuestos"]["tasa_prodeporte"] = {
+                    "error": str(e),
+                    "aplica": False,
+                    "estado": "preliquidacion_sin_finalizar"
+                }
+
+        # Liquidar Timbre - NUEVA FUNCIONALIDAD
+        if "timbre" in resultados_analisis and aplica_timbre:
+            try:
+                logger.info(" Liquidando Impuesto al Timbre...")
+
+                # Obtener análisis de observaciones de timbre
+                analisis_observaciones_timbre = resultados_analisis["timbre"]
+                aplica_timbre_obs = analisis_observaciones_timbre.get("aplica_timbre", False)
+
+                # Si no aplica según observaciones, registrar como no aplica
+                if not aplica_timbre_obs:
+                    resultado_final["impuestos"]["timbre"] = {
+                        "aplica": False,
+                        "estado": "no_aplica_impuesto",
+                        "valor": 0.0,
+                        "tarifa": 0.0,
+                        "tipo_cuantia": "",
+                        "base_gravable": 0.0,
+                        "ID_contrato": "",
+                        "observaciones": analisis_observaciones_timbre.get("observaciones_analisis", "No se identifico aplicacion del impuesto al timbre en observaciones")
+                    }
+                    logger.info(" Timbre: No aplica según observaciones de PGD")
+                else:
+                    # Segunda llamada a Gemini: extraer datos del contrato
+                    logger.info(" Timbre aplica - Extrayendo datos del contrato...")
+
+                    clasificador_timbre = ClasificadorTimbre(procesador_gemini=clasificador)
+                    datos_contrato = await clasificador_timbre.extraer_datos_contrato(
+                        documentos_clasificados=documentos_clasificados,
+                        archivos_directos=archivos_directos,
+                        cache_archivos=cache_archivos
+                    )
+
+                    # Crear liquidador y liquidar (el liquidador se encarga de consultar BD)
+                    liquidador_timbre = LiquidadorTimbre(db_manager=db_manager)
+                    resultado_timbre = liquidador_timbre.liquidar_timbre(
+                        nit_administrativo=nit_administrativo,
+                        codigo_negocio=str(codigo_del_negocio),
+                        nit_proveedor=proveedor,
+                        analisis_observaciones=analisis_observaciones_timbre,
+                        datos_contrato=datos_contrato
+                    )
+
+                    # Convertir Pydantic a dict
+                    resultado_final["impuestos"]["timbre"] = resultado_timbre.dict()
+
+                    # Log según resultado
+                    if resultado_timbre.aplica:
+                        logger.info(f" Timbre liquidado: ${resultado_timbre.valor:,.2f} (Tarifa: {resultado_timbre.tarifa*100}%)")
+                    else:
+                        logger.info(f" Timbre: {resultado_timbre.estado}")
+
+            except Exception as e:
+                logger.error(f" Error liquidando Timbre: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                resultado_final["impuestos"]["timbre"] = {
+                    "aplica": False,
+                    "estado": "preliquidacion_sin_finalizar",
+                    "error": str(e),
+                    "observaciones": f"Error en liquidación Timbre: {str(e)}"
+                }
+
+        # =================================
+        # COMPLETAR IMPUESTOS QUE NO APLICAN
+        # =================================
+
+        # Agregar respuesta para impuestos que no aplican según código de negocio
+        if not aplica_estampilla and "estampilla_universidad" not in resultado_final["impuestos"]:
+            razon_estampilla = deteccion_impuestos.get("razon_no_aplica_estampilla") or f"El negocio {nombre_negocio} no aplica este impuesto"
+            estado_estampilla = deteccion_impuestos.get("estado_especial") or "no_aplica_impuesto"
+
+            # Construir mensajes_error sin duplicados
+            # Si hay observaciones, usar solo esas; si no, usar la razón
+            if deteccion_impuestos.get("validacion_recurso") and deteccion_impuestos["validacion_recurso"].get("observaciones"):
+                mensajes_error_estampilla = [deteccion_impuestos["validacion_recurso"]["observaciones"]]
+            else:
+                mensajes_error_estampilla = [razon_estampilla]
+
+            resultado_final["impuestos"]["estampilla_universidad"] = {
+                "aplica": False,
+                "estado": estado_estampilla,
+                "valor_estampilla": 0.0,
+                "tarifa_aplicada": 0.0,
+                "rango_uvt": "",
+                "valor_contrato_pesos": 0.0,
+                "valor_contrato_uvt": 0.0,
+                "mensajes_error": mensajes_error_estampilla,
+                "razon": razon_estampilla,
+            }
+            logger.info(f" Estampilla Universidad: {estado_estampilla} - {razon_estampilla}")
+
+        if not aplica_obra_publica and "contribucion_obra_publica" not in resultado_final["impuestos"]:
+            razon_obra_publica = deteccion_impuestos.get("razon_no_aplica_obra_publica") or f"El negocio {nombre_negocio} no aplica este impuesto"
+            estado_obra_publica = deteccion_impuestos.get("estado_especial") or "no_aplica_impuesto"
+
+            # Construir mensajes_error sin duplicados
+            # Si hay observaciones, usar solo esas; si no, usar la razón
+            if deteccion_impuestos.get("validacion_recurso") and deteccion_impuestos["validacion_recurso"].get("observaciones"):
+                mensajes_error_obra_publica = [deteccion_impuestos["validacion_recurso"]["observaciones"]]
+            else:
+                mensajes_error_obra_publica = [razon_obra_publica]
+
+            resultado_final["impuestos"]["contribucion_obra_publica"] = {
+                "aplica": False,
+                "estado": estado_obra_publica,
+                "tarifa_aplicada": 0.0,
+                "valor_contribucion": 0.0,
+                "valor_factura_sin_iva": 0.0,
+                "mensajes_error": mensajes_error_obra_publica,
+                "razon": razon_obra_publica,
+            }
+            logger.info(f" Contribución Obra Pública: {estado_obra_publica} - {razon_obra_publica}")
+
+        if not aplica_iva and "iva_reteiva" not in resultado_final["impuestos"]:
+            resultado_final["impuestos"]["iva_reteiva"] = {
+                "aplica": False,
+                "estado": "no_aplica_impuesto",
+                "razon": f"El NIT {nit_administrativo} no está configurado para IVA/ReteIVA"
+            }
+            logger.info(f" IVA/ReteIVA: No aplica para NIT {nit_administrativo}")
+
+        if not aplica_tasa_prodeporte and "tasa_prodeporte" not in resultado_final["impuestos"]:
+            resultado_final["impuestos"]["tasa_prodeporte"] = {
+                "estado": "no_aplica_impuesto",
+                "aplica": False,
+                "valor_imp": 0.0,
+                "tarifa": 0.0,
+                "valor_convenio_sin_iva": 0.0,
+                "porcentaje_convenio": 0.0,
+                "valor_contrato_municipio": 0.0,
+                "factura_sin_iva": 0.0,
+                "factura_con_iva": 0.0,
+                "municipio_dept": "",
+                "numero_contrato": "",
+                "observaciones": f"Tasa Prodeporte solo aplica para PATRIMONIO AUTONOMO FONTUR (NIT 900649119). NIT actual: {nit_administrativo}",
+                "fecha_calculo": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            logger.info(f" Tasa Prodeporte: No aplica para NIT {nit_administrativo} (solo FONTUR 900649119)")
+
+        if not aplica_timbre and "timbre" not in resultado_final["impuestos"]:
+            resultado_final["impuestos"]["timbre"] = {
+                "aplica": False,
+                "estado": "no_aplica_impuesto",
+                "valor": 0.0,
+                "tarifa": 0.0,
+                "tipo_cuantia": "",
+                "base_gravable": 0.0,
+                "ID_contrato": "",
+                "observaciones": f"Nit {nit_administrativo} no aplica impuesto al timbre"
+            }
+            logger.info(f" Timbre: No aplica para NIT {nit_administrativo}")
+
+        #  CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
+        valor_total_impuestos = 0.0
+        
+        # Usar nuevas rutas: resultado_final["impuestos"][nombre_impuesto]
+        if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
+        
+        if "estampilla_universidad" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["estampilla_universidad"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["estampilla_universidad"].get("valor_estampilla", 0)
+        
+        if "contribucion_obra_publica" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["contribucion_obra_publica"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["contribucion_obra_publica"].get("valor_contribucion", 0)
+        
+        if "iva_reteiva" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["iva_reteiva"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["iva_reteiva"].get("valor_reteiva", 0)
+
+        if "tasa_prodeporte" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["tasa_prodeporte"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["tasa_prodeporte"].get("valor_imp", 0)
+
+        if "timbre" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["timbre"], dict):
+            valor_total_impuestos += resultado_final["impuestos"]["timbre"].get("valor", 0)
+
+        resultado_final["resumen_total"] = {
+            "valor_total_impuestos": valor_total_impuestos,
+            "impuestos_liquidados": [imp for imp in impuestos_a_procesar if imp.lower().replace("_", "") in [k.lower().replace("_", "") for k in resultado_final["impuestos"].keys()]],
+            "procesamiento_exitoso": True
+        }
+        
+        logger.info(f" Total impuestos calculados: ${valor_total_impuestos:,.2f}")
+
         # =================================
         # PASO 6: CONSOLIDACIÓN Y GUARDADO FINAL
         # =================================
@@ -1891,7 +1140,7 @@ async def procesar_facturas_integrado(
             "es_facturacion_extranjera": es_facturacion_extranjera,
             "documentos_procesados": len(archivos),
             "documentos_clasificados": list(clasificacion.keys()),
-            "version_sistema": "2.0.0",
+            "version_sistema": "2.4.0",
             "modulos_utilizados": ["Extraccion", "Clasificador", "Liquidador"]
         })
         
@@ -1899,10 +1148,10 @@ async def procesar_facturas_integrado(
         guardar_archivo_json(resultado_final, "resultado_final")
         
         # Log final de éxito
-        logger.info(f"✅ Procesamiento completado exitosamente")
-        logger.info(f"🏷️ Impuestos procesados: {resultado_final.get('impuestos_procesados', [])}")
+        logger.info(f" Procesamiento completado exitosamente")
+        logger.info(f"Impuestos procesados: {resultado_final.get('impuestos_procesados', [])}")
         if 'resumen_total' in resultado_final:
-            logger.info(f"💰 Total impuestos: ${resultado_final['resumen_total']['valor_total_impuestos']:,.2f}")
+            logger.info(f" Total impuestos: ${resultado_final['resumen_total']['valor_total_impuestos']:,.2f}")
         
         return JSONResponse(
             status_code=200,
@@ -1915,7 +1164,7 @@ async def procesar_facturas_integrado(
     except Exception as e:
         # Manejo de errores generales
         error_msg = f"Error en procesamiento integrado: {str(e)}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(f" {error_msg}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Guardar error para debugging
@@ -1926,7 +1175,7 @@ async def procesar_facturas_integrado(
             "error_tipo": type(e).__name__,
             "traceback": traceback.format_exc(),
             "archivos_recibidos": [archivo.filename for archivo in archivos],
-            "version": "2.0.0"
+            "version": "2.4.0"
         }
         guardar_archivo_json(error_data, "error_procesamiento")
         
@@ -1951,7 +1200,7 @@ async def procesar_facturas_integrado(
                 "mensaje": user_message,
                 "detalle_tecnico": error_msg,
                 "tipo": error_type,
-                "version": "2.0.0",
+                "version": "2.4.0",
                 "timestamp": datetime.now().isoformat()
             }
         )
@@ -1960,72 +1209,6 @@ async def procesar_facturas_integrado(
 # ENDPOINTS ADICIONALES
 # ===============================
 
-@app.get("/health")
-async def health_check():
-    """Verificar estado del sistema y módulos"""
-    # Verificar configuración de APIs
-    vision_disponible = bool(GOOGLE_CLOUD_CREDENTIALS and os.path.exists(GOOGLE_CLOUD_CREDENTIALS))
-    
-    # Verificar módulos
-    try:
-        # Intentar instanciar cada módulo
-        extractor = ProcesadorArchivos()
-        clasificador = ProcesadorGemini()
-        liquidador = LiquidadorRetencion()
-        
-        modulos_status = {
-            "extractor": "OK",
-            "clasificador": "OK", 
-            "liquidador": "OK"
-        }
-    except Exception as e:
-        modulos_status = {
-            "extractor": "ERROR",
-            "clasificador": "ERROR",
-            "liquidador": "ERROR",
-            "error": str(e)
-        }
-    
-    return {
-        "status": "OK",
-        "timestamp": datetime.now().isoformat(),
-        "version": "2.0.0",
-        "arquitectura": "modular",
-        "sistema": "integrado_retefuente_estampilla",
-        "apis": {
-            "gemini_configurado": bool(GEMINI_API_KEY),
-            "vision_configurado": vision_disponible
-        },
-        "modulos": modulos_status,
-        "conceptos_cargados": len(CONCEPTOS_RETEFUENTE),
-        "carpetas": {
-            "clasificador": os.path.exists("Clasificador"),
-            "liquidador": os.path.exists("Liquidador"),
-            "extraccion": os.path.exists("Extraccion"),
-            "static": os.path.exists("Static"),
-            "results": os.path.exists("Results")
-        }
-    }
-
-@app.get("/api/conceptos")
-async def obtener_conceptos():
-    """Obtener lista de conceptos de retefuente con sus datos exactos"""
-    conceptos_formateados = []
-    
-    for concepto, datos in CONCEPTOS_RETEFUENTE.items():
-        conceptos_formateados.append({
-            "concepto": concepto,
-            "base_pesos": datos["base_pesos"],
-            "tarifa_porcentaje": datos["tarifa_retencion"] * 100,
-            "tarifa_decimal": datos["tarifa_retencion"]
-        })
-    
-    return {
-        "conceptos": conceptos_formateados,
-        "total_conceptos": len(CONCEPTOS_RETEFUENTE),
-        "fuente": "RETEFUENTE_CONCEPTOS.xlsx",
-        "version": "2.0.0"
-    }
 
 @app.get("/api/nits-disponibles")
 async def obtener_nits_disponibles_endpoint():
@@ -2049,7 +1232,7 @@ async def obtener_nits_disponibles_endpoint():
             "success": True,
             "nits": nits_formateados,
             "total_nits": len(nits_formateados),
-            "version": "2.0.0",
+            "version": "2.4.0",
             "timestamp": datetime.now().isoformat()
         }
         
@@ -2060,7 +1243,7 @@ async def obtener_nits_disponibles_endpoint():
             detail={
                 "error": "Error obteniendo NITs",
                 "mensaje": str(e),
-                "version": "2.0.0"
+                "version": "2.4.0"
             }
         )
 
@@ -2073,7 +1256,7 @@ async def obtener_estadisticas_extracciones():
         
         return {
             "success": True,
-            "version": "2.0.0",
+            "version": "2.4.0",
             "modulo": "Extraccion",
             "estadisticas": estadisticas,
             "timestamp": datetime.now().isoformat()
@@ -2090,84 +1273,113 @@ async def obtener_estadisticas_extracciones():
             }
         )
 
-@app.get("/api/estructura")
-async def obtener_estructura():
-    """Obtener información sobre la estructura modular del proyecto"""
-    
-    def verificar_modulo(carpeta: str) -> Dict[str, Any]:
-        """Verifica el estado de un módulo"""
-        ruta = Path(carpeta)
-        if not ruta.exists():
-            return {"existe": False}
-        
-        archivos = list(ruta.glob("*.py"))
-        return {
-            "existe": True,
-            "archivos": [f.name for f in archivos],
-            "total_archivos": len(archivos)
-        }
-    
-    return {
-        "version": "2.0.0",
-        "arquitectura": "modular",
-        "sistema": "integrado_retefuente_estampilla",
-        "descripcion": "Sistema dividido en módulos especializados con procesamiento paralelo de impuestos",
-        "modulos": {
-            "Clasificador": {
-                **verificar_modulo("Clasificador"),
-                "funcion": "Clasificación y análisis de documentos con Gemini"
-            },
-            "Liquidador": {
-                **verificar_modulo("Liquidador"),
-                "funcion": "Cálculo de retenciones y estampillas según normativa colombiana"
-            },
-            "Extraccion": {
-                **verificar_modulo("Extraccion"),
-                "funcion": "Extracción de texto de PDFs, imágenes, Excel, Word"
-            },
-            "Static": {
-                **verificar_modulo("Static"),
-                "funcion": "Frontend y archivos estáticos"
-            },
-            "Results": {
-                "existe": os.path.exists("Results"),
-                "funcion": "Almacenamiento de resultados por fecha con JSONs organizados",
-                "carpetas_fecha": [d.name for d in Path("Results").iterdir() if d.is_dir()] if os.path.exists("Results") else []
-            }
-        },
-        "archivos_principales": {
-            "main.py": "Orquestador principal con sistema integrado",
-            "config.py": "Configuración global incluyendo estampilla",
-            ".env": "Variables de entorno"
-        },
-        "flujo_procesamiento": [
-            "1. Extraccion/: Extraer texto de archivos",
-            "2. Clasificador/: Clasificar documentos", 
-            "3. Clasificador/: Análisis paralelo (retefuente + estampilla)",
-            "4. Liquidador/: Calcular impuestos en paralelo",
-            "5. Results/: Guardar JSONs organizados por fecha"
-        ]
-    }
-
 @app.post("/api/prueba-simple")
 async def prueba_simple(nit_administrativo: Optional[str] = Form(None)):
     """Endpoint de prueba simple SIN archivos"""
-    logger.info(f"🔥 PRUEBA SIMPLE: Recibido NIT: {nit_administrativo}")
+    logger.info(f" PRUEBA SIMPLE: Recibido NIT: {nit_administrativo}")
     return {
         "success": True,
         "mensaje": "POST sin archivos funciona - Sistema integrado",
         "nit_recibido": nit_administrativo,
-        "version": "2.0.0",
+        "version": "2.4.0",
         "sistema": "integrado_retefuente_estampilla",
         "timestamp": datetime.now().isoformat()
     }
+
+@app.get("/api/database/health")
+async def database_health_check():
+    """
+    Verificar el estado de la conexión a la base de datos usando BusinessService.
+
+    PRINCIPIO SRP: Endpoint específico para health check de base de datos
+    """
+    if not business_service:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "message": "BusinessService no está inicializado",
+                "details": "Error en inicialización del sistema de base de datos"
+            }
+        )
+
+    try:
+        # Usar el servicio para validar disponibilidad (SRP)
+        is_available = business_service.validar_disponibilidad_database()
+
+        if is_available:
+            return {
+                "status": "healthy",
+                "message": "Conexión a base de datos OK",
+                "service": "BusinessDataService",
+                "architecture": "SOLID + Strategy Pattern",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "unhealthy",
+                    "message": "Conexión a base de datos no disponible",
+                    "service": "BusinessDataService",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": f"Error verificando base de datos: {str(e)}",
+                "service": "BusinessDataService",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+
+@app.get("/api/database/test/{codigo_negocio}")
+async def test_database_query(codigo_negocio: int):
+    """
+    Probar consulta de negocio por código usando BusinessService.
+
+    PRINCIPIO SRP: Endpoint específico para testing de consultas de negocio
+    """
+    if not business_service:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "BusinessService no está disponible",
+                "details": "Error en inicialización del sistema de base de datos",
+                "service": "BusinessDataService"
+            }
+        )
+
+    try:
+        # Usar el servicio para la consulta (SRP + DIP)
+        resultado = business_service.obtener_datos_negocio(codigo_negocio)
+
+        return {
+            "resultado": resultado,
+            "service": "BusinessDataService",
+            "architecture": "SOLID + Clean Architecture",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Error consultando negocio: {str(e)}",
+                "codigo_consultado": codigo_negocio,
+                "service": "BusinessDataService",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
 @app.get("/api/diagnostico")
 async def diagnostico_completo():
     """Endpoint de diagnóstico completo para verificar todos los componentes del sistema"""
     diagnostico = {
         "timestamp": datetime.now().isoformat(),
-        "version": "2.0.0",
+        "version": "2.4.0",
         "sistema": "integrado_retefuente_estampilla",
         "estado_general": "VERIFICANDO",
         "componentes": {}
@@ -2274,29 +1486,13 @@ async def diagnostico_completo():
                     "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_rf else 'NO'} aplica retención fuente"
                 }
                 
-                # ✅ VERIFICAR ESTAMPILLA UNIVERSIDAD
-                aplica_estampilla = nit_aplica_estampilla_universidad(primer_nit)
-                config_status["estampilla_universidad"] = {
-                    "status": "OK",
-                    "aplica_estampilla": aplica_estampilla,
-                    "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_estampilla else 'NO'} aplica estampilla universidad"
-                }
-                
-                # 🏗️ VERIFICAR CONTRIBUCIÓN OBRA PÚBLICA
-                aplica_obra_publica = nit_aplica_contribucion_obra_publica(primer_nit)
-                config_status["contribucion_obra_publica"] = {
-                    "status": "OK",
-                    "aplica_obra_publica": aplica_obra_publica,
-                    "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_obra_publica else 'NO'} aplica contribución obra pública 5%"
-                }
-                
-                # ⚡ VERIFICAR DETECCIÓN AUTOMÁTICA INTEGRADA
+         
+                #  VERIFICAR DETECCIÓN AUTOMÁTICA INTEGRADA
                 try:
                     deteccion_auto = detectar_impuestos_aplicables(primer_nit)
                     config_status["deteccion_automatica"] = {
                         "status": "OK",
                         "impuestos_detectados": deteccion_auto['impuestos_aplicables'],
-                        "procesamiento_paralelo": deteccion_auto['procesamiento_paralelo'],
                         "mensaje": f"Detección automática funcionando: {len(deteccion_auto['impuestos_aplicables'])} impuestos detectados"
                     }
                 except Exception as e:
@@ -2394,3 +1590,36 @@ async def diagnostico_completo():
             "mensaje": f"Error ejecutando diagnóstico: {str(e)}",
             "error_completo": str(e)
         }
+
+# ===============================
+# EJECUCIÓN PRINCIPAL
+# ===============================
+
+if __name__ == "__main__":
+    import uvicorn
+    
+
+    logger.info(" Iniciando Preliquidador de Retefuente v2.0 - Sistema Integrado")
+    logger.info(" Funcionalidades: Retención en la fuente + Estampilla universidad + Obra pública 5%")
+    logger.info(f" Gemini configurado: {bool(GEMINI_API_KEY)}")
+    #logger.info(f" Vision configurado: {bool(GOOGLE_CLOUD_CREDENTIALS)}")
+    
+    # Verificar estructura de carpetas
+    carpetas_requeridas = ["Clasificador", "Liquidador", "Extraccion",  "Results"]
+    for carpeta in carpetas_requeridas:
+        if os.path.exists(carpeta):
+            logger.info(f" Módulo {carpeta}/ encontrado")
+        else:
+            logger.warning(f" Módulo {carpeta}/ no encontrado")
+    
+
+    
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8080,
+        reload=True,
+        timeout_keep_alive=120,
+        limit_max_requests=1000,
+        limit_concurrency=100
+    )

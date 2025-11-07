@@ -1,0 +1,720 @@
+# consulta_negocio_robusto.py
+from supabase import create_client, Client
+import os
+from typing import Optional, Dict, Any
+from abc import ABC, abstractmethod
+
+from supabase import create_client, Client
+import os
+from typing import Optional, Dict, Any, List
+from abc import ABC, abstractmethod
+
+# ================================
+# 🏗️ INTERFACES Y ABSTRACCIONES
+# ================================
+
+class DatabaseInterface(ABC):
+    """Interface abstracta para operaciones de base de datos"""
+
+    @abstractmethod
+    def obtener_por_codigo(self, codigo: str) -> Dict[str, Any]:
+        """Obtiene un negocio por su código"""
+        pass
+
+    @abstractmethod
+    def listar_codigos_disponibles(self, limite: int = 10) -> Dict[str, Any]:
+        """Lista códigos disponibles para pruebas"""
+        pass
+
+    @abstractmethod
+    def health_check(self) -> bool:
+        """Verifica la salud de la conexión"""
+        pass
+
+    @abstractmethod
+    def obtener_cuantia_contrato(self, id_contrato: str, codigo_negocio: str, nit_proveedor: str) -> Dict[str, Any]:
+        """Obtiene la tarifa y tipo de cuantía para un contrato"""
+        pass
+
+    @abstractmethod
+    def obtener_conceptos_retefuente(self, estructura_contable: int) -> Dict[str, Any]:
+        """Obtiene los conceptos de retención en la fuente según estructura contable"""
+        pass
+
+    @abstractmethod
+    def obtener_concepto_por_index(self, index: int, estructura_contable: int) -> Dict[str, Any]:
+        """Obtiene los datos completos de un concepto por su index"""
+        pass
+
+    @abstractmethod
+    def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+        """Obtiene los conceptos de retención para pagos al exterior"""
+        pass
+
+    @abstractmethod
+    def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+        """Obtiene la lista de países con convenio de doble tributación"""
+        pass
+
+
+# ================================
+#  IMPLEMENTACIÓN SUPABASE
+# ================================
+
+class SupabaseDatabase(DatabaseInterface):
+    """Implementación concreta para Supabase"""
+    
+    def __init__(self, supabase_url: str, supabase_key: str):
+        self.supabase: Client = create_client(supabase_url, supabase_key)
+        self.tabla = 'NEGOCIOS FIDUCIARIA'
+        
+        # Nombres exactos de las columnas con comillas dobles
+        self.columnas = {
+            'codigo': '"CODIGO DEL NEGOCIO"',
+            'negocio': '"DESCRIPCION DEL NEGOCIO"',  # 
+            'nit': '"NIT ASOCIADO"',
+            'nombre_fiduciario': '"NOMBRE DEL ASOCIADO"'
+        }
+        
+        # Cache de columnas para SELECT
+        self._columnas_select = ", ".join(self.columnas.values())
+    
+    def obtener_por_codigo(self, codigo: str) -> Dict[str, Any]:
+        """
+        Obtiene un negocio por su código (primary key)
+        """
+        try:
+            response = self.supabase.table(self.tabla).select(
+                self._columnas_select
+            ).eq(self.columnas['codigo'], codigo).execute()
+            
+            if response.data and len(response.data) > 0:
+                negocio_raw = response.data[0]
+                
+                # Mapear a nombres más amigables
+                negocio_limpio = {
+                    'codigo': negocio_raw.get('CODIGO DEL NEGOCIO'),
+                    'negocio': negocio_raw.get('DESCRIPCION DEL NEGOCIO'),  
+                    'nit': negocio_raw.get('NIT ASOCIADO'),
+                    'nombre_fiduciario': negocio_raw.get('NOMBRE DEL ASOCIADO')
+                }
+                
+                return {
+                    'success': True,
+                    'data': negocio_limpio,
+                    'message': f'Negocio {codigo} encontrado exitosamente',
+                    'raw_data': negocio_raw  # Para debugging
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'No existe negocio con código: {codigo}'
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar Supabase: {e}'
+            }
+    
+    def listar_codigos_disponibles(self, limite: int = 10) -> Dict[str, Any]:
+        """
+        Lista los códigos disponibles para pruebas
+        """
+        try:
+            response = self.supabase.table(self.tabla).select(
+                self.columnas['codigo']
+            ).limit(limite).execute()
+            
+            if response.data:
+                codigos = [item.get('CODIGO DEL NEGOCIO') for item in response.data]
+                return {
+                    'success': True,
+                    'codigos': codigos,
+                    'total': len(codigos),
+                    'message': f'{len(codigos)} códigos encontrados'
+                }
+            else:
+                return {
+                    'success': False,
+                    'codigos': [],
+                    'message': 'No se encontraron códigos'
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f'Error al listar códigos: {e}'
+            }
+    
+    def obtener_tipo_recurso(self, codigo_negocio: str) -> Dict[str, Any]:
+        """
+        Obtiene el tipo de recurso (Públicos/Privados) para un código de negocio.
+
+        SRP: Solo consulta la tabla RECURSOS (Data Access Layer)
+
+        Args:
+            codigo_negocio: Código del negocio a consultar
+
+        Returns:
+            Dict con estructura estándar de respuesta
+        """
+        try:
+            response = self.supabase.table('RECURSOS').select(
+                '"PUBLICO/PRIVADO"'
+            ).eq('"CODIGO_NEGOCIO"', codigo_negocio).execute()
+
+            if response.data and len(response.data) > 0:
+                tipo_recurso_raw = response.data[0]
+                tipo_recurso = tipo_recurso_raw.get('PUBLICO/PRIVADO')
+
+                return {
+                    'success': True,
+                    'data': {
+                        'tipo_recurso': tipo_recurso,
+                        'codigo_negocio': codigo_negocio
+                    },
+                    'message': f'Tipo de recurso encontrado para código {codigo_negocio}',
+                    'raw_data': tipo_recurso_raw
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'No existe parametrización de recurso para código: {codigo_negocio}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar tipo de recurso: {e}'
+            }
+
+    def obtener_cuantia_contrato(self, id_contrato: str, codigo_negocio: str, nit_proveedor: str) -> Dict[str, Any]:
+        """
+        Obtiene la tarifa y tipo de cuantía para un contrato de la tabla CUANTIAS.
+
+        SRP: Solo consulta la tabla CUANTIAS (Data Access Layer)
+
+        Args:
+            id_contrato: ID del contrato identificado por Gemini
+            codigo_negocio: Código del negocio del endpoint
+            nit_proveedor: NIT del proveedor del endpoint
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo tarifa y tipo_cuantia
+        """
+        try:
+            response = self.supabase.table('CUANTIAS').select(
+                '"TIPO_CUANTIA", "TARIFA"'
+            ).ilike('"ID_CONTRATO"', f'%{id_contrato}%').eq(
+                '"CODIGO_NEGOCIO"', codigo_negocio
+            ).execute()
+
+            if response.data and len(response.data) > 0:
+                cuantia_raw = response.data[0]
+                tipo_cuantia = cuantia_raw.get('TIPO_CUANTIA')
+                tarifa = cuantia_raw.get('TARIFA', 0.0)
+
+                # Convertir tarifa a float manejando formato con coma decimal (5,0 -> 5.0)
+                try:
+                    if tarifa is not None:
+                        tarifa_str = str(tarifa).replace(',', '.')
+                        tarifa = float(tarifa_str)
+                    else:
+                        tarifa = 0.0
+                except (ValueError, TypeError) as e:
+                    # Si falla, reportar el error pero usar valor por defecto
+                    print(f"[WARNING] Error convirtiendo tarifa: {e}. Raw: tarifa={tarifa}")
+                    tarifa = 0.0
+
+                return {
+                    'success': True,
+                    'data': {
+                        'tipo_cuantia': tipo_cuantia,
+                        'tarifa': tarifa,
+                        'id_contrato': id_contrato,
+                        'codigo_negocio': codigo_negocio,
+                        'nit_proveedor': nit_proveedor
+                    },
+                    'message': f'Cuantía encontrada para contrato {id_contrato}',
+                    'raw_data': cuantia_raw
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'No existe cuantía para contrato {id_contrato} con código de negocio {codigo_negocio}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar cuantía del contrato: {e}'
+            }
+
+    def obtener_conceptos_retefuente(self, estructura_contable: int) -> Dict[str, Any]:
+        """
+        Obtiene los conceptos de retención en la fuente según estructura contable.
+
+        SRP: Solo consulta la tabla RETENCION EN LA FUENTE (Data Access Layer)
+
+        Args:
+            estructura_contable: Código de estructura contable para filtrar conceptos
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo lista de conceptos
+        """
+        try:
+            response = self.supabase.table('RETENCION EN LA FUENTE').select(
+                'descripcion_concepto, index'
+            ).eq('estructura_contable', estructura_contable).execute()
+
+            if response.data and len(response.data) > 0:
+                conceptos = []
+                for item in response.data:
+                    conceptos.append({
+                        'descripcion_concepto': item.get('descripcion_concepto'),
+                        'index': item.get('index')
+                    })
+
+                return {
+                    'success': True,
+                    'data': conceptos,
+                    'total': len(conceptos),
+                    'message': f'{len(conceptos)} conceptos encontrados para estructura contable {estructura_contable}'
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': [],
+                    'message': f'No se encontraron conceptos para estructura contable {estructura_contable}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': [],
+                'error': str(e),
+                'message': f'Error al consultar conceptos de retefuente: {e}'
+            }
+
+    def obtener_concepto_por_index(self, index: int, estructura_contable: int) -> Dict[str, Any]:
+        """
+        Obtiene los datos completos de un concepto específico por su index.
+
+        SRP: Solo consulta la tabla RETENCION EN LA FUENTE (Data Access Layer)
+
+        Args:
+            index: Índice del concepto
+            estructura_contable: Código de estructura contable
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo base, porcentaje y descripción
+        """
+        try:
+            response = self.supabase.table('RETENCION EN LA FUENTE').select(
+                'descripcion_concepto, base, porcentaje, codigo_concepto'
+            ).eq('index', index).eq('estructura_contable', estructura_contable).execute()
+
+            if response.data and len(response.data) > 0:
+                concepto_raw = response.data[0]
+                base = concepto_raw.get('base', 0.0)
+                porcentaje = concepto_raw.get('porcentaje', 0.0)
+                codigo_concepto = concepto_raw.get('codigo_concepto', '')
+
+                # Convertir a float manejando formato con coma decimal (3,5 -> 3.5)
+                try:
+                    # Manejar base
+                    if base is not None:
+                        base_str = str(base).replace(',', '.')
+                        base = float(base_str)
+                    else:
+                        base = 0.0
+
+                    # Manejar porcentaje (puede venir como string con coma: '3,5')
+                    if porcentaje is not None:
+                        porcentaje_str = str(porcentaje).replace(',', '.')
+                        porcentaje = float(porcentaje_str)
+                    else:
+                        porcentaje = 0.0
+                except (ValueError, TypeError) as e:
+                    # Si aún falla, reportar el error pero usar valores por defecto
+                    print(f"[WARNING] Error convirtiendo base/porcentaje: {e}. Raw: base={base}, porcentaje={porcentaje}")
+                    base = 0.0
+                    porcentaje = 0.0
+
+                return {
+                    'success': True,
+                    'data': {
+                        'descripcion_concepto': concepto_raw.get('descripcion_concepto'),
+                        'base': base,
+                        'porcentaje': porcentaje,
+                        'index': index,
+                        'estructura_contable': estructura_contable,
+                        'codigo_concepto': codigo_concepto
+                    },
+                    'message': f'Concepto encontrado para index {index}',
+                    'raw_data': concepto_raw
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'No existe concepto con index {index} para estructura contable {estructura_contable}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar concepto por index: {e}'
+            }
+
+    def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+        """
+        Obtiene todos los conceptos de retención para pagos al exterior.
+
+        SRP: Solo consulta la tabla conceptos_extranjeros (Data Access Layer)
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo:
+            - index: Índice del concepto
+            - nombre_concepto: Descripción del concepto
+            - base_pesos: Base mínima en pesos
+            - tarifa_normal: Tarifa para países sin convenio
+            - tarifa_convenio: Tarifa para países con convenio
+        """
+        try:
+            response = self.supabase.table('conceptos_extranjeros').select(
+                'index, nombre_concepto, base_pesos, tarifa_normal, tarifa_convenio'
+            ).execute()
+
+            if response.data and len(response.data) > 0:
+                conceptos = []
+                for concepto_raw in response.data:
+                    try:
+                        # Convertir tarifas a float manejando formato con coma
+                        tarifa_normal = concepto_raw.get('tarifa_normal', 0.0)
+                        tarifa_convenio = concepto_raw.get('tarifa_convenio', 0.0)
+                        base_pesos = concepto_raw.get('base_pesos', 0.0)
+
+                        if tarifa_normal is not None:
+                            tarifa_normal = float(str(tarifa_normal).replace(',', '.'))
+                        else:
+                            tarifa_normal = 0.0
+
+                        if tarifa_convenio is not None:
+                            tarifa_convenio = float(str(tarifa_convenio).replace(',', '.'))
+                        else:
+                            tarifa_convenio = 0.0
+
+                        if base_pesos is not None:
+                            base_pesos = float(str(base_pesos).replace(',', '.'))
+                        else:
+                            base_pesos = 0.0
+
+                        conceptos.append({
+                            'index': concepto_raw.get('index'),
+                            'nombre_concepto': concepto_raw.get('nombre_concepto'),
+                            'base_pesos': base_pesos,
+                            'tarifa_normal': tarifa_normal,
+                            'tarifa_convenio': tarifa_convenio
+                        })
+                    except (ValueError, TypeError) as e:
+                        print(f"[WARNING] Error convirtiendo datos de concepto extranjero: {e}")
+                        continue
+
+                return {
+                    'success': True,
+                    'data': conceptos,
+                    'count': len(conceptos),
+                    'message': f'{len(conceptos)} conceptos extranjeros encontrados'
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron conceptos extranjeros'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': [],
+                'error': str(e),
+                'message': f'Error al consultar conceptos extranjeros: {e}'
+            }
+
+    def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+        """
+        Obtiene la lista de países con convenio de doble tributación.
+
+        SRP: Solo consulta la tabla paises_convenio_tributacion (Data Access Layer)
+
+        Returns:
+            Dict con estructura estándar de respuesta incluyendo:
+            - paises: Lista de nombres de países con convenio
+        """
+        try:
+            response = self.supabase.table('paises_convenio_tributacion').select(
+                'nombre_pais'
+            ).execute()
+
+            if response.data and len(response.data) > 0:
+                paises = [row.get('nombre_pais') for row in response.data if row.get('nombre_pais')]
+
+                return {
+                    'success': True,
+                    'data': paises,
+                    'count': len(paises),
+                    'message': f'{len(paises)} países con convenio encontrados'
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron países con convenio'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': [],
+                'error': str(e),
+                'message': f'Error al consultar países con convenio: {e}'
+            }
+
+    def health_check(self) -> bool:
+        """
+        Verifica si la conexión a Supabase funciona
+        """
+        try:
+            # Hacer una consulta simple para verificar conectividad
+            response = self.supabase.table(self.tabla).select('count').limit(1).execute()
+            return True
+        except Exception as e:
+            print(f" Health check fallido: {e}")
+            return False
+
+
+# ================================
+# MANAGER PRINCIPAL
+# ================================
+
+class DatabaseManager:
+    """
+    Manager principal que usa el patrón Strategy para manejar diferentes tipos de BD
+    """
+    
+    def __init__(self, db_connection: DatabaseInterface) -> None:
+        self.db_connection = db_connection
+        
+        # Verificar conexión al inicializar
+        if not self.db_connection.health_check():
+            raise ConnectionError("🚨 No se pudo establecer conexión con la base de datos")
+        
+        print(" DatabaseManager inicializado correctamente")
+    
+    def obtener_negocio_por_codigo(self, codigo: str) -> Dict[str, Any]:
+        """
+        Obtiene un negocio por su código usando la implementación configurada
+        """
+        return self.db_connection.obtener_por_codigo(codigo)
+    
+    def listar_codigos_disponibles(self, limite: int = 10) -> Dict[str, Any]:
+        """
+        Lista códigos disponibles usando la implementación configurada
+        """
+        return self.db_connection.listar_codigos_disponibles(limite)
+    
+    def verificar_salud_conexion(self) -> bool:
+        """
+        Verifica el estado de la conexión
+        """
+        return self.db_connection.health_check()
+
+    def obtener_tipo_recurso_negocio(self, codigo_negocio: str) -> Dict[str, Any]:
+        """
+        Obtiene el tipo de recurso para un código de negocio.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            codigo_negocio: Código del negocio
+
+        Returns:
+            Dict con resultado de la consulta
+        """
+        return self.db_connection.obtener_tipo_recurso(codigo_negocio)
+
+    def obtener_cuantia_contrato(self, id_contrato: str, codigo_negocio: str, nit_proveedor: str) -> Dict[str, Any]:
+        """
+        Obtiene la tarifa y tipo de cuantía para un contrato.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            id_contrato: ID del contrato identificado por Gemini
+            codigo_negocio: Código del negocio del endpoint
+            nit_proveedor: NIT del proveedor del endpoint
+
+        Returns:
+            Dict con resultado de la consulta incluyendo tarifa y tipo_cuantia
+        """
+        return self.db_connection.obtener_cuantia_contrato(id_contrato, codigo_negocio, nit_proveedor)
+
+    def obtener_conceptos_retefuente(self, estructura_contable: int) -> Dict[str, Any]:
+        """
+        Obtiene los conceptos de retención en la fuente según estructura contable.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            estructura_contable: Código de estructura contable
+
+        Returns:
+            Dict con resultado de la consulta incluyendo lista de conceptos
+        """
+        return self.db_connection.obtener_conceptos_retefuente(estructura_contable)
+
+    def obtener_concepto_por_index(self, index: int, estructura_contable: int) -> Dict[str, Any]:
+        """
+        Obtiene los datos completos de un concepto por su index.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            index: Índice del concepto
+            estructura_contable: Código de estructura contable
+
+        Returns:
+            Dict con resultado de la consulta incluyendo base, porcentaje y descripción
+        """
+        return self.db_connection.obtener_concepto_por_index(index, estructura_contable)
+
+    def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+        """
+        Obtiene los conceptos de retención para pagos al exterior.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Returns:
+            Dict con resultado de la consulta incluyendo:
+            - index, nombre_concepto, base_pesos, tarifa_normal, tarifa_convenio
+        """
+        return self.db_connection.obtener_conceptos_extranjeros()
+
+    def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+        """
+        Obtiene la lista de países con convenio de doble tributación.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Returns:
+            Dict con resultado de la consulta incluyendo lista de nombres de países
+        """
+        return self.db_connection.obtener_paises_con_convenio()
+
+
+def ejecutar_pruebas_completas(db_manager: DatabaseManager):
+    """
+    Ejecuta un conjunto completo de pruebas
+    """
+    print(" EJECUTANDO PRUEBAS COMPLETAS")
+    print("=" * 60)
+    
+    # 1. Verificar salud de conexión
+    print("1️ Verificando salud de conexión...")
+    if db_manager.verificar_salud_conexion():
+        print("    Conexión saludable")
+    else:
+        print("   Problema de conexión")
+        return
+    
+    # 2. Listar códigos disponibles
+    print("\n2️ Listando códigos disponibles...")
+    codigos_result = db_manager.listar_codigos_disponibles(limite=5)
+    
+    if codigos_result['success']:
+        print(f"    {codigos_result['total']} códigos encontrados:")
+        for i, codigo in enumerate(codigos_result['codigos'], 1):
+            print(f"      {i}. {codigo}")
+        
+        # 3. Probar con primer código disponible
+        if codigos_result['codigos']:
+            codigo_prueba = str(codigos_result['codigos'][0])
+            print(f"\n3️ Probando con primer código disponible: '{codigo_prueba}'")
+            
+            resultado = db_manager.obtener_negocio_por_codigo(codigo_prueba)
+            
+            if resultado['success']:
+                data = resultado['data']
+                print("    RESULTADO EXITOSO:")
+                print(f"       Código: {data['codigo']}")
+                print(f"       Descripción: {data['negocio']}")
+                print(f"       NIT: {data['nit']}")
+                print(f"       Nombre: {data['nombre_fiduciario']}")
+            else:
+                print(f"   ❌ Error: {resultado['message']}")
+    else:
+        print(f"   ❌ No se pudieron listar códigos: {codigos_result['message']}")
+    
+    # 4. Probar con código específico conocido
+    print("\n Probando con código específico:")
+    resultado_especifico = db_manager.obtener_negocio_por_codigo("44658")
+    
+    if resultado_especifico['success']:
+        print("   ✅ Código '44658' encontrado!")
+        data = resultado_especifico['data']
+        print(f"      📊 Datos: {data}")
+        
+        # Para integración con preliquidador
+        print(f"\n🔧 DATOS PARA PRELIQUIDADOR:")
+        print(f"   NIT a procesar: {data['nit']}")
+        print(f"   Entidad: {data['nombre_fiduciario']}")
+        
+    else:
+        print(f"   ❌ Código '44658': {resultado_especifico['message']}")
+
+def main():
+    """
+    Función principal de prueba
+    """
+    print("🚀 INICIANDO SISTEMA DE CONSULTA DE NEGOCIOS")
+    print("=" * 60)
+    
+    try:
+        # Configuración (en producción usar variables de entorno)
+        SUPABASE_URL = "https://gfcseujjfnaoicdenymt.supabase.co"
+        SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmY3NldWpqZm5hb2ljZGVueW10Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTEwMzA4MDgsImV4cCI6MjA2NjYwNjgwOH0.ghHQ-wDB7itkoEEKq04iOCmLUyrL1hLSjLXhq1gN62k"
+        
+        #  Crear la implementación concreta
+        supabase_db = SupabaseDatabase(SUPABASE_URL, SUPABASE_KEY)
+        
+        #  Crear el manager usando el patrón Strategy
+        db_manager = DatabaseManager(supabase_db)
+        
+        # Ejecutar pruebas
+        ejecutar_pruebas_completas(db_manager)
+        
+    except ConnectionError as e:
+        print(f" Error de conexión: {e}")
+    except Exception as e:
+        print(f" Error inesperado: {e}")
+    finally:
+        print("\n Pruebas completadas")
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,4 @@
-# ---------------------
-# Stage 1: Builder
-# ---------------------
+# Multi-stage build para optimizar tamaño
 FROM python:3.11-slim as builder
 
 WORKDIR /app
@@ -12,13 +10,12 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements e instalar dependencias globalmente
+# Copiar requirements e instalar dependencias
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ---------------------
-# Stage 2: Final image
-# ---------------------
+
+# Etapa final
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -28,21 +25,24 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Crear usuario no-root
+# Crear usuario no-root para seguridad
 RUN useradd --create-home --shell /bin/bash app
+
 
 # Copiar dependencias instaladas y código fuente
 COPY --from=builder /usr/local /usr/local
 COPY --chown=app:app . .
 
-# Variables de entorno
+# Variables de entorno para Python
+
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
+
 
 # Cambiar a usuario no-root
 USER app
 
-# Cloud Run necesita este puerto
+# Puerto de la aplicación
 EXPOSE 8080
 
 # Comando de inicio
