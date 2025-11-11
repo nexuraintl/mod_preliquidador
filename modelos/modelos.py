@@ -370,6 +370,7 @@ class AnalisisFactura(BaseModel):
         naturaleza_tercero: Tipo de tercero (persona natural/juridica, etc.)
         articulo_383: Informacion de deducciones personales (solo si aplica)
         es_facturacion_exterior: True si es facturacion internacional
+        pais_proveedor: Pais del proveedor (solo facturacion extranjera)
         valor_total: Valor total de la factura
         observaciones: Lista de observaciones del analisis
 
@@ -387,11 +388,13 @@ class AnalisisFactura(BaseModel):
         articulo_383 es opcional y solo se incluye para personas naturales.
 
     Version: articulo_383 agregado en v2.10.0
+    Version: pais_proveedor agregado en v3.1.1 (facturacion extranjera)
     """
     conceptos_identificados: List[ConceptoIdentificado]
     naturaleza_tercero: Optional[NaturalezaTercero]
     articulo_383: Optional[InformacionArticulo383] = None
     es_facturacion_exterior: bool = False
+    pais_proveedor: Optional[str] = None
     valor_total: Optional[float]
     observaciones: List[str]
 

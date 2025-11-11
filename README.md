@@ -1,10 +1,12 @@
-# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v3.0.10
+# 🚀 PRELIQUIDADOR DE IMPUESTOS COLOMBIANOS - Sistema Integrado v3.9.0
 
-> 🏗️ **ARQUITECTURA SOLID v3.0.10**: Sistema con principios SOLID + Pagos al Exterior
+> 🏗️ **ARQUITECTURA SOLID v3.9.0**: Clasificadores Especializados + Composición sobre Herencia
 
-> **Sistema automatizado de liquidación tributaria con Inteligencia Artificial y Arquitectura Profesional**  
+> **Sistema automatizado de liquidación tributaria con Inteligencia Artificial y Arquitectura Profesional**
 > API REST con diseño SOLID para procesar facturas y calcular múltiples impuestos colombianos usando Google Gemini AI
 > Desarrollado siguiendo principios SOLID para máxima mantenibilidad y escalabilidad
+>
+> 🆕 **v3.2.0**: Soporte para múltiples fuentes de datos (Supabase + Nexura API) con Strategy Pattern
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104%2B-green.svg)](https://fastapi.tiangolo.com)
@@ -13,7 +15,7 @@
 
 ---
 
-## 🏗️ **ARQUITECTURA SOLID v3.0.0 - CAMBIO MAYOR**
+## 🏗️ **ARQUITECTURA SOLID v3.9.0 - CLASIFICADORES ESPECIALIZADOS CON COMPOSICIÓN**
 
 ### **🔹 PRINCIPIOS SOLID IMPLEMENTADOS**
 
@@ -71,15 +73,48 @@ class BaseLiquidador(ABC):
         pass
 ```
 
-### **🔧 SEPARACIÓN DE RESPONSABILIDADES**
+### **🔧 SEPARACIÓN DE RESPONSABILIDADES v3.9.0**
 
 | Componente | Responsabilidad Única (SRP) | Ubicación |
 |------------|---------------------------|----------|
-| **ProcesadorGemini** | Solo comunicación con IA | `Clasificador/clasificador.py` |
+| **ProcesadorGemini** | Coordinación + delegación a clasificadores | `Clasificador/clasificador.py` |
+| **ClasificadorRetefuente** | Solo análisis de retefuente con IA | `Clasificador/clasificador_retefuente.py` |
+| **ClasificadorConsorcio** | 🆕 Solo análisis de consorcios con IA | `Clasificador/clasificador_consorcio.py` |
 | **LiquidadorRetencion** | Solo cálculos retefuente | `Liquidador/liquidador.py` |
 | **ValidadorArticulo383** | Solo validaciones Art 383 | `Liquidador/validadores/` |
 | **ProcesadorArchivos** | Solo extracción de texto | `Extraccion/procesador_archivos.py` |
 | **LiquidadorFactory** | Solo creación de liquidadores | `Liquidador/__init__.py` |
+
+### **🆕 COMPOSICIÓN SOBRE HERENCIA v3.9.0**
+
+```python
+# Patrón aplicado en ClasificadorConsorcio
+class ClasificadorConsorcio:
+    """
+    Usa COMPOSICIÓN en lugar de herencia
+    DIP: Inyección de dependencias
+    """
+
+    def __init__(self,
+                 procesador_gemini: ProcesadorGemini,
+                 clasificador_retefuente: ClasificadorRetefuente):
+        # Recibe dependencias en constructor
+        self.procesador_gemini = procesador_gemini
+        self.clasificador_retefuente = clasificador_retefuente
+
+    async def analizar_consorcio(...):
+        # Delega llamadas a Gemini al procesador
+        respuesta = await self.procesador_gemini._llamar_gemini_hibrido_factura(...)
+
+        # Usa clasificador de retefuente para conceptos
+        conceptos = self.clasificador_retefuente._obtener_conceptos_retefuente()
+```
+
+**Ventajas de Composición**:
+- Mayor flexibilidad que herencia
+- Fácil testing con mocks
+- Evita jerarquías profundas
+- Principio DIP aplicado
 
 ### **🧪 DISEÑO TESTEABLE**
 ```python
@@ -115,6 +150,314 @@ if self.config.aplica_rete_ica(nit):
 - **📈 Escalabilidad**: Preparado para crecimiento exponencial
 - **👥 Legibilidad**: Código más claro y comprensible para desarrolladores
 - **🔄 Reutilización**: Componentes reutilizables en diferentes contextos
+
+---
+
+## 🔄 **MIGRACION DE BASE DE DATOS v3.2.0 - NEXURA API REST**
+
+### **🎯 DESCRIPCION GENERAL**
+
+Sistema de múltiples fuentes de datos implementado con **Strategy Pattern** y **Dependency Injection**, permitiendo cambiar entre Supabase y Nexura API sin modificar código.
+
+**Arquitectura implementada**:
+```
+┌─────────────────────────────────────────────────┐
+│         DatabaseManager (Context)               │
+│              Strategy Pattern                   │
+└────────────────┬────────────────────────────────┘
+                 │ DIP: Depende de abstracción
+                 ▼
+        ┌────────────────────┐
+        │ DatabaseInterface  │ ← Interface (ISP + DIP)
+        └────────────────────┘
+                 △
+                 │ LSP: Sustituibles
+       ┌─────────┴─────────┐
+       │                   │
+┌──────▼─────────┐  ┌──────▼──────────┐
+│ SupabaseDB     │  │ NexuraAPIDB     │
+│ (Original)     │  │ (v3.2.0 NUEVO)  │
+└────────────────┘  └─────────┬───────┘
+                              │ DIP
+                              ▼
+                    ┌──────────────────┐
+                    │  IAuthProvider   │ ← Interface
+                    └──────────────────┘
+                              △
+           ┌──────────────────┼──────────────────┐
+           │                  │                  │
+    ┌──────▼─────┐   ┌────────▼──────┐  ┌───────▼────────┐
+    │ NoAuth     │   │ JWTAuth       │  │ APIKeyAuth     │
+    │ Provider   │   │ Provider      │  │ Provider       │
+    └────────────┘   └───────────────┘  └────────────────┘
+```
+
+### **🆕 NUEVAS CAPACIDADES v3.2.0**
+
+#### **1. Multiple Database Sources (Strategy Pattern)**
+```python
+# Factory Pattern para crear database según configuración
+from database.setup import crear_database_por_tipo
+
+# Opción 1: Supabase (original)
+db = crear_database_por_tipo('supabase')
+
+# Opción 2: Nexura API (nuevo)
+db = crear_database_por_tipo('nexura')
+
+# ✅ Mismo contrato DatabaseInterface - Principio LSP
+manager = DatabaseManager(db)
+resultado = manager.obtener_negocio_por_codigo('32')
+```
+
+#### **2. Sistema de Autenticación Modular (DIP + Strategy)**
+```python
+from database.auth_provider import AuthProviderFactory
+
+# Sin autenticación (desarrollo)
+auth = AuthProviderFactory.create_no_auth()
+
+# JWT Bearer Token (producción)
+auth = AuthProviderFactory.create_jwt(token="eyJhbG...")
+
+# API Key
+auth = AuthProviderFactory.create_api_key(api_key="secret_key_123")
+
+# ✅ Dependency Injection en NexuraAPIDatabase
+db = NexuraAPIDatabase(
+    base_url="https://api.nexura.com",
+    auth_provider=auth  # DIP: abstracción inyectada
+)
+```
+
+### **⚙️ CONFIGURACION**
+
+#### **Variables de Entorno (.env)**
+```bash
+# === SELECTOR DE DATABASE ===
+DATABASE_TYPE=nexura  # 'supabase' o 'nexura'
+
+# === SUPABASE (Original) ===
+SUPABASE_URL="https://gfcseujjfnaoicdenymt.supabase.co"
+SUPABASE_KEY="eyJhbGciOiJIUzI1NiIs..."
+
+# === NEXURA API (v3.2.0) ===
+NEXURA_API_BASE_URL="https://preproduccion-fiducoldex.nexura.com/api"
+
+# Autenticación
+NEXURA_AUTH_TYPE=none         # 'none', 'jwt', 'api_key'
+NEXURA_JWT_TOKEN=             # Token JWT (configurar cuando disponible)
+NEXURA_API_KEY=               # API Key (si se usa)
+NEXURA_API_TIMEOUT=30         # Timeout en segundos
+```
+
+#### **Uso en Código**
+```python
+# main.py - Automático según DATABASE_TYPE
+from database.setup import inicializar_database_manager
+
+db_manager, business_service = inicializar_database_manager()
+# ✅ Usa automáticamente el tipo configurado en .env
+
+# Consultar negocio (funciona con cualquier fuente)
+resultado = db_manager.obtener_negocio_por_codigo('32')
+```
+
+### **📊 ESTRUCTURA DE RESPUESTA NEXURA API**
+
+#### **Respuesta Original de Nexura**
+```json
+{
+  "error": {
+    "code": 0,
+    "message": "success",
+    "detail": []
+  },
+  "data": [
+    {
+      "CODIGO_DEL_NEGOCIO": 3,
+      "DESCRIPCION_DEL_NEGOCIO": "FID COL. DE COMERCIO EXTERIOR S.A.",
+      "NIT_ASOCIADO": "800178148",
+      "NOMBRE_DEL_ASOCIADO": "ENCARGOS FIDUCIARIOS-SOCIEDAD FDX"
+    }
+  ]
+}
+```
+
+#### **Formato Interno (Normalizado)**
+```json
+{
+  "success": true,
+  "data": {
+    "codigo": 3,
+    "negocio": "FID COL. DE COMERCIO EXTERIOR S.A.",
+    "nit": "800178148",
+    "nombre_fiduciario": "ENCARGOS FIDUCIARIOS-SOCIEDAD FDX"
+  },
+  "message": "Negocio 3 encontrado exitosamente"
+}
+```
+
+**✅ Mapeo automático**: `NexuraAPIDatabase._mapear_respuesta_negocio()` convierte nombres de columnas automáticamente.
+
+### **🧪 TESTING v3.2.0**
+
+#### **Tests Implementados**
+```bash
+$ pytest tests/test_nexura_database.py -v
+
+======================== test session starts ========================
+tests/test_nexura_database.py::TestAuthProviders::test_no_auth_provider_headers_vacios PASSED
+tests/test_nexura_database.py::TestAuthProviders::test_jwt_auth_provider_headers_correctos PASSED
+tests/test_nexura_database.py::TestNexuraAPIDatabase::test_obtener_por_codigo_exitoso PASSED
+tests/test_nexura_database.py::TestNexuraAPIDatabase::test_health_check_exitoso PASSED
+...
+======================== 26 passed in 1.13s ========================
+```
+
+**Cobertura**:
+- ✅ 10 tests de auth providers (NoAuth, JWT, API Key)
+- ✅ 12 tests de NexuraAPIDatabase (CRUD, errores, mapping)
+- ✅ 4 tests de factory pattern
+- ⚠️ 2 tests de integración (requieren credenciales JWT)
+
+### **🚀 COMO MIGRAR A NEXURA**
+
+#### **Paso 1: Actualizar .env**
+```bash
+# Cambiar de supabase a nexura
+DATABASE_TYPE=nexura
+```
+
+#### **Paso 2: Configurar Autenticación (cuando disponible)**
+```bash
+# Actualizar cuando se obtengan credenciales
+NEXURA_AUTH_TYPE=jwt
+NEXURA_JWT_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+#### **Paso 3: Reiniciar Servidor**
+```bash
+python main.py
+# ✅ Sistema automáticamente usa Nexura API
+```
+
+**✅ Zero downtime**: Si hay error con Nexura, cambiar `DATABASE_TYPE=supabase` y reiniciar.
+
+### **📦 ENDPOINTS NEXURA DISPONIBLES**
+
+| Endpoint | Método | Status | Descripción |
+|----------|--------|--------|-------------|
+| `/preliquidador/negociosFiduciaria/` | **GET** | ✅ **IMPLEMENTADO** | Consulta negocios fiduciaria |
+| `/preliquidador/negocios/` | GET | ⏳ Pendiente | Lista de negocios |
+| `/preliquidador/estructuraContable/` | GET | ⏳ Pendiente | Estructura contable |
+| `/preliquidador/actividadesIca/` | GET | ⏳ Pendiente | Actividades ICA |
+| `/preliquidador/cuantias/` | GET | ⏳ Pendiente | Cuantías de contratos |
+| `/preliquidador/recursos/` | GET | ⏳ Pendiente | Tipos de recursos |
+| `/preliquidador/retefuente/` | GET | ⏳ Pendiente | Conceptos retefuente |
+| `/preliquidador/conceptosExtranjeros/` | GET | ⏳ Pendiente | Conceptos extranjeros |
+| `/preliquidador/paisesConvenio/` | GET | ⏳ Pendiente | Países con convenio |
+
+**Nota**: Endpoints pendientes retornan mensaje informativo, no causan errores.
+
+### **🔐 ESTADO ACTUAL DE AUTENTICACIÓN**
+
+**⚠️ Importante**: API Nexura actualmente requiere autenticación JWT
+
+**Estado actual**:
+- API responde con `403 Forbidden` sin token
+- Sistema implementado y funcional
+- Auth provider listo para recibir credenciales
+
+**Cuando se obtengan credenciales**:
+1. Actualizar `NEXURA_JWT_TOKEN` en `.env`
+2. Cambiar `NEXURA_AUTH_TYPE=jwt`
+3. Sistema funcionará automáticamente
+
+### **✅ PRINCIPIOS SOLID APLICADOS**
+
+| Principio | Implementación |
+|-----------|----------------|
+| **SRP** | `NexuraAPIDatabase`: solo API REST<br>`AuthProvider`: solo autenticación |
+| **OCP** | Nueva implementación sin modificar `SupabaseDatabase`<br>Fácil agregar `MySQLDatabase` en futuro |
+| **LSP** | `NexuraAPIDatabase` sustituye `SupabaseDatabase`<br>Mismo contrato `DatabaseInterface` |
+| **ISP** | `IAuthProvider`: interface específica para auth<br>`DatabaseInterface`: interface específica para datos |
+| **DIP** | `NexuraAPIDatabase` depende de `IAuthProvider` (abstracción)<br>`DatabaseManager` depende de `DatabaseInterface` |
+
+### **🎉 BENEFICIOS OBTENIDOS**
+
+✅ **Flexibilidad**: Cambiar entre fuentes de datos con una variable
+✅ **Zero Coupling**: Implementaciones completamente independientes
+✅ **Extensibilidad**: Agregar nuevas fuentes sin modificar código
+✅ **Testabilidad**: Tests unitarios con mocks fáciles (DIP)
+✅ **Mantenibilidad**: Código limpio siguiendo SOLID
+✅ **Preparado para JWT**: Sistema de auth modular y extensible
+
+---
+
+### 🐛 **VERSIÓN v3.1.1 (2025-11-04) - BUGFIX: pais_proveedor en facturación extranjera**
+
+**PROBLEMA CRÍTICO CORREGIDO**:
+- Campo `pais_proveedor` faltante en modelo `AnalisisFactura`
+- Causaba error: "No se pudo identificar el país del proveedor"
+- Impedía liquidación de facturas extranjeras
+
+**SOLUCIÓN**:
+```python
+# modelos/modelos.py - Clase AnalisisFactura
+pais_proveedor: Optional[str] = None  # AGREGADO
+```
+
+**IMPACTO**:
+- Corrige validación de país en facturación internacional
+- Permite flujo completo de liquidación extranjera
+- Mantiene compatibilidad con facturación nacional (opcional)
+
+**Archivos modificados**: `modelos/modelos.py` (líneas 373, 396)
+
+---
+
+### 🆕 **VERSIÓN v3.1.0 (2025-11-04) - Clasificadores Especializados (SOLID)**
+
+**🏗️ ARQUITECTURA: SEPARACIÓN DE RETEFUENTE (Single Responsibility Principle)**
+- ✅ **Nuevo módulo**: `Clasificador/clasificador_retefuente.py` - ClasificadorRetefuente
+- ✅ **Patrón aplicado**: Composición > Herencia (Inyección de Dependencias)
+- ✅ **18 funciones movidas**: Toda la lógica de retefuente separada del clasificador general
+- ✅ **Responsabilidades claras**:
+  - `ProcesadorGemini`: Clasificación general + funciones compartidas de Gemini
+  - `ClasificadorRetefuente`: Solo análisis de retención en la fuente
+- ✅ **Beneficios SOLID**:
+  - **SRP**: Cada clasificador tiene una responsabilidad única
+  - **DIP**: Uso de inyección de dependencias para mayor testabilidad
+  - **OCP**: Fácil agregar nuevos clasificadores especializados (ICA, Timbre, etc.)
+
+**📂 FUNCIONES MOVIDAS A ClasificadorRetefuente**:
+- Principales: `analizar_factura()`, `_analizar_articulo_383()`
+- Art 383: `_obtener_campo_art383_default()`, `_art383_fallback()`
+- Conceptos: `_obtener_conceptos_retefuente()`, `_conceptos_hardcodeados()`, `_obtener_conceptos_completos()`
+- Extranjeros: `_obtener_conceptos_extranjeros()`, `_obtener_paises_convenio()`, `_obtener_preguntas_fuente_nacional()`
+- Fallback: `_analisis_fallback()`
+- **Total**: 18 funciones (~800 líneas de código)
+
+**🔧 INTEGRACIÓN CON MAIN.PY**:
+```python
+# Composición con inyección de dependencias
+clasificador = ProcesadorGemini(estructura_contable, db_manager)
+clasificador_retefuente = ClasificadorRetefuente(
+    procesador_gemini=clasificador,  # Inyección
+    estructura_contable=estructura_contable,
+    db_manager=db_manager
+)
+
+# Uso del clasificador especializado
+analisis = await clasificador_retefuente.analizar_factura(...)
+```
+
+**📈 IMPACTO**:
+- 🎯 **Código más mantenible**: Separación clara de responsabilidades
+- 🧪 **Mejor testabilidad**: Inyección de dependencias facilita mocking
+- 🚀 **Extensible**: Base para separar ICA, Timbre en futuros sprints
+- 📊 **Sin breaking changes**: Funcionalidad idéntica, mejor arquitectura
 
 ---
 
@@ -1256,9 +1599,12 @@ PRELIQUIDADOR/
 │   ├── __init__.py              # Clean exports y factory functions
 │   └── README.md                # 📚 Documentación arquitectura SOLID
 │
-├── 🧠 Clasificador/              # Módulo IA
-│   ├── procesador_gemini.py      # Análisis documentos
-│   └── prompts/                  # Prompts especializados
+├── 🧠 Clasificador/              # Módulo IA (SOLID v3.1)
+│   ├── clasificador.py           # ProcesadorGemini - Clasificador general
+│   ├── clasificador_retefuente.py # 🆕 ClasificadorRetefuente - Especializado (SRP)
+│   ├── clasificador_ica.py       # ClasificadorICA - Especializado
+│   ├── clasificador_timbre.py    # ClasificadorTimbre - Especializado
+│   └── __init__.py               # Exports con composición
 │
 ├── 💰 Liquidador/                # Módulo cálculos
 │   ├── liquidador_retencion.py   # Retefuente

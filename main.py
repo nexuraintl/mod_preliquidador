@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # ===============================
 
 # Importar clases desde módulos
-from Clasificador import ProcesadorGemini
+from Clasificador import ProcesadorGemini, ClasificadorRetefuente
 from Clasificador.clasificador_ica import ClasificadorICA
 from Clasificador.clasificador_timbre import ClasificadorTimbre
 from Liquidador import LiquidadorRetencion
@@ -350,6 +350,14 @@ async def procesar_facturas_integrado(
 
         # Clasificar documentos usando enfoque híbrido multimodal
         clasificador = ProcesadorGemini(estructura_contable=estructura_contable, db_manager=db_manager)
+
+        # Crear clasificador especializado de retefuente (SOLID - Composición)
+        clasificador_retefuente = ClasificadorRetefuente(
+            procesador_gemini=clasificador,
+            estructura_contable=estructura_contable,
+            db_manager=db_manager
+        )
+
         logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
         logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
@@ -428,7 +436,8 @@ async def procesar_facturas_integrado(
                 )
             else:
                 #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
-                tarea_retefuente = clasificador.analizar_factura(
+                # SOLID v3.1: Usar clasificador especializado de retefuente
+                tarea_retefuente = clasificador_retefuente.analizar_factura(
                     documentos_clasificados,
                     es_facturacion_extranjera,
                     None,

@@ -326,24 +326,14 @@ class ClasificadorICA:
         logger.info("Consultando tabla UBICACIONES ICA...")
 
         try:
-            # Consultar tabla UBICACIONES ICA
-            response = self.database_manager.db_connection.supabase.table("UBICACIONES ICA").select(
-                "CODIGO_UBICACION, NOMBRE_UBICACION"
-            ).execute()
+            # Usar método abstracto de la interfaz DatabaseInterface
+            resultado = self.database_manager.obtener_ubicaciones_ica()
 
-            if not response.data:
-                logger.warning("No se encontraron ubicaciones en la BD")
+            if not resultado['success']:
+                logger.warning(f"No se encontraron ubicaciones en la BD: {resultado['message']}")
                 return []
 
-            # Mapear a formato estándar
-            ubicaciones = [
-                {
-                    "codigo_ubicacion": ub["CODIGO_UBICACION"],
-                    "nombre_ubicacion": ub["NOMBRE_UBICACION"]
-                }
-                for ub in response.data
-            ]
-
+            ubicaciones = resultado['data']
             logger.info(f"Ubicaciones obtenidas exitosamente: {len(ubicaciones)}")
             return ubicaciones
 
@@ -689,29 +679,17 @@ class ClasificadorICA:
                     logger.warning(f"Saltando ubicación sin código: {nombre_ubicacion}")
                     continue
 
-                # Consultar tabla ACTIVIDADES IK
-                # NOTA: Usar comillas dobles para escapar nombres con espacios
-                response = self.database_manager.db_connection.supabase.table("ACTIVIDADES IK").select(
-                    "CODIGO_UBICACION, NOMBRE_UBICACION, CODIGO_DE_LA_ACTIVIDAD, "
-                    "DESCRIPCION_DE_LA_ACTIVIDAD, PORCENTAJE_ICA, TIPO_DE_ACTIVIDAD"
-                ).eq("CODIGO_UBICACION", codigo_ubicacion).eq("ESTRUCTURA_CONTABLE", estructura_contable).execute()
+                # Usar método abstracto de la interfaz DatabaseInterface
+                resultado = self.database_manager.obtener_actividades_ica(
+                    codigo_ubicacion=codigo_ubicacion,
+                    estructura_contable=estructura_contable
+                )
 
-                if not response.data:
-                    logger.warning(f"No se encontraron actividades para ubicación {codigo_ubicacion}")
+                if not resultado['success']:
+                    logger.warning(f"No se encontraron actividades para ubicación {codigo_ubicacion}: {resultado['message']}")
                     continue
 
-                # Mapear a formato estándar
-                actividades = [
-                    {
-                        "codigo_ubicacion": act["CODIGO_UBICACION"],
-                        "nombre_ubicacion": act["NOMBRE_UBICACION"],
-                        "codigo_actividad": act["CODIGO_DE_LA_ACTIVIDAD"],
-                        "descripcion_actividad": act["DESCRIPCION_DE_LA_ACTIVIDAD"],
-                        "porcentaje_ica": act["PORCENTAJE_ICA"],
-                        "tipo_actividad": act["TIPO_DE_ACTIVIDAD"]
-                    }
-                    for act in response.data
-                ]
+                actividades = resultado['data']
 
                 # Validar que el nombre de ubicación coincida
                 if actividades and actividades[0]["nombre_ubicacion"] != nombre_ubicacion:

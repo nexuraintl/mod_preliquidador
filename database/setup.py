@@ -28,11 +28,100 @@ import logging
 from typing import Optional, Tuple
 
 # Importar componentes del modulo database (DIP: depender de abstracciones)
-from .database import DatabaseManager, SupabaseDatabase
+from .database import DatabaseManager, SupabaseDatabase, NexuraAPIDatabase, DatabaseInterface
 from .database_service import crear_business_service, BusinessDataService
+from .auth_provider import AuthProviderFactory, IAuthProvider
 
 # Logger para este modulo
 logger = logging.getLogger(__name__)
+
+
+def crear_database_por_tipo(tipo_db: str) -> Optional[DatabaseInterface]:
+    """
+    Factory para crear instancia de database segun tipo configurado (Factory Pattern + OCP)
+
+    PRINCIPIOS SOLID APLICADOS:
+    - SRP: Funcion dedicada solo a crear instancias de database
+    - OCP: Extensible para nuevos tipos de database sin modificar existente
+    - DIP: Retorna abstraccion (DatabaseInterface), no implementacion concreta
+    - Factory Pattern: Centraliza creacion de objetos complejos
+
+    TIPOS SOPORTADOS:
+    - 'supabase': Base de datos Supabase (implementacion original)
+    - 'nexura': API REST de Nexura (nueva implementacion)
+
+    Args:
+        tipo_db: Tipo de database ('supabase' o 'nexura')
+
+    Returns:
+        DatabaseInterface o None si falta configuracion
+
+    Environment Variables:
+        SUPABASE:
+            - SUPABASE_URL: URL de la instancia de Supabase
+            - SUPABASE_KEY: Key de API de Supabase
+
+        NEXURA:
+            - NEXURA_API_BASE_URL: URL base de la API de Nexura
+            - NEXURA_AUTH_TYPE: Tipo de auth ('none', 'jwt', 'api_key')
+            - NEXURA_JWT_TOKEN: Token JWT (si auth_type='jwt')
+            - NEXURA_API_KEY: API Key (si auth_type='api_key')
+            - NEXURA_API_TIMEOUT: Timeout en segundos (default: 30)
+
+    Example:
+        >>> db = crear_database_por_tipo('nexura')
+        >>> if db:
+        ...     manager = DatabaseManager(db)
+    """
+    tipo_db = tipo_db.lower().strip()
+
+    if tipo_db == 'supabase':
+        logger.info("Creando database tipo: Supabase")
+
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+
+        if not supabase_url or not supabase_key:
+            logger.warning("Variables SUPABASE_URL y SUPABASE_KEY no configuradas")
+            return None
+
+        return SupabaseDatabase(supabase_url, supabase_key)
+
+    elif tipo_db == 'nexura':
+        logger.info("Creando database tipo: Nexura API")
+
+        nexura_url = os.getenv("NEXURA_API_BASE_URL")
+        auth_type = os.getenv("NEXURA_AUTH_TYPE", "none")
+        jwt_token = os.getenv("NEXURA_JWT_TOKEN", "")
+        api_key = os.getenv("NEXURA_API_KEY", "")
+        timeout = int(os.getenv("NEXURA_API_TIMEOUT", "30"))
+
+        if not nexura_url:
+            logger.warning("Variable NEXURA_API_BASE_URL no configurada")
+            return None
+
+        # Crear auth provider segun configuracion (Factory Pattern)
+        try:
+            auth_provider = AuthProviderFactory.create_from_config(
+                auth_type=auth_type,
+                token=jwt_token,
+                api_key=api_key
+            )
+            logger.info(f"Auth provider creado: tipo={auth_type}")
+        except ValueError as e:
+            logger.error(f"Error creando auth provider: {e}")
+            return None
+
+        return NexuraAPIDatabase(
+            base_url=nexura_url,
+            auth_provider=auth_provider,
+            timeout=timeout
+        )
+
+    else:
+        logger.error(f"Tipo de database no valido: {tipo_db}")
+        logger.error("Tipos soportados: 'supabase', 'nexura'")
+        return None
 
 
 def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Optional[BusinessDataService]]:
@@ -62,8 +151,18 @@ def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Optional[
             - business_service: BusinessDataService (siempre disponible, con o sin DB)
 
     Environment Variables:
-        SUPABASE_URL: URL de la instancia de Supabase
-        SUPABASE_KEY: Key de API de Supabase
+        DATABASE_TYPE: Tipo de database a usar ('supabase' o 'nexura', default: 'supabase')
+
+        SUPABASE (si DATABASE_TYPE='supabase'):
+            - SUPABASE_URL: URL de la instancia de Supabase
+            - SUPABASE_KEY: Key de API de Supabase
+
+        NEXURA (si DATABASE_TYPE='nexura'):
+            - NEXURA_API_BASE_URL: URL base de la API de Nexura
+            - NEXURA_AUTH_TYPE: Tipo de auth ('none', 'jwt', 'api_key')
+            - NEXURA_JWT_TOKEN: Token JWT (si auth_type='jwt')
+            - NEXURA_API_KEY: API Key (si auth_type='api_key')
+            - NEXURA_API_TIMEOUT: Timeout en segundos (default: 30)
 
     Example:
         >>> db_manager, business_service = inicializar_database_manager()
@@ -73,32 +172,31 @@ def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Optional[
         >>> resultado = business_service.obtener_datos_negocio(codigo)
     """
     try:
-        # Obtener credenciales desde variables de entorno
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
+        # Obtener tipo de database desde variable de entorno (default: supabase)
+        tipo_db = os.getenv("DATABASE_TYPE", "supabase")
+        logger.info(f"Inicializando database tipo: {tipo_db}")
 
-        if not supabase_url or not supabase_key:
-            logger.warning(" Variables de entorno SUPABASE_URL y SUPABASE_KEY no estan configuradas")
-            logger.warning(" DatabaseManager y BusinessService no seran inicializados")
+        # Usar factory para crear la implementacion correcta (Factory Pattern + OCP)
+        db_implementation = crear_database_por_tipo(tipo_db)
+
+        if not db_implementation:
+            logger.warning(f"No se pudo crear implementacion de database tipo '{tipo_db}'")
+            logger.warning("DatabaseManager no sera inicializado")
 
             # Crear business service sin database manager (graceful degradation)
             business_service = crear_business_service(None)
-            logger.info(" BusinessService creado en modo degradado (sin base de datos)")
+            logger.info("BusinessService creado en modo degradado (sin base de datos)")
             return None, business_service
 
-        # Crear la implementacion concreta (Strategy Pattern)
-        logger.info(" Creando conexion a Supabase...")
-        supabase_db = SupabaseDatabase(supabase_url, supabase_key)
-
         # Crear el manager usando el patron Strategy
-        db_manager = DatabaseManager(supabase_db)
-        logger.info(" DatabaseManager inicializado correctamente")
+        db_manager = DatabaseManager(db_implementation)
+        logger.info(f"DatabaseManager inicializado correctamente (tipo: {tipo_db})")
 
         # Crear business service con dependency injection (DIP)
         business_service = crear_business_service(db_manager)
-        logger.info(" BusinessDataService inicializado con database manager")
+        logger.info("BusinessDataService inicializado con database manager")
 
-        logger.info(" Stack completo de base de datos inicializado exitosamente")
+        logger.info(f"Stack completo de base de datos inicializado exitosamente (tipo: {tipo_db})")
         return db_manager, business_service
 
     except Exception as e:
