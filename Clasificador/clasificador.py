@@ -50,9 +50,6 @@ from prompts.prompt_retefuente import (
 from prompts.prompt_iva import PROMPT_ANALISIS_IVA
 from prompts.prompt_estampillas_generales import PROMPT_ANALISIS_ESTAMPILLAS_GENERALES
 
-# v3.1.2: Procesador de consorcios removido - Se usa liquidador_consorcios.py directamente
-# from .consorcio_processor import ProcesadorConsorcios
-
 # ===============================
 # IMPORTAR MODELOS DESDE DOMAIN LAYER (Clean Architecture - SRP)
 # ===============================
@@ -128,8 +125,41 @@ class ProcesadorGemini:
 
         logger.info("ProcesadorGemini inicializado correctamente")
 
-        # v3.1.2: Procesador de consorcios removido - Nueva arquitectura SOLID con liquidador_consorcios.py
-    
+        # ARQUITECTURA SOLID: Inyección de dependencias para clasificadores especializados
+        # Inicializar después de que self esté completamente configurado
+        self.clasificador_retefuente = None
+        self.clasificador_consorcio = None
+        self._inicializar_clasificadores_especializados()
+
+    def _inicializar_clasificadores_especializados(self):
+        """
+        Inicializa clasificadores especializados con inyección de dependencias.
+        Siguiendo principio DIP (Dependency Inversion Principle).
+        """
+        try:
+            # Importar clasificadores especializados
+            from .clasificador_retefuente import ClasificadorRetefuente
+            from .clasificador_consorcio import ClasificadorConsorcio
+
+            # Crear instancia de ClasificadorRetefuente
+            self.clasificador_retefuente = ClasificadorRetefuente(
+                procesador_gemini=self,
+                estructura_contable=self.estructura_contable,
+                db_manager=self.db_manager
+            )
+            logger.info("ClasificadorRetefuente inicializado correctamente")
+
+            # Crear instancia de ClasificadorConsorcio (depende de ClasificadorRetefuente)
+            self.clasificador_consorcio = ClasificadorConsorcio(
+                procesador_gemini=self,
+                clasificador_retefuente=self.clasificador_retefuente
+            )
+            logger.info("ClasificadorConsorcio inicializado correctamente")
+
+        except Exception as e:
+            logger.error(f"Error inicializando clasificadores especializados: {e}")
+            raise
+
     async def clasificar_documentos(
         self,
         textos_archivos_o_directos = None,  #  COMPATIBILIDAD TOTAL: Acepta cualquier tipo
@@ -203,7 +233,7 @@ class ProcesadorGemini:
         logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
         logger.info(f" Total archivos a clasificar: {total_archivos}")
         
-        # ✅ VALIDACIÓN: Límite de archivos directos (20)
+        #  VALIDACIÓN: Límite de archivos directos (20)
         if len(archivos_directos) > 20:
             error_msg = f"Límite excedido: {len(archivos_directos)} archivos directos (máximo 20)"
             logger.error(f" {error_msg}")
@@ -218,8 +248,8 @@ class ProcesadorGemini:
                     "sugerencia": "Reduzca el número de PDFs/imágenes o use procesamiento por lotes"
                 }
             )
-        
-        # ✅ VALIDACIÓN: Al menos un archivo debe estar presente
+
+        #  VALIDACIÓN: Al menos un archivo debe estar presente
         if total_archivos == 0:
             error_msg = "No se recibieron archivos para clasificar"
             logger.error(f" {error_msg}")
@@ -505,671 +535,47 @@ class ProcesadorGemini:
             logger.error(f" Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
             raise ValueError(f"Error híbrido de Gemini: {str(e)}")
 
-   
-    async def analizar_factura(
-        self,
-        documentos_clasificados: Dict[str, Dict],
-        es_facturacion_extranjera: bool = False,
-        archivos_directos: List[UploadFile] = None,  #  NUEVO: Soporte multimodal
-        cache_archivos: Dict[str, bytes] = None,  #  NUEVO: Cache para workers paralelos
-        proveedor: str = None  #  v3.0: Nombre del proveedor para mejor identificación
-    ) -> AnalisisFactura:
-        """
-         ANÁLISIS HÍBRIDO MULTIMODAL: Analizar factura con archivos directos + textos preprocesados.
+    # ===============================
+    # NOTA: Funciones de Retefuente movidas a clasificador_retefuente.py (SRP)
+    # Funciones movidas: analizar_factura, _analizar_articulo_383, _obtener_campo_art383_default,
+    # _art383_fallback, _analisis_fallback, funciones de conceptos retefuente y extranjeros
+    # ===============================
 
-        FUNCIONALIDAD HÍBRIDA CON CACHE:
-         Archivos directos (PDFs/imágenes): Enviados nativamente a Gemini
-         Textos preprocesados: Documentos ya extraidos localmente
-         Cache para workers: Solución a problemas de concurrencia en workers paralelos
-         Combinación inteligente: Una sola llamada con contenido mixto
+    async def analizar_consorcio(self,
+                                  documentos_clasificados: Dict[str, Dict],
+                                  es_facturacion_extranjera: bool = False,
+                                  archivos_directos: List[UploadFile] = None,
+                                  cache_archivos: Dict[str, bytes] = None,
+                                  proveedor: str = None) -> Dict[str, Any]:
+        """
+        DELEGACIÓN A CLASIFICADOR ESPECIALIZADO (Principio SRP + DIP).
+
+        Delega el análisis de consorcios al ClasificadorConsorcio especializado.
+        Siguiendo arquitectura SOLID con separación de responsabilidades.
 
         Args:
             documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
-            es_facturacion_extranjera: Si es facturación extranjera (usa prompts especializados)
-            archivos_directos: Lista de archivos para envío directo a Gemini (PDFs/imágenes)
-            cache_archivos: Cache de archivos para workers paralelos (evita problemas de concurrencia)
-            proveedor: Nombre del proveedor que emite la factura (v3.0)
+            es_facturacion_extranjera: Si es facturación extranjera
+            archivos_directos: Lista de archivos directos
+            cache_archivos: Cache de archivos para workers paralelos
+            proveedor: Nombre del proveedor/consorcio
 
         Returns:
-            AnalisisFactura: Análisis completo de la factura
+            Dict[str, Any]: Análisis completo del consorcio
 
         Raises:
             ValueError: Si no se encuentra factura o hay error en procesamiento
         """
-        #  LOGGING HÍBRIDO CON CACHE: Identificar estrategia de procesamiento
-        archivos_directos = archivos_directos or []
-        cache_archivos = cache_archivos or {}
-        
-        #  USAR CACHE SI ESTÁ DISPONIBLE (para workers paralelos)
-        if cache_archivos:
-            logger.info(f" Usando cache de archivos para análisis (workers paralelos): {len(cache_archivos)} archivos")
-            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
-            total_archivos_directos = len(archivos_directos)
-        else:
-            total_archivos_directos = len(archivos_directos)
-            logger.info(f" Usando archivos directos originales (sin cache): {total_archivos_directos} archivos")
-        
-        total_textos_preprocesados = len(documentos_clasificados)
-        
-        if total_archivos_directos > 0:
-            logger.info(f" Analizando factura HÍBRIDO: {total_archivos_directos} directos + {total_textos_preprocesados} preprocesados")
-        else:
-            logger.info(f" Analizando factura TRADICIONAL: {total_textos_preprocesados} textos preprocesados")
-        
-        # Extraer documentos por categoría
-        factura_texto = ""
-        rut_texto = ""
-        anexos_texto = ""
-        cotizaciones_texto = ""
-        anexo_contrato = ""
-        
-        for nombre_archivo, info in documentos_clasificados.items():
-            if info["categoria"] == "FACTURA":
-                factura_texto = info["texto"]
-                logger.info(f"Factura encontrada: {nombre_archivo}")
-                logger.info(f"Extracto factura: {factura_texto[:30]}")
-            elif info["categoria"] == "RUT":
-                rut_texto = info["texto"]
-                logger.info(f"RUT encontrado: {nombre_archivo}")
-                logger.info(f"Extracto RUT: {rut_texto[:30]}")  
-            elif info["categoria"] == "ANEXO":
-                anexos_texto += f"\n\n--- ANEXO: {nombre_archivo} ---\n{info['texto']}"
-                logger.info(f"Anexo encontrado: {nombre_archivo}")
-                logger.info(f"Extracto anexo: {info['texto'][:30]}")
-            elif info["categoria"] == "COTIZACION":
-                cotizaciones_texto += f"\n\n--- COTIZACIÓN: {nombre_archivo} ---\n{info['texto']}"
-                logger.info(f"Cotización encontrada: {nombre_archivo}")
-                logger.info(f"Extracto cotización: {info['texto'][:30]}")
-            elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
-                anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
-                logger.info(f"Anexo concepto de contrato encontrado: {nombre_archivo}")
-                logger.info(f"Extracto anexo concepto de contrato: {info['texto'][:30]}")
+        logger.info("DELEGANDO análisis de consorcio a ClasificadorConsorcio (SOLID - SRP)")
 
-        #  VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
-        hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
-        nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
-        posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
-        
-        if not hay_factura_texto and not posibles_facturas_directas:
-            raise ValueError("No se encontró una FACTURA en los documentos (ni texto ni archivo directo)")
-        
-        try:
-            #  DECIDIR ESTRATEGIA: HÍBRIDO vs TRADICIONAL
-            usar_hibrido = total_archivos_directos > 0 or bool(cache_archivos)
-            
-            if usar_hibrido:
-                logger.info(" Usando análisis HÍBRIDO con archivos directos + textos preprocesados")
-                
-                #  CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
-                nombres_archivos_directos = []
-                for archivo in archivos_directos:
-                    try:
-                        if hasattr(archivo, 'filename') and archivo.filename:
-                            nombres_archivos_directos.append(archivo.filename)
-                        else:
-                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                    except Exception as e:
-                        logger.warning(f" Error obteniendo nombre de archivo: {e}")
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                
-                # GENERAR PROMPT HÍBRIDO
-                if es_facturacion_extranjera:
-                    logger.info(" Prompt híbrido para facturación extranjera (v3.0 - SOLO IDENTIFICACIÓN)")
-                    conceptos_extranjeros_simplificado = self._obtener_conceptos_extranjeros_simplificado()
-
-                    prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
-                        factura_texto, rut_texto, anexos_texto,
-                        cotizaciones_texto, anexo_contrato,
-                        conceptos_extranjeros_simplificado,  # v3.0: Solo {index: nombre}
-                        nombres_archivos_directos,  #  NUEVO PARÁMETRO
-                        proveedor  #  v3.0: Nombre del proveedor
-                    )
-                else:
-                    logger.info("🇨🇴 Prompt híbrido para facturación nacional")
-                    conceptos_dict = self._obtener_conceptos_retefuente()
-
-                    prompt = PROMPT_ANALISIS_FACTURA(
-                        factura_texto, rut_texto, anexos_texto,
-                        cotizaciones_texto, anexo_contrato, conceptos_dict,
-                        nombres_archivos_directos,  #  NUEVO PARÁMETRO
-                        proveedor  #  v3.0: Nombre del proveedor
-                    )
-                
-                #  LLAMAR A GEMINI HÍBRIDO
-                respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos)
-                
-            else:
-                #  FLUJO TRADICIONAL (solo textos preprocesados)
-                logger.info(" Usando análisis TRADICIONAL con solo textos preprocesados")
-
-                if es_facturacion_extranjera:
-                    logger.info("Usando prompt especializado para facturación extranjera (v3.0 - SOLO IDENTIFICACIÓN)")
-                    conceptos_extranjeros_simplificado = self._obtener_conceptos_extranjeros_simplificado()
-
-                    prompt = PROMPT_ANALISIS_FACTURA_EXTRANJERA(
-                        factura_texto, rut_texto, anexos_texto,
-                        cotizaciones_texto, anexo_contrato,
-                        conceptos_extranjeros_simplificado,  # v3.0: Solo {index: nombre}
-                        None,  # nombres_archivos_directos (no hay en modo tradicional)
-                        proveedor  #  v3.0: Nombre del proveedor
-                    )
-                else:
-                    logger.info("Usando prompt para facturación nacional")
-                    conceptos_dict = self._obtener_conceptos_retefuente()
-
-                    prompt = PROMPT_ANALISIS_FACTURA(
-                        factura_texto, rut_texto, anexos_texto,
-                        cotizaciones_texto, anexo_contrato, conceptos_dict,
-                        None,  # nombres_archivos_directos (no hay en modo tradicional)
-                        proveedor  #  v3.0: Nombre del proveedor
-                    )
-                
-                #  LLAMAR A GEMINI TRADICIONAL
-                respuesta = await self._llamar_gemini(prompt)
-            #  LOG DE RESPUESTA SEGÚN ESTRATEGIA
-            if usar_hibrido:
-                logger.info(f" Respuesta análisis HÍBRIDO: {len(respuesta):,} caracteres")
-            else:
-                logger.info(f" Respuesta análisis tradicional: {len(respuesta):,} caracteres")
-            
-            # Log de muestra para debugging (primeros 500 caracteres)
-            logger.info(f" Muestra de respuesta: {respuesta[:500]}...")
-            
-            # Limpiar respuesta si viene con texto extra
-            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
-            
-            # Parsear JSON
-            resultado = json.loads(respuesta_limpia)
-            
-            # Guardar respuesta de análisis en Results
-            await self._guardar_respuesta("analisis_factura.json", resultado)
-            
-            #  NUEVO: ANÁLISIS SEPARADO DEL ARTÍCULO 383 PARA PERSONAS NATURALES
-            if (resultado.get("naturaleza_tercero") and 
-                resultado["naturaleza_tercero"].get("es_persona_natural") == True):
-                
-                logger.info(" PERSONA NATURAL detectada - Iniciando análisis separado del Artículo 383")
-                
-                try:
-                    # Segunda llamada a Gemini con prompt específico de Art 383
-                    # ✅ CORRECCIÓN: Convertir objetos ConceptoIdentificado a diccionarios para evitar error de serialización JSON
-                    conceptos_identificados_objetos = [ConceptoIdentificado(**c) for c in resultado.get("conceptos_identificados", [])]
-                    conceptos_identificados_dict = [concepto.dict() for concepto in conceptos_identificados_objetos] if conceptos_identificados_objetos else []
-                    
-                    logger.info(f" Pasando {len(conceptos_identificados_dict)} conceptos como diccionarios al Art 383")
-                    
-                    analisis_art383 = await self._analizar_articulo_383(
-                        factura_texto, rut_texto, anexos_texto, 
-                        cotizaciones_texto, anexo_contrato, archivos_directos, cache_archivos, conceptos_identificados_dict
-                    )
-                    
-                    # Integrar resultado del Art 383 en el resultado principal
-                    resultado["articulo_383"] = analisis_art383
-                    
-                    # Guardar análisis combinado
-                    resultado_combinado = {
-                        "timestamp": datetime.now().isoformat(),
-                        "analisis_retefuente": resultado,
-                        "analisis_art383_separado": analisis_art383,
-                        "persona_natural_detectada": True
-                    }
-                    await self._guardar_respuesta("analisis_factura_con_art383.json", resultado_combinado)
-                    
-                    logger.info(f"✅ Análisis Art 383 completado: aplica={analisis_art383.get('aplica', False)}")
-                    
-                except Exception as e:
-                    logger.error(f" Error en análisis Art 383: {e}")
-                    # Si falla el análisis del Art 383, continuar sin él
-                    resultado["articulo_383"] = {
-                        "aplica": False,
-                        "error": str(e),
-                        "observaciones": ["Error procesando Artículo 383 - usar tarifa convencional"]
-                    }
-            else:
-                # No es persona natural, no se analiza Art 383
-                resultado["articulo_383"] = {
-                    "aplica": False,
-                    "razon": "No es persona natural o no se pudo determinar"
-                }
-                logger.info(" NO es persona natural - Artículo 383 no aplica - no aplica retefuente")
-
-            # CORRECCIÓN v3.0: Para facturación extranjera, agregar naturaleza_tercero como None si no existe
-            if es_facturacion_extranjera and "naturaleza_tercero" not in resultado:
-                resultado["naturaleza_tercero"] = None
-                logger.info(" Facturación extranjera: naturaleza_tercero establecido en None")
-
-            # Crear objeto AnalisisFactura
-            analisis = AnalisisFactura(**resultado)
-            logger.info(f"Análisis exitoso: {len(analisis.conceptos_identificados)} conceptos identificados")
-            
-            return analisis
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parseando JSON de análisis: {e}")
-            logger.error(f"Respuesta problemática: {respuesta}")
-            # Fallback: crear análisis básico
-            return self._analisis_fallback()
-        except Exception as e:
-            logger.error(f"Error en análisis de factura: {e}")
-            raise ValueError(f"Error analizando factura: {str(e)}")
-    
-    async def _analizar_articulo_383(self, factura_texto: str, rut_texto: str, anexos_texto: str, 
-                                   cotizaciones_texto: str, anexo_contrato: str,
-                                   archivos_directos: List[UploadFile] = None, 
-                                   cache_archivos: Dict[str, bytes] = None, conceptos_identificados: List[Dict] = None) -> Dict[str, Any]:
-        """
-        🆕 NUEVA FUNCIÓN: Análisis separado del Artículo 383 para personas naturales.
-        
-        Esta función realiza una segunda llamada a Gemini específicamente para analizar
-        si aplica el Artículo 383 del Estatuto Tributario con tarifas progresivas.
-        
-        ✅ CORREGIDO: Ahora acepta conceptos como diccionarios para evitar errores de serialización JSON.
-        
-        Args:
-            factura_texto: Texto extraído de la factura principal
-            rut_texto: Texto del RUT (si está disponible)
-            anexos_texto: Texto de anexos adicionales
-            cotizaciones_texto: Texto de cotizaciones
-            anexo_contrato: Texto del anexo de concepto de contrato
-            archivos_directos: Lista de archivos para envío directo a Gemini
-            cache_archivos: Cache de archivos para workers paralelos
-            conceptos_identificados: Lista de conceptos como diccionarios (no objetos Pydantic)
-            
-        Returns:
-            Dict[str, Any]: Análisis completo del Artículo 383
-            
-        Raises:
-            ValueError: Si hay error en el procesamiento con Gemini
-        """
-        logger.info(" Iniciando análisis separado del Artículo 383")
-        
-        try:
-            # 💾 USAR CACHE SI ESTÁ DISPONIBLE (para workers paralelos)
-            archivos_directos = archivos_directos or []
-            if cache_archivos:
-                logger.info(f"📄 Art 383 usando cache de archivos: {len(cache_archivos)} archivos")
-                archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
-            elif archivos_directos:
-                logger.info(f"📄 Art 383 usando archivos directos originales: {len(archivos_directos)} archivos")
-            
-            # ✅ CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
-            nombres_archivos_directos = []
-            for archivo in archivos_directos:
-                try:
-                    if hasattr(archivo, 'filename') and archivo.filename:
-                        nombres_archivos_directos.append(archivo.filename)
-                    else:
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                except Exception as e:
-                    logger.warning(f" Error obteniendo nombre de archivo: {e}")
-                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-            
-            # Importar el prompt específico del Art 383
-            from prompts.prompt_retefuente import PROMPT_ANALISIS_ART_383
-            
-            # Generar prompt específico para Art 383
-            prompt_art383 = PROMPT_ANALISIS_ART_383(
-                factura_texto, rut_texto, anexos_texto, 
-                cotizaciones_texto, anexo_contrato, nombres_archivos_directos, conceptos_identificados
-            )
-            
-            logger.info(" Llamando a Gemini para análisis específico del Artículo 383")
-            
-            # Decidir estrategia: HÍBRIDO vs TRADICIONAL
-            usar_hibrido = len(archivos_directos) > 0 or bool(cache_archivos)
-            
-            if usar_hibrido:
-                logger.info(" Usando análisis HÍBRIDO para Art 383")
-                respuesta = await self._llamar_gemini_hibrido_factura(prompt_art383, archivos_directos)
-            else:
-                logger.info(" Usando análisis TRADICIONAL para Art 383")
-                respuesta = await self._llamar_gemini(prompt_art383)
-            
-            logger.info(f" Respuesta Art 383 recibida: {len(respuesta):,} caracteres")
-            
-            # Limpiar respuesta si viene con texto extra
-            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
-            
-            # Parsear JSON
-            resultado_art383 = json.loads(respuesta_limpia)
-            
-            # Guardar respuesta de análisis Art 383 por separado
-            await self._guardar_respuesta("analisis_art383_separado.json", resultado_art383)
-            # Extraer el diccionario  del Art 383
-            resultado_art383 = resultado_art383["articulo_383"]
-            # Validar estructura mínima del resultado
-            campos_requeridos = ["condiciones_cumplidas", "deducciones_identificadas"]
-            for campo in campos_requeridos:
-                if campo not in resultado_art383:
-                    logger.warning(f" Campo '{campo}' no encontrado en respuesta Art 383")
-                    resultado_art383[campo] = self._obtener_campo_art383_default(campo)
-            
-            # Extraer información clave para logging
-            
-            condiciones = resultado_art383.get("condiciones_cumplidas", {})
-            deducciones = resultado_art383.get("deducciones_identificadas", {})
-            logger.info(f" condiciones cumplidas: {condiciones}")
-            logger.info(f" deducciones identificadas: {deducciones}")
-            
-            return resultado_art383
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"💥 Error parseando JSON de Art 383: {e}")
-            logger.error(f"Respuesta problemática: {respuesta}")
-            return self._art383_fallback("Error parseando respuesta JSON de Gemini")
-        except Exception as e:
-            logger.error(f"💥 Error en análisis Art 383: {e}")
-            return self._art383_fallback(str(e))
-    
-    def _obtener_campo_art383_default(self, campo: str) -> Dict[str, Any]:
-        """
-        Obtiene valores por defecto para campos faltantes en análisis del Art 383.
-        
-        Args:
-            campo: Nombre del campo faltante
-            
-        Returns:
-            Dict con estructura por defecto
-        """
-        defaults = {
-            "aplica": False,
-            "condiciones_cumplidas": {
-                "es_persona_natural": False,
-                "concepto_aplicable": False,
-                "es_primer_pago": False,
-                "planilla_seguridad_social": False,
-                "cuenta_cobro": False
-            },
-            "deducciones_identificadas": {
-                "intereses_vivienda": {
-                    "valor": 0.0,
-                    "tiene_soporte": False,
-                    "limite_aplicable": 0.0
-                },
-                "dependientes_economicos": {
-                    "valor": 0.0,
-                    "tiene_soporte": False,
-                    "limite_aplicable": 0.0
-                },
-                "medicina_prepagada": {
-                    "valor": 0.0,
-                    "tiene_soporte": False,
-                    "limite_aplicable": 0.0
-                },
-                "rentas_exentas": {
-                    "valor": 0.0,
-                    "tiene_soporte": False,
-                    "limite_aplicable": 0.0
-                }
-            }
-        }
-        
-        return defaults.get(campo, {})
-    
-    def _art383_fallback(self, error_msg: str = "Error procesando Art 383") -> Dict[str, Any]:
-        """
-        Respuesta de emergencia cuando falla el procesamiento del Art 383.
-        
-        Args:
-            error_msg: Mensaje de error
-            
-        Returns:
-            Dict[str, Any]: Respuesta básica del Art 383
-        """
-        logger.warning(f"🚨 Usando fallback de Art 383: {error_msg}")
-        
-        return {
-            "aplica": False,
-            "condiciones_cumplidas": {
-                "es_persona_natural": False,
-                "concepto_aplicable": False,
-                "es_primer_pago": False,
-                "planilla_seguridad_social": False,
-                "cuenta_cobro": False
-            },
-            "deducciones_identificadas": {
-                "intereses_vivienda": {
-                    "valor": 0.0,
-                    "tiene_soporte": False,
-                    "limite_aplicable": 0.0
-                },
-                "dependientes_economicos": {
-                    "valor": 0.0,
-                    "tiene_soporte": False,
-                    "limite_aplicable": 0.0
-                },
-                "medicina_prepagada": {
-                    "valor": 0.0,
-                    "tiene_soporte": False,
-                    "limite_aplicable": 0.0
-                },
-                "rentas_exentas": {
-                    "valor": 0.0,
-                    "tiene_soporte": False,
-                    "limite_aplicable": 0.0
-                }
-            },
-            "error": error_msg,
-            "observaciones": [
-                f"Error procesando Artículo 383: {error_msg}",
-                "Se aplicará tarifa convencional",
-                "Revise manualmente si aplica Art 383"
-            ]
-        }
-    
-    async def analizar_consorcio(self, documentos_clasificados: Dict[str, Dict], es_facturacion_extranjera: bool = False, archivos_directos : List[UploadFile] = None, cache_archivos: Dict[str, bytes] = None, proveedor: str = None) -> Dict[str, Any]:
-        """
-        Llamada a Gemini especializada para analizar consorcios CON CACHE.
-
-        Args:
-            documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
-            es_facturacion_extranjera: Si es facturación extranjera (usa prompts especializados)
-            archivos_directos: Lista de archivos directos (para compatibilidad)
-            cache_archivos: Cache de archivos para workers paralelos
-            proveedor: Nombre del proveedor/consorcio (v3.0)
-
-        Returns:
-            Dict[str, Any]: Análisis completo del consorcio en formato compatible
-
-        Raises:
-            ValueError: Si no se encuentra factura o hay error en procesamiento
-        """
-        logger.info("Analizando CONSORCIO con Gemini")
-        
-        #  USAR CACHE SI ESTÁ DISPONIBLE
-        archivos_directos = archivos_directos or []
-        if cache_archivos:
-            logger.info(f" Consorcio usando cache de archivos: {len(cache_archivos)} archivos")
-            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
-        elif archivos_directos:
-            logger.info(f" Consorcio usando archivos directos originales: {len(archivos_directos)} archivos")
-        
-        # Extraer documentos por categoría (mismo proceso que factura normal)
-        factura_texto = ""
-        rut_texto = ""
-        anexos_texto = ""
-        cotizaciones_texto = ""
-        anexo_contrato = ""
-        
-        for nombre_archivo, info in documentos_clasificados.items():
-            if info["categoria"] == "FACTURA":
-                factura_texto = info["texto"]
-                logger.info(f"Factura de consorcio encontrada: {nombre_archivo}")
-            elif info["categoria"] == "RUT":
-                rut_texto = info["texto"]
-                logger.info(f"RUT encontrado: {nombre_archivo}")
-            elif info["categoria"] == "ANEXO":
-                anexos_texto += f"\n\n--- ANEXO: {nombre_archivo} ---\n{info['texto']}"
-            elif info["categoria"] == "COTIZACION":
-                cotizaciones_texto += f"\n\n--- COTIZACIÓN: {nombre_archivo} ---\n{info['texto']}"
-            elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
-                anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
-        
-        hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
-        nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
-        posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
-        
-        if not factura_texto and not posibles_facturas_directas:
-            raise ValueError("No se encontró una FACTURA en los documentos del consorcio")
-        logger.info("Se identificó correctamente la factura del consorcio")
-       
-        for archivo in archivos_directos:
-            try:
-                if hasattr(archivo, 'filename') and archivo.filename:
-                    nombres_archivos_directos.append(archivo.filename)
-                else:
-                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-            except Exception as e: 
-                logger.warning(f" Error obteniendo nombre de archivo: {e}")
-                nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                
-        try:
-            # NUEVO FLUJO v3.0.10: Dos llamadas separadas para mayor precision
-            logger.info("=== INICIANDO ANALISIS DE CONSORCIO CON DOS LLAMADAS ===")
-
-            # ==========================================
-            # LLAMADA 1: EXTRACCION DE DATOS CRUDOS
-            # ==========================================
-            logger.info("LLAMADA 1: Extrayendo datos crudos del consorcio...")
-
-            prompt_extraccion = PROMPT_EXTRACCION_CONSORCIO(
-                factura_texto, rut_texto, anexos_texto,
-                cotizaciones_texto, anexo_contrato,
-                nombres_archivos_directos=nombres_archivos_directos,
-                proveedor=proveedor
-            )
-
-            respuesta_extraccion = await self._llamar_gemini_hibrido_factura(
-                prompt_extraccion,
-                archivos_directos=archivos_directos
-            )
-            logger.info(f"Respuesta extraccion recibida (primeros 200 chars): {respuesta_extraccion[:200]}...")
-
-            # Limpiar y parsear respuesta de extraccion
-            respuesta_extraccion_limpia = self._limpiar_respuesta_json(respuesta_extraccion)
-
-            try:
-                datos_extraidos = json.loads(respuesta_extraccion_limpia)
-            except json.JSONDecodeError as first_error:
-                logger.warning(f"JSON de extraccion malformado, intentando reparar: {first_error}")
-                respuesta_reparada = self._reparar_json_malformado(respuesta_extraccion_limpia)
-                datos_extraidos = json.loads(respuesta_reparada)
-
-            # Guardar resultado de extraccion
-
-            logger.info(f"Extraccion exitosa: {len(datos_extraidos.get('consorciados', []))} consorciados identificados")
-            logger.info(f"Conceptos literales extraidos: {len(datos_extraidos.get('conceptos_literales', []))}")
-
-            # ==========================================
-            # LLAMADA 2: MATCHING DE CONCEPTOS
-            # ==========================================
-            conceptos_literales = datos_extraidos.get("conceptos_literales", [])
-
-            if not conceptos_literales:
-                logger.warning("No se extrajeron conceptos literales, usando concepto no identificado")
-                conceptos_mapeados = {
-                    "conceptos_mapeados": [{
-                        "nombre_concepto": "CONCEPTO_NO_IDENTIFICADO",
-                        "concepto": "CONCEPTO_NO_IDENTIFICADO",
-                        "concepto_index": 0,
-                        "justificacion": "No se identificaron conceptos en la primera llamada"
-                    }]
-                }
-            else:
-                logger.info("LLAMADA 2: Haciendo matching de conceptos con base de datos...")
-
-                conceptos_dict = self._obtener_conceptos_retefuente()
-                prompt_matching = PROMPT_MATCHING_CONCEPTOS(conceptos_literales, conceptos_dict)
-
-                respuesta_matching = await self._llamar_gemini(
-                    prompt_matching,
-                    usar_modelo_consorcio=False  # Matching es mas simple, no necesita modelo grande
-                )
-                logger.info(f"Respuesta matching recibida (primeros 200 chars): {respuesta_matching[:200]}...")
-
-                # Limpiar y parsear respuesta de matching
-                respuesta_matching_limpia = self._limpiar_respuesta_json(respuesta_matching)
-
-                try:
-                    conceptos_mapeados = json.loads(respuesta_matching_limpia)
-                except json.JSONDecodeError as matching_error:
-                    logger.warning(f"JSON de matching malformado, intentando reparar: {matching_error}")
-                    respuesta_reparada = self._reparar_json_malformado(respuesta_matching_limpia)
-                    conceptos_mapeados = json.loads(respuesta_reparada)
-
-                
-                logger.info(f"Matching exitoso: {len(conceptos_mapeados.get('conceptos_mapeados', []))} conceptos mapeados")
-
-            # ==========================================
-            # MERGE: COMBINAR RESULTADOS
-            # ==========================================
-            logger.info("MERGE: Combinando resultados de ambas llamadas...")
-
-            # Crear estructura final compatible con el formato actual
-            conceptos_identificados = []
-            conceptos_mapeados_list = conceptos_mapeados.get("conceptos_mapeados", [])
-
-            for concepto_mapeado in conceptos_mapeados_list:
-                # Buscar base_gravable del concepto literal correspondiente
-                nombre_concepto = concepto_mapeado.get("nombre_concepto", "")
-                base_gravable = 0.0
-
-                for concepto_literal in conceptos_literales:
-                    if concepto_literal.get("nombre_concepto") == nombre_concepto:
-                        base_gravable = concepto_literal.get("base_gravable", 0.0)
-                        break
-
-                # Construir objeto en formato esperado
-                # NOTA: tarifa_retencion NO se incluye aqui porque se obtiene de la BD
-                # usando concepto_index en liquidador_consorcios.py
-                concepto_identificado = {
-                    "nombre_concepto": nombre_concepto,
-                    "concepto": concepto_mapeado.get("concepto", "CONCEPTO_NO_IDENTIFICADO"),
-                    "concepto_index": concepto_mapeado.get("concepto_index", 0),
-                    "base_gravable": base_gravable
-                }
-                conceptos_identificados.append(concepto_identificado)
-
-            # Construir resultado final con misma estructura que antes
-            resultado = {
-                "es_consorcio": datos_extraidos.get("es_consorcio", True),
-                "nombre_consorcio": datos_extraidos.get("nombre_consorcio", ""),
-                "conceptos_identificados": conceptos_identificados,
-                "consorciados": datos_extraidos.get("consorciados", []),
-                "valor_total": datos_extraidos.get("valor_total", 0.0),
-                "observaciones": datos_extraidos.get("observaciones", [])
-            }
-
-            # Agregar observacion sobre el nuevo metodo
-            if "observaciones" not in resultado:
-                resultado["observaciones"] = []
-            resultado["observaciones"].append("Analisis realizado con metodo de dos llamadas (extraccion + matching)")
-
-            # Guardar resultado final consolidado
-            await self._guardar_respuesta("analisis_consorcio.json", resultado)
-
-            # Validar cantidad de consorciados
-            if 'consorciados' in resultado and len(resultado['consorciados']) > 20:
-                logger.warning(f"Consorcio muy grande ({len(resultado['consorciados'])} consorciados), puede requerir procesamiento especial")
-
-            # Log final
-            logger.info(f"=== ANALISIS COMPLETO ===")
-            logger.info(f"Consorciados identificados: {len(resultado.get('consorciados', []))}")
-            logger.info(f"Conceptos mapeados: {len(conceptos_identificados)}")
-            logger.info(f"Valor total: ${resultado.get('valor_total', 0):,.2f}")
-            logger.info("Datos extraidos por Gemini - Validaciones y calculos seran realizados por liquidador_consorcios.py")
-
-            return resultado
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parseando JSON de consorcio (dos llamadas): {e}")
-            logger.error("JSON malformado en extraccion o matching")
-            return self._consorcio_fallback()
-        except Exception as e:
-            logger.error(f"Error en analisis de consorcio (dos llamadas): {e}")
-            import traceback
-            logger.error(f"Traceback completo: {traceback.format_exc()}")
-            return self._consorcio_fallback(str(e))
+        # DIP: Delegar a clasificador especializado
+        return await self.clasificador_consorcio.analizar_consorcio(
+            documentos_clasificados=documentos_clasificados,
+            es_facturacion_extranjera=es_facturacion_extranjera,
+            archivos_directos=archivos_directos,
+            cache_archivos=cache_archivos,
+            proveedor=proveedor
+        )
 
     async def analizar_estampilla(self, documentos_clasificados: Dict[str, Dict], archivos_directos: List[str] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
         """
@@ -2142,86 +1548,22 @@ class ProcesadorGemini:
         
         logger.warning("Usando clasificación fallback basada en nombres de archivo")
         return resultado
+
+    # ===============================
+    # NOTA: Funciones auxiliares de conceptos de retefuente movidas a clasificador_retefuente.py
+    # Funciones movidas: _analisis_fallback, _obtener_conceptos_retefuente, _conceptos_hardcodeados,
+    # _obtener_conceptos_completos, _conceptos_completos_hardcodeados, _obtener_conceptos_extranjeros,
+    # _obtener_conceptos_extranjeros_simplificado, _conceptos_extranjeros_simplificados_hardcodeados,
+    # _obtener_paises_convenio, _paises_convenio_hardcodeados, _obtener_preguntas_fuente_nacional,
+    # _preguntas_fuente_hardcodeadas, _conceptos_extranjeros_hardcodeados
+    # ===============================
+
+    # ===============================
+    # NOTA: Lógica de consorcios movida a clasificador_consorcio.py
+    # Funciones movidas: analizar_consorcio (implementación completa), _consorcio_fallback
+    # ===============================
     
-    def _analisis_fallback(self) -> AnalisisFactura:
-        """
-        Análisis de emergencia cuando falla Gemini.
-        
-        Returns:
-            AnalisisFactura: Análisis básico de fallback
-        """
-        logger.warning("Usando análisis fallback - Gemini no pudo procesar")
-        
-        return AnalisisFactura(
-            conceptos_identificados=[
-                ConceptoIdentificado(
-                    concepto="CONCEPTO_NO_IDENTIFICADO",
-                    base_gravable=None,
-                    concepto_index=None
-                )
-            ],
-            naturaleza_tercero=NaturalezaTercero(
-                es_responsable_iva=None  # No se pudo identificar
-            ),
-            es_facturacion_exterior=False,
-            valor_total=None,
-            observaciones=[
-                "Error procesando con Gemini - No se pudo extraer información",
-                "Por favor revise manualmente los documentos",
-                "IMPORTANTE: Verifique si el tercero es responsable de IVA en el RUT"
-            ]
-        )
-    
-    def _obtener_conceptos_retefuente(self) -> dict:
-        """
-        Obtiene los conceptos de retefuente desde la base de datos.
-
-        Returns:
-            dict: Conceptos formateados para Gemini con estructura {descripcion_concepto: index}
-        """
-        try:
-            # Verificar que tenemos db_manager y estructura_contable
-            if not self.db_manager or self.estructura_contable is None:
-                logger.warning("db_manager o estructura_contable no configurados, usando fallback")
-                return self._conceptos_hardcodeados()
-
-            # Consultar BD para obtener conceptos
-            logger.info(f"Consultando conceptos desde BD para estructura_contable={self.estructura_contable}")
-            resultado = self.db_manager.obtener_conceptos_retefuente(self.estructura_contable)
-
-            if not resultado['success']:
-                logger.warning(f"No se encontraron conceptos en BD: {resultado['message']}")
-                return self._conceptos_hardcodeados()
-
-            # Formatear para Gemini: {descripcion_concepto: index}
-            conceptos_dict = {}
-            for concepto in resultado['data']:
-                descripcion = concepto['descripcion_concepto']
-                index = concepto['index']
-                conceptos_dict[descripcion] = index
-
-            logger.info(f"CONCEPTOS_RETEFUENTE obtenidos desde BD: {len(conceptos_dict)} conceptos")
-            return conceptos_dict
-
-        except Exception as e:
-            logger.error(f"Error obteniendo conceptos desde BD: {e}")
-            return self._conceptos_hardcodeados()
-    
-    def _conceptos_hardcodeados(self) -> dict:
-        """
-        Conceptos de emergencia si no se puede acceder a la BD.
-
-        Returns:
-            dict: Conceptos básicos hardcodeados con formato {descripcion: index}
-        """
-        # Retornar diccionario básico con formato nuevo: descripcion -> index
-        return {
-            "Servicios generales (declarantes)": 1,
-            "Honorarios y comisiones por servicios (declarantes)": 2,
-            "Compras": 3,
-            "Arrendamiento de bienes inmuebles": 4,
-            "Arrendamiento de bienes muebles": 5
-        }
+  
     
     async def _guardar_respuesta(self, nombre_archivo: str, contenido: dict):
         """
@@ -2269,254 +1611,8 @@ class ProcesadorGemini:
             except Exception as e2:
                 logger.error(f" Error guardando fallback: {e2}")
     
-    def _obtener_conceptos_completos(self) -> dict:
-        """
-        Obtiene los conceptos completos de retefuente con bases mínimas y tarifas.
-        
-        Returns:
-            dict: Conceptos con estructura completa {concepto: {base_pesos, tarifa_retencion}}
-        """
-        try:
-            # ✅ OPCIÓN A: Importar directamente CONCEPTOS_RETEFUENTE desde config.py
-            from config import CONCEPTOS_RETEFUENTE
-            logger.info(f" CONCEPTOS_RETEFUENTE importados exitosamente desde config.py: {len(CONCEPTOS_RETEFUENTE)} conceptos")
-            return CONCEPTOS_RETEFUENTE
-                
-        except ImportError as e:
-            logger.warning(f" No se pudo importar desde config.py: {e}")
-            # Fallback: usar conceptos hardcodeados
-            logger.warning(" Usando conceptos completos hardcodeados como fallback")
-            return self._conceptos_completos_hardcodeados()
-        except Exception as e:
-            logger.error(f"Error obteniendo conceptos completos: {e}")
-            return self._conceptos_completos_hardcodeados()
-    
-    # ===============================
-    # NUEVAS FUNCIONES PARA FACTURACIÓN EXTRANJERA
-    # ===============================
-    
-    def _obtener_conceptos_extranjeros(self) -> dict:
-        """
-        Obtiene los conceptos de retención para facturación extranjera.
-        
-        Returns:
-            dict: Conceptos extranjeros con tarifas normal y convenio
-        """
-        try:
-            # Importar desde config global
-            import sys
-            sys.path.append('..')
-            
-            try:
-                from config import obtener_conceptos_extranjeros
-                return obtener_conceptos_extranjeros()
-            except ImportError:
-                logger.warning("No se pudo importar conceptos extranjeros, usando hardcodeados")
-                return self._conceptos_extranjeros_hardcodeados()
-                
-        except Exception as e:
-            logger.error(f"Error obteniendo conceptos extranjeros: {e}")
-            return self._conceptos_extranjeros_hardcodeados()
-    
-    def _obtener_conceptos_extranjeros_simplificado(self) -> dict:
-        """
-        Obtiene conceptos extranjeros SIMPLIFICADOS (solo index y nombre) desde la BD.
+ 
 
-        v3.0: Gemini SOLO identifica, NO calcula. Solo necesita {index: nombre}.
-
-        Returns:
-            dict: {index: nombre_concepto} para identificación en Gemini
-        """
-        try:
-            if not self.db_manager:
-                logger.warning("DatabaseManager no disponible, usando conceptos hardcodeados simplificados")
-                return self._conceptos_extranjeros_simplificados_hardcodeados()
-
-            # Obtener conceptos desde BD
-            resultado = self.db_manager.obtener_conceptos_extranjeros()
-
-            if not resultado.get("success", False):
-                logger.error(f"Error consultando conceptos extranjeros: {resultado.get('error')}")
-                return self._conceptos_extranjeros_simplificados_hardcodeados()
-
-            # Crear diccionario simplificado: {index: nombre_concepto}
-            conceptos_simplificados = {}
-            for concepto in resultado.get("data", []):
-                index = concepto.get("index")
-                nombre = concepto.get("nombre_concepto")
-                if index is not None and nombre:
-                    conceptos_simplificados[index] = nombre
-
-            logger.info(f"Conceptos extranjeros simplificados obtenidos de BD: {len(conceptos_simplificados)}")
-            return conceptos_simplificados
-
-        except Exception as e:
-            logger.error(f"Error obteniendo conceptos simplificados: {e}")
-            return self._conceptos_extranjeros_simplificados_hardcodeados()
-
-    def _conceptos_extranjeros_simplificados_hardcodeados(self) -> dict:
-        """
-        Fallback: Conceptos extranjeros simplificados hardcodeados.
-
-        Returns:
-            dict: {index: nombre_concepto}
-        """
-        logger.warning("Usando conceptos extranjeros simplificados hardcodeados")
-        return {
-            1: "Dividendos y participaciones",
-            2: "Intereses",
-            3: "Regalías",
-            4: "Consultorías, servicios técnicos y de asistencia técnica",
-            5: "Arrendamiento de equipos industriales, comerciales o científicos",
-            6: "Honorarios",
-            7: "Compensación por servicios personales",
-            8: "Otros ingresos",
-        }
-
-    def _obtener_paises_convenio(self) -> list:
-        """
-        Obtiene la lista de países con convenio de doble tributación.
-
-        Returns:
-            list: Lista de países con convenio
-        """
-        try:
-            import sys
-            sys.path.append('..')
-            
-            try:
-                from config import obtener_paises_con_convenio
-                return obtener_paises_con_convenio()
-            except ImportError:
-                logger.warning("No se pudo importar países con convenio, usando hardcodeados")
-                return self._paises_convenio_hardcodeados()
-                
-        except Exception as e:
-            logger.error(f"Error obteniendo países con convenio: {e}")
-            return self._paises_convenio_hardcodeados()
-    
-    def _obtener_preguntas_fuente_nacional(self) -> list:
-        """
-        Obtiene las preguntas para determinar fuente nacional.
-        
-        Returns:
-            list: Lista de preguntas para validar fuente nacional
-        """
-        try:
-            import sys
-            sys.path.append('..')
-            
-            try:
-                from config import obtener_preguntas_fuente_nacional
-                return obtener_preguntas_fuente_nacional()
-            except ImportError:
-                logger.warning("No se pudo importar preguntas fuente nacional, usando hardcodeadas")
-                return self._preguntas_fuente_hardcodeadas()
-                
-        except Exception as e:
-            logger.error(f"Error obteniendo preguntas fuente nacional: {e}")
-            return self._preguntas_fuente_hardcodeadas()
-    
-    def _conceptos_extranjeros_hardcodeados(self) -> dict:
-        """
-        Conceptos extranjeros de emergencia.
-        
-        Returns:
-            dict: Conceptos básicos extranjeros
-        """
-        return {
-            "Pagos por servicios al exterior": {
-                "base_pesos": 0,
-                "tarifa_normal": 0.20,
-                "tarifa_convenio": 0.10
-            }
-        }
-    
-    def _paises_convenio_hardcodeados(self) -> list:
-        """
-        Países con convenio de emergencia.
-        
-        Returns:
-            list: Lista básica de países
-        """
-        return ["España", "Francia", "Italia", "Chile", "México", "Perú", "Ecuador", "Bolivia"]
-    
-    def _preguntas_fuente_hardcodeadas(self) -> list:
-        """
-        Preguntas de fuente nacional de emergencia.
-        
-        Returns:
-            list: Lista básica de preguntas
-        """
-        return [
-            "¿El servicio tiene uso o beneficio económico en Colombia?",
-            "¿La actividad se ejecutó en Colombia?",
-            "¿Es asistencia técnica usada en Colombia?",
-            "¿El bien está ubicado en Colombia?"
-        ]
-    
-    def _conceptos_completos_hardcodeados(self) -> dict:
-        """
-        Conceptos completos de emergencia con bases mínimas y tarifas.
-        
-        Returns:
-            dict: Conceptos básicos con estructura completa
-        """
-        return {
-            "Servicios generales (declarantes)": {
-                "base_pesos": 498000,
-                "tarifa_retencion": 0.04
-            },
-            "Honorarios y comisiones por servicios (declarantes)": {
-                "base_pesos": 2490000,
-                "tarifa_retencion": 0.11
-            },
-            "Servicios de construcción y urbanización (declarantes)": {
-                "base_pesos": 1490000,
-                "tarifa_retencion": 0.01
-            }
-        }
-    
-    def _consorcio_fallback(self, error_msg: str = "Error procesando consorcio") -> Dict[str, Any]:
-        """
-        Respuesta de emergencia cuando falla el procesamiento de consorcio.
-        NUEVA ESTRUCTURA v3.1.2: Compatible con liquidador_consorcios.py
-
-        Args:
-            error_msg: Mensaje de error
-
-        Returns:
-            Dict[str, Any]: Respuesta básica de consorcio compatible con nuevo liquidador
-        """
-        logger.warning(f"Usando fallback de consorcio: {error_msg}")
-
-        return {
-            "es_consorcio": True,
-            "nombre_consorcio": "Consorcio no identificado",
-            "tipo_entidad": "CONSORCIO",
-            "conceptos_identificados": [
-                {
-                    "nombre_concepto": "CONCEPTO_NO_IDENTIFICADO",
-                    "concepto": "CONCEPTO_NO_IDENTIFICADO",
-                    "tarifa_retencion": 0.0,
-                    "base_gravable": 0.0
-                }
-            ],
-            "consorciados": [],
-            "validacion_porcentajes": {
-                "suma_total": 0.0,
-                "es_valido": False
-            },
-            "valor_total_factura": 0.0,
-            "observaciones": [
-                f"Error procesando consorcio: {error_msg}",
-                "Por favor revise manualmente los documentos",
-                "Verifique porcentajes de participación en anexos"
-            ],
-            "tipo_procesamiento": "CONSORCIO_FALLBACK",
-            "error": error_msg
-        }
-    
     # ===============================
     # ✅ NUEVA FUNCIONALIDAD: ANÁLISIS DE IVA Y RETEIVA
     # ===============================

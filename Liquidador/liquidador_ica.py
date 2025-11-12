@@ -322,49 +322,25 @@ class LiquidadorICA:
             }
         """
         try:
-            # Consultar tabla ACTIVIDADES IK con ambos códigos
-            response = self.database_manager.db_connection.supabase.table("ACTIVIDADES IK").select(
-                "PORCENTAJE_ICA, DESCRIPCION_DE_LA_ACTIVIDAD"
-            ).eq("CODIGO_UBICACION", codigo_ubicacion).eq(
-                "CODIGO_DE_LA_ACTIVIDAD", codigo_actividad
-            ).eq("ESTRUCTURA_CONTABLE", estructura_contable).execute()
+            # Usar método abstracto de la interfaz DatabaseInterface
+            resultado = self.database_manager.obtener_tarifa_ica(
+                codigo_ubicacion=codigo_ubicacion,
+                codigo_actividad=codigo_actividad,
+                estructura_contable=estructura_contable
+            )
 
             # VALIDACIÓN 1: Sin registros encontrados
-            if not response.data or len(response.data) == 0:
+            if not resultado['success']:
                 logger.warning(
                     f"No se encontró tarifa para actividad {codigo_actividad} "
                     f"en ubicación {codigo_ubicacion}"
                 )
                 return {"tarifa": None, "observacion": None}
 
-            # VALIDACIÓN 2: Más de un registro (duplicado en BD)
-            if len(response.data) > 1:
-                tarifa_primer_registro = response.data[0]["PORCENTAJE_ICA"]
-                descripcion = response.data[0]["DESCRIPCION_DE_LA_ACTIVIDAD"]
-
-                observacion = (
-                    f" ADVERTENCIA: La actividad '{descripcion}' (código {codigo_actividad}) "
-                    f"en ubicación {codigo_ubicacion} está DUPLICADA en la base de datos "
-                    f"({len(response.data)} registros encontrados). "
-                    f"Se utilizó el primer registro para el cálculo (tarifa: {tarifa_primer_registro}%)"
-                )
-
-                logger.warning(
-                    f"Actividad duplicada en BD: {codigo_actividad} en ubicación {codigo_ubicacion} "
-                    f"- {len(response.data)} registros encontrados. Usando primer registro."
-                )
-
-                # Convertir tarifa manejando formato con coma decimal (5,0 -> 5.0)
-                tarifa_convertida = float(str(tarifa_primer_registro).replace(',', '.')) if tarifa_primer_registro is not None else 0.0
-
-                return {
-                    "tarifa": tarifa_convertida,
-                    "observacion": observacion
-                }
-
-            # CASO NORMAL: Un solo registro
-            tarifa = response.data[0]["PORCENTAJE_ICA"]
-            descripcion = response.data[0]["DESCRIPCION_DE_LA_ACTIVIDAD"]
+            # Obtener datos de la tarifa desde resultado
+            tarifa_data = resultado['data']
+            tarifa = tarifa_data['porcentaje_ica']
+            descripcion = tarifa_data['descripcion_actividad']
 
             logger.info(
                 f"Tarifa obtenida: {tarifa}% para actividad '{descripcion}' "

@@ -1755,3 +1755,145 @@ def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str =
     except Exception as e:
         logger.error(f" Error guardando JSON {nombre_archivo}: {e}")
         return False
+
+
+# =====================================
+# CONFIGURACION DE BASE DE DATOS
+# =====================================
+
+class DatabaseConfig:
+    """
+    Configuracion centralizada para diferentes fuentes de datos (SRP)
+
+    Proporciona constantes y helpers para trabajar con multiples
+    implementaciones de database (Supabase, Nexura API).
+
+    Principios SOLID:
+    - SRP: Solo maneja configuracion de databases
+    - OCP: Extensible para nuevas fuentes de datos
+    """
+
+    # Tipos de database soportados
+    DB_TYPE_SUPABASE = "supabase"
+    DB_TYPE_NEXURA = "nexura"
+
+    # Tipos de autenticacion soportados
+    AUTH_TYPE_NONE = "none"
+    AUTH_TYPE_JWT = "jwt"
+    AUTH_TYPE_API_KEY = "api_key"
+
+    # Timeouts default (segundos)
+    DEFAULT_TIMEOUT = 30
+    DEFAULT_HEALTH_CHECK_TIMEOUT = 10
+
+    # Endpoints de Nexura API
+    NEXURA_ENDPOINTS = {
+        'negocios_fiduciaria': '/preliquidador/negociosFiduciaria/',
+        'negocios': '/preliquidador/negocios/',
+        'estructura_contable': '/preliquidador/estructuraContable/',
+        'actividades_ica': '/preliquidador/actividadesIca/',
+        'cuantias': '/preliquidador/cuantias/',
+        'recursos': '/preliquidador/recursos/',
+        'retefuente': '/preliquidador/retefuente/',
+        'conceptos_extranjeros': '/preliquidador/conceptosExtranjeros/',
+        'paises_convenio': '/preliquidador/paisesConvenio/'
+    }
+
+    @staticmethod
+    def get_database_type() -> str:
+        """
+        Obtiene el tipo de database configurado desde variables de entorno
+
+        Returns:
+            str: Tipo de database ('supabase' o 'nexura', default: 'supabase')
+        """
+        return os.getenv("DATABASE_TYPE", DatabaseConfig.DB_TYPE_SUPABASE)
+
+    @staticmethod
+    def is_nexura_enabled() -> bool:
+        """
+        Verifica si Nexura API esta habilitada
+
+        Returns:
+            bool: True si DATABASE_TYPE es 'nexura'
+        """
+        return DatabaseConfig.get_database_type() == DatabaseConfig.DB_TYPE_NEXURA
+
+    @staticmethod
+    def is_supabase_enabled() -> bool:
+        """
+        Verifica si Supabase esta habilitado
+
+        Returns:
+            bool: True si DATABASE_TYPE es 'supabase'
+        """
+        return DatabaseConfig.get_database_type() == DatabaseConfig.DB_TYPE_SUPABASE
+
+    @staticmethod
+    def get_nexura_endpoint(nombre: str) -> str:
+        """
+        Obtiene URL de endpoint de Nexura por nombre
+
+        Args:
+            nombre: Nombre del endpoint (ej: 'negocios_fiduciaria')
+
+        Returns:
+            str: Path del endpoint o cadena vacia si no existe
+        """
+        return DatabaseConfig.NEXURA_ENDPOINTS.get(nombre, '')
+
+    @staticmethod
+    def get_auth_type() -> str:
+        """
+        Obtiene el tipo de autenticacion configurado para Nexura
+
+        Returns:
+            str: Tipo de auth ('none', 'jwt', 'api_key', default: 'none')
+        """
+        return os.getenv("NEXURA_AUTH_TYPE", DatabaseConfig.AUTH_TYPE_NONE)
+
+    @staticmethod
+    def validate_database_config() -> Dict[str, Any]:
+        """
+        Valida la configuracion de database actual
+
+        Returns:
+            Dict con resultado de validacion:
+            {
+                'valid': bool,
+                'tipo_db': str,
+                'errores': List[str],
+                'warnings': List[str]
+            }
+        """
+        errores = []
+        warnings = []
+        tipo_db = DatabaseConfig.get_database_type()
+
+        if tipo_db == DatabaseConfig.DB_TYPE_SUPABASE:
+            if not os.getenv("SUPABASE_URL"):
+                errores.append("SUPABASE_URL no configurada")
+            if not os.getenv("SUPABASE_KEY"):
+                errores.append("SUPABASE_KEY no configurada")
+
+        elif tipo_db == DatabaseConfig.DB_TYPE_NEXURA:
+            if not os.getenv("NEXURA_API_BASE_URL"):
+                errores.append("NEXURA_API_BASE_URL no configurada")
+
+            auth_type = DatabaseConfig.get_auth_type()
+            if auth_type == DatabaseConfig.AUTH_TYPE_JWT:
+                if not os.getenv("NEXURA_JWT_TOKEN"):
+                    warnings.append("NEXURA_JWT_TOKEN vacio (se usara sin autenticacion)")
+            elif auth_type == DatabaseConfig.AUTH_TYPE_API_KEY:
+                if not os.getenv("NEXURA_API_KEY"):
+                    warnings.append("NEXURA_API_KEY vacia (se usara sin autenticacion)")
+
+        else:
+            errores.append(f"DATABASE_TYPE invalido: {tipo_db}")
+
+        return {
+            'valid': len(errores) == 0,
+            'tipo_db': tipo_db,
+            'errores': errores,
+            'warnings': warnings
+        }
