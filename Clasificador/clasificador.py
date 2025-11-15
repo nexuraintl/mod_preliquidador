@@ -2025,28 +2025,29 @@ class ProcesadorGemini:
     def _obtener_estampillas_default(self) -> List[Dict[str, Any]]:
         """
         Obtiene estructura por defecto para las 6 estampillas generales.
-        
+
+        NOTA: Los estados se asignan después en el liquidador mediante validaciones Python.
+
         Returns:
-            List con estructura por defecto de las 6 estampillas
+            List con estructura por defecto de las 6 estampillas (sin estado)
         """
         estampillas_nombres = [
             "Procultura",
-            "Bienestar", 
+            "Bienestar",
             "Adulto Mayor",
             "Prouniversidad Pedagógica",
             "Francisco José de Caldas",
             "Prodeporte"
         ]
-        
+
         return [
             {
                 "nombre_estampilla": nombre,
-                "porcentaje": None,
-                "valor_base": 0.0,
-                "valor": None,
-                "estado": "no_aplica_impuesto",
+                "porcentaje": 0.0,  # Default 0
+                "valor_base": 0.0,   # Default 0
+                "valor": 0.0,        # Default 0
                 "texto_referencia": None,
-                "observaciones": "Error en procesamiento - no se pudo analizar"
+                "observaciones": "Error en procesamiento - no se pudo analizar"  # Se mantiene para casos de error
             }
             for nombre in estampillas_nombres
         ]
