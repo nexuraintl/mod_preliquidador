@@ -35,17 +35,19 @@ def crear_prompt_identificacion_ubicaciones(
 
     Args:
         ubicaciones_bd: Lista de ubicaciones de la base de datos
-                       [{"codigo_ubicacion": 1, "nombre_ubicacion": "BOGOTA D.C."}, ...]
+                       [{"codigo_ubicacion": 1, "nombre_ubicacion": "BOGOTA D.C.",
+                         "nombre_departamento": "BOGOTA D.C."}, ...]
         textos_documentos: Diccionario con textos de documentos adjuntos
         nombres_archivos_directos: Lista de nombres de archivos directos (para multimodalidad)
 
     Returns:
-        str: Prompt estructurado para Gemini
+        str: Prompt estructurado para Gemini (mostrará formato "CIUDAD (DEPARTAMENTO)")
     """
 
     # Formatear ubicaciones de la base de datos
     ubicaciones_formateadas = "\n".join([
-        f"- Código {ub['codigo_ubicacion']}: {ub['nombre_ubicacion']}"
+        f"- Código {ub['codigo_ubicacion']}: {ub['nombre_ubicacion']}" +
+        (f" ({ub['nombre_departamento']})" if ub.get('nombre_departamento') else "")
         for ub in ubicaciones_bd
     ])
 
@@ -87,46 +89,74 @@ PASO 3: INSTRUCCIONES DE IDENTIFICACIÓN
 ═══════════════════════════════════════════════════════════════════════
 
 BUSCAR EN LA FACTURA:
-1. Ubicación explícita de ejecución del contrato
-2. Ciudad/municipio donde se realiza la actividad
-3. Dirección del lugar de ejecución
-4. Lugar de prestación del servicio
+1. Actividad facturada
+2. Ubicación textual de la actividad facturada.
 
-IMPORTANTE:
-- Para identificar las ubicaciones busca  palabras clave similares a las siguientes: 
+
+UBICACIONES POR ACTIVIDAD FACTURADA:
+
+TRANSPORTE :
+
+- Si la actividad facturada es Transporte, entonces la ubicación que tienes que extraer es la ubicación en donde se entrega el bien, mercancía o persona.  Busca palabras clave similares a las siguientes:
+
+ "Destino", "Punto de fin", "Entrega en", "Lugar de entrega" , "Direccion de descarga"
+ 
+ IMPORTANTE TRANSPORTE: Si la actividad facturada es transporte y NO se encuentra la ubicacion de entrega entonces asigna : - nombre_ubicacion = "" , codigo_ubicacion = 0, texto_identificador = "", porcentaje_ejecucion = 0.0
+
+TELEVISION E INTERNET POR SUSCIPCION Y TELEFONIA FIJA :
+
+- Si la actividad facturada esta relacionada con servicios de televisión e internet por suscripción y telefonía fija. La ubicación seleccionada será el lugar en el que se encuentre el suscriptor del servicio según el Contrato. Busca palabras clave similares a las siguientes:
+
+ "Dirección del suscriptor:", "Domicilio del servicio:"
+ "Dirección de instalación:", "Punto de servicio:"
+ "Ubicación del contrato:", "Dirección de facturación:"
+
+ IMPORTANTE SERVICIOS TELEVISION E INTERNET : Si la actividad facturada es televisión e internet por suscripción y telefonía fija y NO se encuentra la ubicacion en la que se encuentre el suscriptor del servicio entonces asigna : - nombre_ubicacion = "" , codigo_ubicacion = 0, texto_identificador = "", porcentaje_ejecucion = 0.0
+
+SERVICIOS DE TELEFONIA MOVIL -NAVEGACION MOVIL -DATOS MOVILES :
+
+- Si la actividad facturada es servicio de telefonia movil, navegacion movil o servicio de datos moviles la ubicacion seleccionada sera la del lugar donde se encuentre el suscriptor del servicio segun el contrato o en el documento de actualizacion. Busca palabras clave similares a las siguientes:
+
+ "Dirección del titular:", "Domicilio registrado:"
+
+ IMPORTANTE TELEFONICA MOVIL - NAVEGACION MOVIL - DATOS MOVILES : Si la actividad facturada es de telefonia movil, navegacion movil o servicio de datos moviles y NO se encuentra la ubicacion en la que se encuentre el suscriptor del servicio entonces asigna : - nombre_ubicacion = "" , codigo_ubicacion = 0, texto_identificador = "", porcentaje_ejecucion = 0.0
+
+COMPRAS GENERICAS DE BIENES O PRODUCTOS : 
+
+- Si la actividad facturada es una compra generica de algun producto o bien, la ubicacion seleccionada sera la ubicacion del proovedor o vendedor del bien o producto, la cual esta indicada en la FACTURA.
+
+ IMPORTANTE COMPRAS: Si la actividad facturada es una compra generica y NO se encuentra la ubicacion de proveedor o vendedor del bien o producto entonces asigna : - nombre_ubicacion = "" , codigo_ubicacion = 0, texto_identificador = "", porcentaje_ejecucion = 0.0
+
+SERVICIOS GENERICOS :
+
+- Si la actividad facturada es un servicio generico no clasifificado en las actividades anteriores, la ubicacion seleccionada sera el lugar en donde se preste el servicio segun lo indicado en el contrato o en la factura. Busca palabras clave similares a las siguientes: 
+
 " Servicios prestados en ", " Lugar de ejecución: ", " Prestación del servicio en ",
-" Ejecución en ", " Realizado en ", "ejecutado en ", "Municipio de Prestación del Servicio: "
+" Ejecución en ", " Realizado en ", "ejecutado en ", "Municipio de Prestación del Servicio: 
 
-Si encuentras UBICACIONES SOLAS sin que se especifique que ahí se ejecuta la actividad, NO LAS CONSIDERES y menciona en observaciones que no se encontraron ubicaciones de ejecución explícitas.
+ IMPORTANTE SERVICIOS GENERICOS: Si la actividad facturada es una Servicio prestado  y NO se encuentra el lugar en donde se preste el servicio entonces asigna : - nombre_ubicacion = "" , codigo_ubicacion = 0, texto_identificador = "", porcentaje_ejecucion = 0.0
 
-EXCEPCIONES POR ACTIVIDAD FACTURADA:
 
-- Si la actividad facturada es Transporte, entonces la ubicación que tienes que extraer es la ubicación en donde se despacha el bien, mercancía o persona. 
+IMPORTANTE ACTIVIDAD FACTURADA:
+- menciona en observaciones que se identifico la ubicacion (x) correspondiente a la actividad facturada (y).
 
-- Si la actividad facturada esta relacionada con servicios de televisión e internet por suscripción y telefonía fija. La ubicación seleccionada será el lugar en el que se encuentre el suscriptor del servicio según el Contrato.
+═══════════════════════════════════════════════════════════════════════
+PASO 4: MATCHING CON BASE DE DATOS (OBLIGATORIO)
+═══════════════════════════════════════════════════════════════════════
 
-- Si la actividad facturada es servicio de telefonia movil, navegacion movil o servicio de datos moviles la ubicacion seleccionada sera la del lugar donde se encuentre el suscriptor del servicio segun el contrato o en el documento de actualizacion.
-
-IMPORTANTE EXCEPCIONES POR ACTIVIDAD FACTURADA:
-- Si se cumple alguna de las excepciones anteriores menciona en observaciones que se aplicó la excepción correspondiente  a la actividad facturada.
-
-- Si se cumple alguna de las excepciones anteriores por actividad facturada y NO se encuentra la ubicación para esa excepcion, entonces asigna:
-
-- nombre_ubicacion = ""
-- codigo_ubicacion = 0
-- texto_identificador = ""
-- porcentaje_ejecucion = 0.0
-
+- Buscar la ubicación identificada en la lista de la base de datos :
+ - Si la encuentras en la base de datos : copiar EXACTAMENTE codigo_ubicacion y nombre_ubicacion
+ - Si NO la encuentras en la base de datos : codigo_ubicacion = 0, nombre_ubicacion = "NOMBRE EN MAYUSCULAS SIN ACENTOS"
+ 
 
 VALIDACIONES OBLIGATORIAS:
 
-Revisar si se cumplen las excepciones por actividad facturada antes de proceder a identificar ubicaciones.
+
+* Revisa la actividad facturada antes de proceder a identificar ubicaciones.
 
 Si encuentras UNA sola ubicación:
 - porcentaje_ejecucion = 100 (siempre, aunque no aparezca en documentos)
-- Buscar la ubicación en la lista de la base de datos
-- Si la encuentras: copiar EXACTAMENTE codigo_ubicacion y nombre_ubicacion
-- Si NO la encuentras: codigo_ubicacion = 0, nombre_ubicacion = "NOMBRE EN MAYUSCULAS SIN ACENTOS"
+
 - texto_identificador = "CITA TEXTUAL del documento donde identificaste la ubicación"
 
 Si encuentras MULTIPLES ubicaciones:
@@ -147,7 +177,7 @@ Si NO encuentras ubicación:
 Agrega las observaciones que consideres relevantes en el campo "observaciones" del JSON.
 
 ═══════════════════════════════════════════════════════════════════════
-PASO 4: FORMATO DE RESPUESTA JSON (OBLIGATORIO)
+PASO 5: FORMATO DE RESPUESTA JSON (OBLIGATORIO)
 ═══════════════════════════════════════════════════════════════════════
 
 Debes responder UNICAMENTE con un JSON válido siguiendo esta estructura EXACTA:

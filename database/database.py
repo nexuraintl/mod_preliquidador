@@ -1355,7 +1355,7 @@ class NexuraAPIDatabase(DatabaseInterface):
                     'success': False,
                     'data': [],
                     'total': 0,
-                    'message': f'No se encontraron conceptos para estructura contable {estructura_contable}'
+                    'message': f'No se encontraron conceptos para la estructura contable {estructura_contable}'
                 }
 
             else:
@@ -1377,6 +1377,25 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'total': 0,
                 'message': f'Timeout al consultar conceptos para estructura contable {estructura_contable}'
             }
+
+        except requests.exceptions.HTTPError as e:
+            # Manejo específico para errores HTTP
+            if '404' in str(e):
+                logger.warning(f"No se encontraron conceptos retefuente para estructura {estructura_contable}")
+                return {
+                    'success': False,
+                    'data': [],
+                    'total': 0,
+                    'message': f'No se encontraron conceptos de retención en la fuente para la estructura contable {estructura_contable} en la base de datos'
+                }
+            else:
+                logger.error(f"Error HTTP en obtener_conceptos_retefuente: {e}")
+                return {
+                    'success': False,
+                    'data': [],
+                    'total': 0,
+                    'message': f'Error HTTP al consultar conceptos: {str(e)}'
+                }
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error de red en obtener_conceptos_retefuente: {e}")
@@ -1488,6 +1507,23 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'message': f'Timeout al consultar concepto con index {index}'
             }
 
+        except requests.exceptions.HTTPError as e:
+            # Manejo específico para errores HTTP
+            if '404' in str(e):
+                logger.warning(f"Concepto con index {index} no encontrado para estructura {estructura_contable}")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'El concepto con index {index} para la estructura contable {estructura_contable} no está parametrizado en la base de datos'
+                }
+            else:
+                logger.error(f"Error HTTP en obtener_concepto_por_index: {e}")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'Error HTTP al consultar concepto: {str(e)}'
+                }
+
         except requests.exceptions.RequestException as e:
             logger.error(f"Error de red en obtener_concepto_por_index: {e}")
             return {
@@ -1590,6 +1626,13 @@ class NexuraAPIDatabase(DatabaseInterface):
                         'count': 0,
                         'message': 'No se encontraron conceptos extranjeros'
                     }
+            elif error_code == 404:
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron conceptos extranjeros en la base de datos'
+                }
             else:
                 return {
                     'success': False,
@@ -1607,6 +1650,25 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'error': 'Timeout',
                 'message': 'Timeout al consultar conceptos extranjeros en Nexura API'
             }
+
+        except requests.exceptions.HTTPError as e:
+            # Manejo específico para errores HTTP
+            if '404' in str(e):
+                logger.warning("No se encontraron conceptos extranjeros en BD")
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron conceptos de retención para pagos al exterior en la base de datos'
+                }
+            else:
+                logger.error(f"Error HTTP en obtener_conceptos_extranjeros: {e}")
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': f'Error HTTP al consultar conceptos extranjeros: {str(e)}'
+                }
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error de red en obtener_conceptos_extranjeros: {e}")
@@ -1673,6 +1735,13 @@ class NexuraAPIDatabase(DatabaseInterface):
                         'count': 0,
                         'message': 'No se encontraron paises con convenio'
                     }
+            elif error_code == 404:
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron países con convenio de doble tributación en la base de datos'
+                }
             else:
                 return {
                     'success': False,
@@ -1690,6 +1759,25 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'error': 'Timeout',
                 'message': 'Timeout al consultar paises con convenio en Nexura API'
             }
+
+        except requests.exceptions.HTTPError as e:
+            # Manejo específico para errores HTTP
+            if '404' in str(e):
+                logger.warning("No se encontraron países con convenio en BD")
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron países con convenio de doble tributación en la base de datos'
+                }
+            else:
+                logger.error(f"Error HTTP en obtener_paises_con_convenio: {e}")
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': f'Error HTTP al consultar países con convenio: {str(e)}'
+                }
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error de red en obtener_paises_con_convenio: {e}")
@@ -1724,6 +1812,7 @@ class NexuraAPIDatabase(DatabaseInterface):
             Dict con estructura estandar de respuesta incluyendo:
             - codigo_ubicacion: Codigo de la ubicacion
             - nombre_ubicacion: Nombre de la ubicacion
+            - nombre_departamento: Nombre del departamento
         """
         try:
             response = self._hacer_request(
@@ -1741,7 +1830,8 @@ class NexuraAPIDatabase(DatabaseInterface):
                     ubicaciones = [
                         {
                             'codigo_ubicacion': row.get('CODIGO_UBICACION') or row.get('codigo_ubicacion'),
-                            'nombre_ubicacion': row.get('NOMBRE_UBICACION') or row.get('nombre_ubicacion')
+                            'nombre_ubicacion': row.get('NOMBRE_UBICACION') or row.get('nombre_ubicacion'),
+                            'nombre_departamento': row.get('NOMBRE_DEPARTAMENTO') or row.get('nombre_departamento', '')
                         }
                         for row in data_array
                     ]
@@ -1759,6 +1849,13 @@ class NexuraAPIDatabase(DatabaseInterface):
                         'count': 0,
                         'message': 'No se encontraron ubicaciones ICA'
                     }
+            elif error_code == 404:
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron ubicaciones ICA en la base de datos'
+                }
             else:
                 return {
                     'success': False,
@@ -1776,6 +1873,25 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'error': 'Timeout',
                 'message': 'Timeout al consultar ubicaciones ICA en Nexura API'
             }
+
+        except requests.exceptions.HTTPError as e:
+            # Manejo específico para errores HTTP
+            if '404' in str(e):
+                logger.warning("No se encontraron ubicaciones ICA en BD")
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': 'No se encontraron ubicaciones ICA en la base de datos'
+                }
+            else:
+                logger.error(f"Error HTTP en obtener_ubicaciones_ica: {e}")
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': f'Error HTTP al consultar ubicaciones ICA: {str(e)}'
+                }
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error de red en obtener_ubicaciones_ica: {e}")
@@ -1854,6 +1970,13 @@ class NexuraAPIDatabase(DatabaseInterface):
                         'count': 0,
                         'message': f'No se encontraron actividades para ubicacion {codigo_ubicacion} con estructura {estructura_contable}'
                     }
+            elif error_code == 404:
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': f'No se encontraron actividades ICA para la ubicación {codigo_ubicacion} con estructura contable {estructura_contable} en la base de datos'
+                }
             else:
                 return {
                     'success': False,
@@ -1871,6 +1994,25 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'error': 'Timeout',
                 'message': 'Timeout al consultar actividades ICA en Nexura API'
             }
+
+        except requests.exceptions.HTTPError as e:
+            # Manejo específico para errores HTTP
+            if '404' in str(e):
+                logger.warning(f"No se encontraron actividades ICA para ubicación {codigo_ubicacion} con estructura {estructura_contable}")
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': f'No se encontraron actividades ICA para la ubicación {codigo_ubicacion} con estructura contable {estructura_contable} en la base de datos'
+                }
+            else:
+                logger.error(f"Error HTTP en obtener_actividades_ica: {e}")
+                return {
+                    'success': False,
+                    'data': [],
+                    'count': 0,
+                    'message': f'Error HTTP al consultar actividades ICA: {str(e)}'
+                }
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error de red en obtener_actividades_ica: {e}")

@@ -112,65 +112,77 @@ INSTRUCCIONES CRÍTICAS:
      - "Estampilla Pro Deporte" /  "Estampilla ProDeporte"
 
 2.  **EXTRACCIÓN DE INFORMACIÓN**:
-   Para cada estampilla identificada, extrae:
+   Para cada estampilla, extrae SOLO LOS VALORES ENCONTRADOS:
    • **Nombre exacto** como aparece en el documento
-   • **Porcentaje** (ej: 1.5 , 2.0 , 0.5 , 1.1)
-   • **Valor a deducir** en pesos colombianos
-   • **Texto de referencia** donde se encontró la información
+   • **Porcentaje** (ej: 1.5, 2.0, 0.5, 1.1) → Si NO encuentras, usar 0
+   • **Valor a deducir** en pesos colombianos → Si NO encuentras, usar 0
+   • **valor_base** (base gravable de la estampilla en pesos colombianos) → Si NO encuentras, usar 0
+   • **Texto de referencia** donde se encontró la información → null si no hay
+   • **observaciones** → null (NO asignes observaciones, solo identifica datos)
 
-3.  **VALIDACIÓN DE INFORMACIÓN COMPLETA**:
-   • **INFORMACIÓN COMPLETA**: Nombre + Porcentaje + Valor → Estado: "preliquidado"
-   • **INFORMACIÓN INCOMPLETA**: Solo nombre o porcentaje sin valor → Estado: "preliquidacion_sin_finalizar"
-   • **NO IDENTIFICADA**: No se encuentra información → Estado: "no_aplica_impuesto"
+3.  **IMPORTANTE - NO ASIGNAR ESTADOS**:
+   • Tu ÚNICA responsabilidad es IDENTIFICAR valores en los documentos
+   • NO determines si la información está completa o incompleta
+   • NO asignes estados como "preliquidado" o "preliquidacion_sin_finalizar"
+   • Si NO encuentras un valor numérico, usa 0 (cero)
+   • El sistema validará después si los datos son coherentes
 
 4.  **CONSOLIDACIÓN ACUMULATIVA**:
    • Si FACTURA tiene info de 3 estampillas Y ANEXOS tienen info de 2 adicionales
    • RESULTADO: Mostrar las 5 estampillas consolidadas
-   • Si hay duplicados, priorizar información más detallada
+   • Si hay duplicados, priorizar información más detallada y completa
 
-5.  **OBSERVACIONES ESPECÍFICAS**:
-   • Si encuentra estampillas mencionadas pero sin información completa
-   • Si hay inconsistencias entre documentos
-   • Si faltan detalles específicos de porcentaje o valor
+5.  **MANEJO DE VALORES NO ENCONTRADOS**:
+   • Si NO encuentras porcentaje → porcentaje: 0
+   • Si NO encuentras valor → valor: 0
+   • Si NO encuentras valor_base → valor_base: 0
+   • Si NO encuentras texto_referencia → texto_referencia: null
+   • SIEMPRE usa observaciones: null (el sistema asignará observaciones después)
 
 EJEMPLOS DE IDENTIFICACIÓN:
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
- **EJEMPLO 1 - INFORMACIÓN COMPLETA**:
-Factura: "Estampilla Pro Cultura 1.5% = $150,000"
+ **EJEMPLO 1 - INFORMACIÓN COMPLETA ENCONTRADA**:
+Factura: "Estampilla Pro Cultura 1.5% = $150,000 sobre base de $10,000,000"
 Resultado: {{
   "nombre_estampilla": "Procultura",
   "porcentaje": 1.5,
+  "valor_base": 10000000,
   "valor": 150000,
-  "estado": "preliquidado"
+  "texto_referencia": "Factura línea 15: Estampilla Pro Cultura 1.5% = $150,000",
+  "observaciones": null
 }}
 
- **EJEMPLO 2 - INFORMACIÓN INCOMPLETA**:
-Anexo: "Aplica estampilla Pro Bienestar"
+ **EJEMPLO 2 - INFORMACIÓN PARCIAL**:
+Anexo: "Aplica estampilla Pro Bienestar al 2%"
 Resultado: {{
   "nombre_estampilla": "Bienestar",
-  "porcentaje": null,
-  "valor": null,
-  "estado": "preliquidacion_sin_finalizar",
-  "observaciones": "Se menciona la estampilla pero no se encontró porcentaje ni valor"
+  "porcentaje": 2.0,
+  "valor_base": 0,
+  "valor": 0,
+  "texto_referencia": "Anexo página 2: Aplica estampilla Pro Bienestar al 2%",
+  "observaciones": null
 }}
 
  **EJEMPLO 3 - NO IDENTIFICADA**:
+Sin información en documentos
 Resultado: {{
   "nombre_estampilla": "Prodeporte",
-  "porcentaje": null,
-  "valor": null,
-  "estado": "no_aplica_impuesto",
-  "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+  "porcentaje": 0,
+  "valor_base": 0,
+  "valor": 0,
+  "texto_referencia": null,
+  "observaciones": null
 }}
 
 IMPORTANTE:
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-• NO realizar cálculos, solo identificar información
+• NO realizar cálculos, solo identificar información que aparece en los documentos
 • Si una estampilla se menciona múltiples veces, consolidar la información más completa
 • Priorizar información de FACTURA, luego ANEXOS, luego ANEXO CONTRATO
-• Si no encuentra información de alguna estampilla, marcar como "no_aplica_impuesto"
-• Ser específico en observaciones cuando falta información
+• Si no encuentras información de alguna estampilla, usar 0 para valores numéricos
+• NO asignes estados ni observaciones (el sistema Python lo hará después)
+• SIEMPRE devolver las 6 estampillas aunque no tengan información
 
 RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 {{
@@ -178,59 +190,61 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
         {{
             "nombre_estampilla": "Procultura",
             "porcentaje": 1.5,
+            "valor_base": 10000000,
             "valor": 150000,
-            "estado": "preliquidado",
             "texto_referencia": "Factura línea 15: Estampilla Pro Cultura 1.5% = $150,000",
             "observaciones": null
         }},
         {{
             "nombre_estampilla": "Bienestar",
-            "porcentaje": null,
-            "valor": null,
-            "estado": "preliquidacion_sin_finalizar",
-            "texto_referencia": "Anexo página 2: Aplica estampilla Pro Bienestar",
-            "observaciones": "Se menciona la estampilla pero no se encontró porcentaje ni valor específico"
+            "porcentaje": 2.0,
+            "valor_base": 0,
+            "valor": 0,
+            "texto_referencia": "Anexo página 2: Aplica estampilla Pro Bienestar 2%",
+            "observaciones": null
         }},
         {{
             "nombre_estampilla": "Adulto Mayor",
-            "porcentaje": null,
-            "valor": null,
-            "estado": "no_aplica_impuesto",
+            "porcentaje": 0,
+            "valor_base": 0,
+            "valor": 0,
             "texto_referencia": null,
-            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+            "observaciones": null
         }},
         {{
             "nombre_estampilla": "Prouniversidad Pedagógica",
-            "porcentaje": null,
-            "valor": null,
-            "estado": "no_aplica_impuesto",
+            "porcentaje": 0,
+            "valor_base": 0,
+            "valor": 0,
             "texto_referencia": null,
-            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+            "observaciones": null
         }},
         {{
             "nombre_estampilla": "Francisco José de Caldas",
-            "porcentaje": null,
-            "valor": null,
-            "estado": "no_aplica_impuesto",
+            "porcentaje": 0,
+            "valor_base": 0,
+            "valor": 0,
             "texto_referencia": null,
-            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+            "observaciones": null
         }},
         {{
             "nombre_estampilla": "Prodeporte",
-            "porcentaje": null,
-            "valor": null,
-            "estado": "no_aplica_impuesto",
+            "porcentaje": 0,
+            "valor_base": 0,
+            "valor": 0,
             "texto_referencia": null,
-            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+            "observaciones": null
         }}
     ]
 }}
 
  **CRÍTICO - CONDICIONES EXACTAS**:
-• SIEMPRE incluir las 6 estampillas en el resultado (aunque sea como "no_aplica_impuesto")
-• Estados válidos: "preliquidado", "preliquidacion_sin_finalizar", "no_aplica_impuesto"
-• Si encuentra información parcial, marcar como "preliquidacion_sin_finalizar" con observaciones específicas
+• SIEMPRE incluir las 6 estampillas en el resultado (aunque no tengan información)
+• NO incluir campo "estado" en la respuesta (el sistema lo asignará después)
+• Usar 0 (cero) para valores numéricos no encontrados (porcentaje, valor_base, valor)
+• Usar null solo para texto_referencia y observaciones cuando no haya información
 • Consolidar información de TODOS los documentos de forma acumulativa
 • Especificar claramente dónde se encontró cada información
 • NO INVENTAR VALORES, SOLO UTILIZAR LA INFORMACIÓN PRESENTE EN LOS DOCUMENTOS
+• Tu trabajo es SOLO extraer datos, NO validar ni asignar estados
     """
