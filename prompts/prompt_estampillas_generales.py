@@ -117,10 +117,11 @@ INSTRUCCIONES CRÍTICAS:
    • **Porcentaje** (ej: 1.5 , 2.0 , 0.5 , 1.1)
    • **Valor a deducir** en pesos colombianos
    • **Texto de referencia** donde se encontró la información
+   • **valor base** base gravable de la estampilla en pesos colombianos
 
 3.  **VALIDACIÓN DE INFORMACIÓN COMPLETA**:
-   • **INFORMACIÓN COMPLETA**: Nombre + Porcentaje + Valor → Estado: "preliquidado"
-   • **INFORMACIÓN INCOMPLETA**: Solo nombre o porcentaje sin valor → Estado: "preliquidacion_sin_finalizar"
+   • **INFORMACIÓN COMPLETA**: Nombre + Porcentaje + Valor + valor base → Estado: "preliquidado"
+   • **INFORMACIÓN INCOMPLETA**: Solo nombre o porcentaje sin valor o sin valor base → Estado: "preliquidacion_sin_finalizar"
    • **NO IDENTIFICADA**: No se encuentra información → Estado: "no_aplica_impuesto"
 
 4.  **CONSOLIDACIÓN ACUMULATIVA**:
@@ -129,6 +130,7 @@ INSTRUCCIONES CRÍTICAS:
    • Si hay duplicados, priorizar información más detallada
 
 5.  **OBSERVACIONES ESPECÍFICAS**:
+menciona en las observaciones si:
    • Si encuentra estampillas mencionadas pero sin información completa
    • Si hay inconsistencias entre documentos
    • Si faltan detalles específicos de porcentaje o valor
@@ -141,6 +143,7 @@ Factura: "Estampilla Pro Cultura 1.5% = $150,000"
 Resultado: {{
   "nombre_estampilla": "Procultura",
   "porcentaje": 1.5,
+  "valor_base": 1000000,
   "valor": 150000,
   "estado": "preliquidado"
 }}
@@ -150,6 +153,7 @@ Anexo: "Aplica estampilla Pro Bienestar"
 Resultado: {{
   "nombre_estampilla": "Bienestar",
   "porcentaje": null,
+  "valor_base": 0.0,
   "valor": null,
   "estado": "preliquidacion_sin_finalizar",
   "observaciones": "Se menciona la estampilla pero no se encontró porcentaje ni valor"
@@ -159,6 +163,7 @@ Resultado: {{
 Resultado: {{
   "nombre_estampilla": "Prodeporte",
   "porcentaje": null,
+  "valor_base": 0.0,
   "valor": null,
   "estado": "no_aplica_impuesto",
   "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
@@ -178,6 +183,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
         {{
             "nombre_estampilla": "Procultura",
             "porcentaje": 1.5,
+            "valor_base": 1000000,
             "valor": 150000,
             "estado": "preliquidado",
             "texto_referencia": "Factura línea 15: Estampilla Pro Cultura 1.5% = $150,000",
@@ -186,6 +192,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
         {{
             "nombre_estampilla": "Bienestar",
             "porcentaje": null,
+            "valor_base": 0.0,
             "valor": null,
             "estado": "preliquidacion_sin_finalizar",
             "texto_referencia": "Anexo página 2: Aplica estampilla Pro Bienestar",
@@ -194,6 +201,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
         {{
             "nombre_estampilla": "Adulto Mayor",
             "porcentaje": null,
+            "valor_base": 0.0,
             "valor": null,
             "estado": "no_aplica_impuesto",
             "texto_referencia": null,
@@ -202,6 +210,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
         {{
             "nombre_estampilla": "Prouniversidad Pedagógica",
             "porcentaje": null,
+            "valor_base": 0.0,
             "valor": null,
             "estado": "no_aplica_impuesto",
             "texto_referencia": null,
@@ -210,6 +219,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
         {{
             "nombre_estampilla": "Francisco José de Caldas",
             "porcentaje": null,
+            "valor_base": 0.0,
             "valor": null,
             "estado": "no_aplica_impuesto",
             "texto_referencia": null,
@@ -218,6 +228,7 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
         {{
             "nombre_estampilla": "Prodeporte",
             "porcentaje": null,
+            "valor_base": 0.0,
             "valor": null,
             "estado": "no_aplica_impuesto",
             "texto_referencia": null,

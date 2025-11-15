@@ -1886,7 +1886,7 @@ class ProcesadorGemini:
         }
     
     # ===============================
-    # 🆕 NUEVA FUNCIONALIDAD: ANÁLISIS DE ESTAMPILLAS GENERALES
+    #  NUEVA FUNCIONALIDAD: ANÁLISIS DE ESTAMPILLAS GENERALES
     # ===============================
 
     async def analizar_estampillas_generales(self, documentos_clasificados: Dict[str, Dict], archivos_directos: list[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
@@ -2042,6 +2042,7 @@ class ProcesadorGemini:
             {
                 "nombre_estampilla": nombre,
                 "porcentaje": None,
+                "valor_base": 0.0,
                 "valor": None,
                 "estado": "no_aplica_impuesto",
                 "texto_referencia": None,

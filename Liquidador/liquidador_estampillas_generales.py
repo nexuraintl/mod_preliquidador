@@ -34,6 +34,7 @@ class EstampillaGeneral(BaseModel):
     """
     nombre_estampilla: str
     porcentaje: Optional[float] = None
+    valor_base: Optional[float] = None
     valor: Optional[float] = None
     estado: str  # "preliquidado", "preliquidacion_sin_finalizar", "no_aplica_impuesto"
     texto_referencia: Optional[str] = None
@@ -110,6 +111,7 @@ def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> D
                 estampillas.append({
                     "nombre_estampilla": nombre_faltante,
                     "porcentaje": None,
+                    "valor_base": 0.0,
                     "valor": None,
                     "estado": "no_aplica_impuesto",
                     "texto_referencia": None,
@@ -210,6 +212,7 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
                 "estado": estado,
                 "informacion_identificada": {
                     "porcentaje": estampilla.get("porcentaje"),
+                    "valor_base": estampilla.get("valor_base", 0.0),
                     "valor_pesos": estampilla.get("valor"),
                     "fuente_informacion": estampilla.get("texto_referencia")
                 },
@@ -257,40 +260,90 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
 
 def _validar_estampilla_individual(estampilla: Dict[str, Any], indice: int) -> List[str]:
     """
-    Valida una estampilla individual.
-    
+    Valida una estampilla individual incluyendo coherencia matemática.
+
+    Validaciones aplicadas:
+    - Campos obligatorios: nombre_estampilla, estado
+    - Tipos de datos numéricos correctos
+    - Coherencia matemática: valor_base * (porcentaje/100) ≈ valor (tolerancia ±1 peso)
+    - Si falla validación matemática, cambia estado a 'preliquidacion_sin_finalizar'
+
     Args:
-        estampilla: Datos de la estampilla
+        estampilla: Datos de la estampilla (puede ser modificado si falla validación)
         indice: Índice en la lista
-        
+
     Returns:
         Lista de errores encontrados
     """
     errores = []
-    
+
     # Validar campos obligatorios
     if "nombre_estampilla" not in estampilla or not estampilla["nombre_estampilla"]:
         errores.append(f"Estampilla {indice}: 'nombre_estampilla' faltante o vacío")
-    
+
     if "estado" not in estampilla or not estampilla["estado"]:
         errores.append(f"Estampilla {indice}: 'estado' faltante o vacío")
-    
+
     # Validar consistencia de datos
     estado = estampilla.get("estado", "")
     porcentaje = estampilla.get("porcentaje")
     valor = estampilla.get("valor")
+    base_gravable = estampilla.get("valor_base")
 
     if estado == "preliquidado":
         if porcentaje is None or valor is None:
             errores.append(f"Estampilla {indice}: Estado 'preliquidado' pero faltan porcentaje o valor")
-    
+
     # Validar tipos de datos
     if porcentaje is not None and not isinstance(porcentaje, (int, float)):
         errores.append(f"Estampilla {indice}: 'porcentaje' debe ser numérico")
-    
+
     if valor is not None and not isinstance(valor, (int, float)):
         errores.append(f"Estampilla {indice}: 'valor' debe ser numérico")
-    
+
+    if base_gravable is not None and not isinstance(base_gravable, (int, float)):
+        errores.append(f"Estampilla {indice}: 'valor_base' debe ser numérico")
+
+    # Validación matemática de coherencia (nueva validación)
+    # Solo aplica cuando tenemos los 3 valores necesarios
+    if (porcentaje is not None and valor is not None and base_gravable is not None and
+        isinstance(porcentaje, (int, float)) and isinstance(valor, (int, float)) and
+        isinstance(base_gravable, (int, float))):
+
+        # Obtener nombre para logging
+        nombre = estampilla.get("nombre_estampilla", "Desconocida")
+
+        # Calcular valor esperado
+        valor_esperado = base_gravable * (porcentaje / 100)
+        diferencia = abs(valor - valor_esperado)
+
+        # Validar con tolerancia de ±1 peso
+        if diferencia > 1:
+            # Cambiar estado a preliquidacion_sin_finalizar
+            estampilla["estado"] = "preliquidacion_sin_finalizar"
+
+            # Crear observación descriptiva
+            observacion = (
+                f"Incoherencia matemática detectada: "
+                f"base ${base_gravable:,.0f} * {porcentaje}% = ${valor_esperado:,.2f} esperado, "
+                f"pero valor reportado es ${valor:,.0f} (diferencia: ${diferencia:,.2f})"
+            )
+
+            # Agregar o actualizar observaciones
+            if estampilla.get("observaciones"):
+                estampilla["observaciones"] += f" | {observacion}"
+            else:
+                estampilla["observaciones"] = observacion
+
+            # Registrar en log
+            logger.warning(f"Validación matemática fallida para {nombre}: {observacion}")
+        else:
+            # Validación matemática correcta
+            logger.info(
+                f"Validación matemática correcta para {nombre}: "
+                f"${base_gravable:,.0f} * {porcentaje}% = ${valor:,.0f} ✓"
+            )
+
     return errores
 
 def _obtener_estampillas_default() -> List[Dict[str, Any]]:
@@ -313,6 +366,7 @@ def _obtener_estampillas_default() -> List[Dict[str, Any]]:
         {
             "nombre_estampilla": nombre,
             "porcentaje": None,
+            "valor_base": 0.0,
             "valor": None,
             "estado": "no_aplica_impuesto",
             "texto_referencia": None,
