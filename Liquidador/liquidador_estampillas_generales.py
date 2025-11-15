@@ -31,11 +31,15 @@ logger = logging.getLogger(__name__)
 class EstampillaGeneral(BaseModel):
     """
     Modelo para una estampilla general individual.
+
+    NOTA: Gemini solo proporciona valores numéricos (0 si no encuentra).
+    El estado se asigna por validaciones Python después.
     """
     nombre_estampilla: str
-    porcentaje: Optional[float] = None
-    valor: Optional[float] = None
-    estado: str  # "preliquidado", "preliquidacion_sin_finalizar", "no_aplica_impuesto"
+    porcentaje: float = 0.0  # Default 0 si Gemini no encuentra
+    valor_base: float = 0.0  # Default 0 si Gemini no encuentra
+    valor: float = 0.0       # Default 0 si Gemini no encuentra
+    estado: Optional[str] = None  # Se asigna por Python después de validaciones
     texto_referencia: Optional[str] = None
     observaciones: Optional[str] = None
 
@@ -109,29 +113,25 @@ def validar_formato_estampillas_generales(respuesta_gemini: Dict[str, Any]) -> D
             for nombre_faltante in nombres_esperados - estampillas_encontradas:
                 estampillas.append({
                     "nombre_estampilla": nombre_faltante,
-                    "porcentaje": None,
-                    "valor": None,
-                    "estado": "no_aplica_impuesto",
+                    "porcentaje": 0.0,  # Default 0
+                    "valor_base": 0.0,   # Default 0
+                    "valor": 0.0,        # Default 0
                     "texto_referencia": None,
                     "observaciones": "Estampilla agregada automáticamente por validación"
                 })
             validacion["datos_corregidos"] = True
-        
-        # Validar cada estampilla individual
+
+        # Validar cada estampilla individual (solo formato y tipos)
         for i, estampilla in enumerate(estampillas):
             errores_estampilla = _validar_estampilla_individual(estampilla, i)
             if errores_estampilla:
                 validacion["errores"].extend(errores_estampilla)
                 validacion["formato_valido"] = False
-        
-        # Validar estados válidos
-        estados_validos = {"preliquidado", "preliquidacion_sin_finalizar", "no_aplica_impuesto"}
+
+        # NUEVO: Asignar estados a cada estampilla según reglas de validación
+        logger.info(" Asignando estados a estampillas según validaciones Python")
         for estampilla in estampillas:
-            estado = estampilla.get("estado", "")
-            if estado not in estados_validos:
-                validacion["errores"].append(f"Estado inválido '{estado}' en {estampilla.get('nombre_estampilla', 'desconocida')}")
-                estampilla["estado"] = "no_aplica_impuesto"
-                validacion["datos_corregidos"] = True
+            _asignar_estado_estampilla(estampilla)
         
         # Validar usando modelo Pydantic
         try:
@@ -210,6 +210,7 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
                 "estado": estado,
                 "informacion_identificada": {
                     "porcentaje": estampilla.get("porcentaje"),
+                    "valor_base": estampilla.get("valor_base", 0.0),
                     "valor_pesos": estampilla.get("valor"),
                     "fuente_informacion": estampilla.get("texto_referencia")
                 },
@@ -257,66 +258,209 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
 
 def _validar_estampilla_individual(estampilla: Dict[str, Any], indice: int) -> List[str]:
     """
-    Valida una estampilla individual.
-    
+    Valida formato y tipos de datos de una estampilla individual.
+
+    NOTA: Solo valida formato. La asignación de estados se hace en _asignar_estado_estampilla().
+
+    Validaciones aplicadas:
+    - Campo obligatorio: nombre_estampilla
+    - Tipos de datos numéricos correctos para porcentaje, valor_base, valor
+    - Asigna valores default (0) si faltan campos numéricos
+
     Args:
-        estampilla: Datos de la estampilla
+        estampilla: Datos de la estampilla (puede ser modificado para agregar defaults)
         indice: Índice en la lista
-        
+
     Returns:
         Lista de errores encontrados
     """
     errores = []
-    
-    # Validar campos obligatorios
+
+    # Validar campo obligatorio
     if "nombre_estampilla" not in estampilla or not estampilla["nombre_estampilla"]:
         errores.append(f"Estampilla {indice}: 'nombre_estampilla' faltante o vacío")
-    
-    if "estado" not in estampilla or not estampilla["estado"]:
-        errores.append(f"Estampilla {indice}: 'estado' faltante o vacío")
-    
-    # Validar consistencia de datos
-    estado = estampilla.get("estado", "")
+
+    # Asignar valores default para campos numéricos si faltan
+    if "porcentaje" not in estampilla:
+        estampilla["porcentaje"] = 0.0
+    if "valor_base" not in estampilla:
+        estampilla["valor_base"] = 0.0
+    if "valor" not in estampilla:
+        estampilla["valor"] = 0.0
+
+    # Validar tipos de datos numéricos
     porcentaje = estampilla.get("porcentaje")
     valor = estampilla.get("valor")
+    valor_base = estampilla.get("valor_base")
 
-    if estado == "preliquidado":
-        if porcentaje is None or valor is None:
-            errores.append(f"Estampilla {indice}: Estado 'preliquidado' pero faltan porcentaje o valor")
-    
-    # Validar tipos de datos
     if porcentaje is not None and not isinstance(porcentaje, (int, float)):
         errores.append(f"Estampilla {indice}: 'porcentaje' debe ser numérico")
-    
+        estampilla["porcentaje"] = 0.0  # Corregir a default
+
     if valor is not None and not isinstance(valor, (int, float)):
         errores.append(f"Estampilla {indice}: 'valor' debe ser numérico")
-    
+        estampilla["valor"] = 0.0  # Corregir a default
+
+    if valor_base is not None and not isinstance(valor_base, (int, float)):
+        errores.append(f"Estampilla {indice}: 'valor_base' debe ser numérico")
+        estampilla["valor_base"] = 0.0  # Corregir a default
+
     return errores
+
+def _asignar_estado_estampilla(estampilla: Dict[str, Any]) -> None:
+    """
+    Asigna el estado de una estampilla según reglas de validación.
+
+    Responsabilidad: Python asigna estados, NO Gemini.
+
+    Reglas aplicadas:
+    1. Si valor_base == 0 AND porcentaje == 0 AND valor == 0 → no_aplica_impuesto
+    2. Si valor_base > 0 AND porcentaje > 0 AND valor > 0:
+       - Validar coherencia matemática
+       - Si pasa → preliquidado
+       - Si falla → preliquidacion_sin_finalizar
+    3. Si valor > 0 → Validar que porcentaje > 0 AND valor_base > 0
+    4. Si porcentaje > 0 → Validar que valor > 0 AND valor_base > 0
+    5. Si valor_base > 0 → Validar que valor > 0 AND porcentaje > 0
+
+    Args:
+        estampilla: Dict con datos de la estampilla (se modifica in-place)
+
+    Returns:
+        None (modifica estampilla directamente)
+    """
+    nombre = estampilla.get("nombre_estampilla", "Desconocida")
+    porcentaje = estampilla.get("porcentaje", 0)
+    valor_base = estampilla.get("valor_base", 0)
+    valor = estampilla.get("valor", 0)
+
+    # Convertir None a 0 si es necesario
+    porcentaje = porcentaje if porcentaje is not None else 0
+    valor_base = valor_base if valor_base is not None else 0
+    valor = valor if valor is not None else 0
+
+    # REGLA 1: Todos en 0 → no_aplica_impuesto
+    if valor_base == 0 and porcentaje == 0 and valor == 0:
+        estampilla["estado"] = "no_aplica_impuesto"
+        logger.info(f"Estado asignado para {nombre}: no_aplica_impuesto (sin información)")
+        return
+
+    # REGLA 2: Todos > 0 → Validar matemáticamente
+    if valor_base > 0 and porcentaje > 0 and valor > 0:
+        # Calcular valor esperado
+        valor_esperado = valor_base * (porcentaje / 100)
+        diferencia = abs(valor - valor_esperado)
+
+        # Tolerancia de ±1 peso
+        if diferencia <= 1:
+            estampilla["estado"] = "preliquidado"
+            logger.info(
+                f"Estado asignado para {nombre}: preliquidado "
+                f"(validación matemática correcta: ${valor_base:,.0f} * {porcentaje}% = ${valor:,.0f})"
+            )
+        else:
+            estampilla["estado"] = "preliquidacion_sin_finalizar"
+            observacion = (
+                f"Incoherencia matemática: base ${valor_base:,.0f} * {porcentaje}% = "
+                f"${valor_esperado:,.2f} esperado, pero valor reportado es ${valor:,.0f} "
+                f"(diferencia: ${diferencia:,.2f})"
+            )
+            _agregar_observacion(estampilla, observacion)
+            logger.warning(f"Estado asignado para {nombre}: preliquidacion_sin_finalizar - {observacion}")
+        return
+
+    # REGLA 3: Si valor > 0 → Validar dependencias
+    if valor > 0:
+        faltantes = []
+        if porcentaje == 0:
+            faltantes.append("porcentaje")
+        if valor_base == 0:
+            faltantes.append("base gravable")
+
+        if faltantes:
+            estampilla["estado"] = "preliquidacion_sin_finalizar"
+            observacion = f"No se identificó el {' ni el '.join(faltantes)} en los documentos para esta estampilla"
+            _agregar_observacion(estampilla, observacion)
+            logger.warning(f"Estado asignado para {nombre}: preliquidacion_sin_finalizar - Faltan: {', '.join(faltantes)}")
+            return
+
+    # REGLA 4: Si porcentaje > 0 → Validar dependencias
+    if porcentaje > 0:
+        faltantes = []
+        if valor == 0:
+            faltantes.append("valor")
+        if valor_base == 0:
+            faltantes.append("base gravable")
+
+        if faltantes:
+            estampilla["estado"] = "preliquidacion_sin_finalizar"
+            observacion = f"No se identificó el {' ni el '.join(faltantes)} en los documentos para esta estampilla"
+            _agregar_observacion(estampilla, observacion)
+            logger.warning(f"Estado asignado para {nombre}: preliquidacion_sin_finalizar - Faltan: {', '.join(faltantes)}")
+            return
+
+    # REGLA 5: Si valor_base > 0 → Validar dependencias
+    if valor_base > 0:
+        faltantes = []
+        if valor == 0:
+            faltantes.append("valor")
+        if porcentaje == 0:
+            faltantes.append("porcentaje")
+
+        if faltantes:
+            estampilla["estado"] = "preliquidacion_sin_finalizar"
+            observacion = f"No se identificó el {' ni el '.join(faltantes)} en los documentos para esta estampilla"
+            _agregar_observacion(estampilla, observacion)
+            logger.warning(f"Estado asignado para {nombre}: preliquidacion_sin_finalizar - Faltan: {', '.join(faltantes)}")
+            return
+
+    # Caso por defecto (no debería llegar aquí, pero por seguridad)
+    estampilla["estado"] = "preliquidacion_sin_finalizar"
+    _agregar_observacion(estampilla, "Estado indeterminado - revisar información")
+    logger.warning(f"Estado asignado para {nombre}: preliquidacion_sin_finalizar (caso por defecto)")
+
+def _agregar_observacion(estampilla: Dict[str, Any], nueva_observacion: str) -> None:
+    """
+    Agrega o actualiza observaciones en una estampilla.
+
+    Args:
+        estampilla: Dict con datos de la estampilla
+        nueva_observacion: Observación a agregar
+
+    Returns:
+        None (modifica estampilla directamente)
+    """
+    if estampilla.get("observaciones"):
+        estampilla["observaciones"] += f" | {nueva_observacion}"
+    else:
+        estampilla["observaciones"] = nueva_observacion
 
 def _obtener_estampillas_default() -> List[Dict[str, Any]]:
     """
     Obtiene estructura por defecto para las 6 estampillas.
-    
+
+    NOTA: Los estados se asignan después mediante _asignar_estado_estampilla().
+
     Returns:
-        Lista con estructura por defecto
+        Lista con estructura por defecto (sin estado)
     """
     estampillas_nombres = [
         "Procultura",
-        "Bienestar", 
+        "Bienestar",
         "Adulto Mayor",
         "Prouniversidad Pedagógica",
         "Francisco José de Caldas",
         "Prodeporte"
     ]
-    
+
     return [
         {
             "nombre_estampilla": nombre,
-            "porcentaje": None,
-            "valor": None,
-            "estado": "no_aplica_impuesto",
+            "porcentaje": 0.0,  # Default 0
+            "valor_base": 0.0,   # Default 0
+            "valor": 0.0,        # Default 0
             "texto_referencia": None,
-            "observaciones": "No se identificó información referente a esta estampilla en los adjuntos"
+            "observaciones": None  # Se asignará por _asignar_estado_estampilla()
         }
         for nombre in estampillas_nombres
     ]
