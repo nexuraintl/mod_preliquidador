@@ -28,6 +28,10 @@ import logging
 from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
+
+# Importar módulo Conversor TRM para conversión USD a COP
+from Conversor import ConversorTRM
+from Conversor.exceptions import TRMServiceError, TRMValidationError
 from datetime import datetime
 
 # Configuración de IVA
@@ -594,10 +598,56 @@ class LiquidadorIVA:
 
         logger.info(f"LiquidadorIVA v{self.VERSION} inicializado con arquitectura SOLID")
 
+    def _convertir_resultado_iva_usd_a_cop(self, resultado: Dict[str, Any], trm_valor: float) -> Dict[str, Any]:
+        """
+        Convierte todos los valores monetarios de IVA/ReteIVA de USD a COP.
+
+        SRP: Solo responsable de convertir valores monetarios usando la TRM
+
+        Args:
+            resultado: Diccionario con resultado de IVA en USD
+            trm_valor: Valor de la TRM para conversión
+
+        Returns:
+            Diccionario con todos los valores convertidos a COP
+        """
+        logger.info(f"Convirtiendo resultado IVA de USD a COP usando TRM: {trm_valor}")
+
+        # Acceder a la estructura anidada
+        iva_reteiva = resultado.get("iva_reteiva", {})
+
+        # Convertir valores principales
+        if "valor_iva_identificado" in iva_reteiva:
+            iva_reteiva["valor_iva_identificado"] = iva_reteiva["valor_iva_identificado"] * trm_valor
+
+        if "valor_subtotal_sin_iva" in iva_reteiva:
+            iva_reteiva["valor_subtotal_sin_iva"] = iva_reteiva["valor_subtotal_sin_iva"] * trm_valor
+
+        if "valor_total_con_iva" in iva_reteiva:
+            iva_reteiva["valor_total_con_iva"] = iva_reteiva["valor_total_con_iva"] * trm_valor
+
+        if "valor_reteiva" in iva_reteiva:
+            iva_reteiva["valor_reteiva"] = iva_reteiva["valor_reteiva"] * trm_valor
+
+        # Agregar mensaje de conversión
+        if "observaciones" not in iva_reteiva:
+            iva_reteiva["observaciones"] = []
+
+        mensaje_conversion = f"Valores convertidos de USD a COP usando TRM: ${trm_valor:,.2f}"
+        if mensaje_conversion not in iva_reteiva["observaciones"]:
+            iva_reteiva["observaciones"].append(mensaje_conversion)
+
+        logger.info(f"Conversión IVA completada. ReteIVA en COP: ${iva_reteiva.get('valor_reteiva', 0):,.2f}")
+
+        # Actualizar estructura
+        resultado["iva_reteiva"] = iva_reteiva
+        return resultado
+
     def liquidar_iva_completo(self,
                              analisis_gemini: Dict[str, Any],
                              clasificacion_inicial: Dict[str, Any],
-                             nit_administrativo: str) -> Dict[str, Any]:
+                             nit_administrativo: str,
+                             tipoMoneda: str = "COP") -> Dict[str, Any]:
         """
         Realiza la liquidación completa de IVA y ReteIVA.
 
@@ -615,6 +665,7 @@ class LiquidadorIVA:
            - Estado IVA válido
         4. Si aplica ReteIVA, calcular con tarifa 15% (CalculadorReteIVA)
         5. Construir respuesta final
+        6. Si tipoMoneda es USD, convertir todos los valores a COP usando TRM
 
         Flujo para facturación EXTRANJERA:
         1. Extraer datos de respuesta Gemini
@@ -625,14 +676,16 @@ class LiquidadorIVA:
            - Solo verificar valor_iva_calculado > 0
         4. Si aplica ReteIVA, calcular con tarifa 100% (CalculadorReteIVA)
         5. Construir respuesta final
+        6. Si tipoMoneda es USD, convertir todos los valores a COP usando TRM
 
         Args:
             analisis_gemini: Respuesta del PROMPT_ANALISIS_IVA
             clasificacion_inicial: Clasificación de primera llamada (incluye es_facturacion_extranjera)
             nit_administrativo: NIT de la entidad
+            tipoMoneda: Tipo de moneda ("COP" o "USD"), por defecto "COP"
 
         Returns:
-            Dict con estructura de respuesta final
+            Dict con estructura de respuesta final (valores en COP)
         """
         logger.info(f"Iniciando liquidación IVA para NIT: {nit_administrativo}")
 
@@ -662,10 +715,19 @@ class LiquidadorIVA:
 
             # Si validación falla, retornar resultado sin ReteIVA
             if not resultado_validacion.es_valido:
-                return self._crear_respuesta_no_aplica(
+                resultado_no_aplica = self._crear_respuesta_no_aplica(
                     datos_extraccion,
                     resultado_validacion
                 )
+                # Convertir si es USD
+                if tipoMoneda and tipoMoneda.upper() == "USD":
+                    try:
+                        with ConversorTRM(timeout=30) as conversor:
+                            trm_valor = conversor.obtener_trm_valor()
+                            resultado_no_aplica = self._convertir_resultado_iva_usd_a_cop(resultado_no_aplica, trm_valor)
+                    except Exception as e:
+                        logger.warning(f"No se pudo convertir resultado no_aplica: {e}")
+                return resultado_no_aplica
 
             # PASO 3: Determinar fuente de ingreso
             es_fuente_nacional = not datos_extraccion.es_facturacion_extranjera
@@ -676,12 +738,21 @@ class LiquidadorIVA:
                 if resultado_validacion.valor_iva_calculado <= 0:
                     razon_reteiva = "Valor de IVA es cero o negativo"
                     logger.info(f"ReteIVA no aplica (extranjera): {razon_reteiva}")
-                    return self._crear_respuesta_sin_reteiva(
+                    resultado_sin_reteiva = self._crear_respuesta_sin_reteiva(
                         datos_extraccion,
                         resultado_validacion,
                         es_fuente_nacional,
                         razon_reteiva
                     )
+                    # Convertir si es USD
+                    if tipoMoneda and tipoMoneda.upper() == "USD":
+                        try:
+                            with ConversorTRM(timeout=30) as conversor:
+                                trm_valor = conversor.obtener_trm_valor()
+                                resultado_sin_reteiva = self._convertir_resultado_iva_usd_a_cop(resultado_sin_reteiva, trm_valor)
+                        except Exception as e:
+                            logger.warning(f"No se pudo convertir resultado sin_reteiva: {e}")
+                    return resultado_sin_reteiva
                 # Si valor IVA > 0, continuar al cálculo (debe_aplicar = True implícito)
                 logger.info("ReteIVA aplica para facturación extranjera (IVA > 0)")
             else:
@@ -695,12 +766,21 @@ class LiquidadorIVA:
 
                 if not debe_aplicar:
                     logger.info(f"ReteIVA no aplica (nacional): {razon_reteiva}")
-                    return self._crear_respuesta_sin_reteiva(
+                    resultado_sin_reteiva_nacional = self._crear_respuesta_sin_reteiva(
                         datos_extraccion,
                         resultado_validacion,
                         es_fuente_nacional,
                         razon_reteiva
                     )
+                    # Convertir si es USD
+                    if tipoMoneda and tipoMoneda.upper() == "USD":
+                        try:
+                            with ConversorTRM(timeout=30) as conversor:
+                                trm_valor = conversor.obtener_trm_valor()
+                                resultado_sin_reteiva_nacional = self._convertir_resultado_iva_usd_a_cop(resultado_sin_reteiva_nacional, trm_valor)
+                        except Exception as e:
+                            logger.warning(f"No se pudo convertir resultado sin_reteiva (nacional): {e}")
+                    return resultado_sin_reteiva_nacional
 
             # PASO 5: Calcular ReteIVA
             resultado_reteiva = self.calculador_reteiva.calcular_reteiva_preciso(
@@ -709,12 +789,44 @@ class LiquidadorIVA:
             )
 
             # PASO 6: Construir respuesta exitosa
-            return self._crear_respuesta_exitosa(
+            resultado_final = self._crear_respuesta_exitosa(
                 datos_extraccion,
                 resultado_validacion,
                 resultado_reteiva,
                 es_fuente_nacional
             )
+
+            # PASO 7: Convertir de USD a COP si es necesario
+            if tipoMoneda and tipoMoneda.upper() == "USD":
+                logger.info("Moneda detectada: USD - Iniciando conversión a COP usando TRM...")
+                try:
+                    with ConversorTRM(timeout=30) as conversor:
+                        trm_valor = conversor.obtener_trm_valor()
+                        logger.info(f"TRM obtenida exitosamente: ${trm_valor:,.2f} COP/USD")
+                        resultado_final = self._convertir_resultado_iva_usd_a_cop(resultado_final, trm_valor)
+                except (TRMServiceError, TRMValidationError) as e:
+                    logger.error(f"Error al obtener TRM para conversión IVA: {e}")
+                    # Agregar advertencia pero no detener el proceso
+                    iva_reteiva = resultado_final.get("iva_reteiva", {})
+                    if "observaciones" not in iva_reteiva:
+                        iva_reteiva["observaciones"] = []
+                    iva_reteiva["observaciones"].append(
+                        f"ADVERTENCIA: No se pudo convertir de USD a COP (Error TRM: {str(e)}). Valores mostrados en USD."
+                    )
+                    resultado_final["iva_reteiva"] = iva_reteiva
+                except Exception as e:
+                    logger.error(f"Error inesperado en conversión USD a COP (IVA): {e}")
+                    iva_reteiva = resultado_final.get("iva_reteiva", {})
+                    if "observaciones" not in iva_reteiva:
+                        iva_reteiva["observaciones"] = []
+                    iva_reteiva["observaciones"].append(
+                        f"ADVERTENCIA: Error inesperado en conversión de moneda. Valores mostrados en USD."
+                    )
+                    resultado_final["iva_reteiva"] = iva_reteiva
+            else:
+                logger.info(f"Moneda: {tipoMoneda or 'COP'} - No se requiere conversión IVA")
+
+            return resultado_final
 
         except Exception as e:
             error_msg = f"Error en liquidación de IVA: {str(e)}"
