@@ -174,7 +174,8 @@ async def procesar_facturas_integrado(
     rubro: Optional[str] = Form(None),
     centro_costos: Optional[int] = Form(None),
     numero_contrato: Optional[str] = Form(None),
-    valor_contrato_municipio: Optional[float] = Form(None)
+    valor_contrato_municipio: Optional[float] = Form(None),
+    tipoMoneda: Optional[str] = Form("COP")
 ) -> JSONResponse:
     """
      ENDPOINT PRINCIPAL - SISTEMA INTEGRADO v3.0
@@ -658,7 +659,7 @@ async def procesar_facturas_integrado(
                     # Liquidar con método seguro de la clase
                     liquidador_retencion = LiquidadorRetencion(estructura_contable=estructura_contable, db_manager=db_manager)
                     resultado_retefuente_dict = liquidador_retencion.liquidar_retefuente_seguro(
-                        analisis_retefuente_data, nit_administrativo
+                        analisis_retefuente_data, nit_administrativo, tipoMoneda=tipoMoneda
                     )
                     
                     # Verificar solo si hay error técnico (excepción de liquidador)
@@ -781,11 +782,12 @@ async def procesar_facturas_integrado(
                     "es_facturacion_extranjera": es_facturacion_extranjera
                 }
 
-                # Liquidar con nueva arquitectura SOLID (requiere 3 parámetros)
+                # Liquidar con nueva arquitectura SOLID (requiere 3 parámetros + tipoMoneda)
                 resultado_iva_dict = liquidador_iva.liquidar_iva_completo(
                     analisis_gemini=analisis_iva_gemini,
                     clasificacion_inicial=clasificacion_inicial,
-                    nit_administrativo=nit_administrativo
+                    nit_administrativo=nit_administrativo,
+                    tipoMoneda=tipoMoneda
                 )
 
                 # El método ahora retorna directamente un diccionario con estructura {"iva_reteiva": {...}}
