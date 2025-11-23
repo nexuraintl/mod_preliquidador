@@ -12,6 +12,10 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 
+# Importar módulo Conversor TRM para conversión USD a COP
+from Conversor import ConversorTRM
+from Conversor.exceptions import TRMServiceError, TRMValidationError
+
 # Importar modelos desde Domain Layer (Clean Architecture - SRP)
 from modelos import (
     # Modelos para Retencion General
@@ -1529,7 +1533,46 @@ class LiquidadorRetencion:
             estado="preliquidado"
         )
 
-    def liquidar_factura_extranjera_con_validaciones(self, analisis_extranjera: Dict[str, Any]) -> ResultadoLiquidacion:
+    def _convertir_resultado_usd_a_cop(self, resultado: 'ResultadoLiquidacion', trm_valor: float) -> 'ResultadoLiquidacion':
+        """
+        Convierte todos los valores monetarios de un ResultadoLiquidacion de USD a COP.
+
+        SRP: Solo responsable de convertir valores monetarios usando la TRM
+
+        Args:
+            resultado: ResultadoLiquidacion con valores en USD
+            trm_valor: Valor de la TRM para conversión
+
+        Returns:
+            ResultadoLiquidacion con todos los valores convertidos a COP
+        """
+        from copy import deepcopy
+
+        logger.info(f"Convirtiendo resultado de USD a COP usando TRM: {trm_valor}")
+
+        # Convertir valores principales
+        resultado.valor_factura_sin_iva = resultado.valor_factura_sin_iva * trm_valor
+        resultado.valor_retencion = resultado.valor_retencion * trm_valor
+        resultado.valor_base_retencion = resultado.valor_base_retencion * trm_valor
+
+        # Convertir valores en cada concepto aplicado
+        for concepto in resultado.conceptos_aplicados:
+            concepto.base_gravable = concepto.base_gravable * trm_valor
+            concepto.valor_retencion = concepto.valor_retencion * trm_valor
+
+            # Si el concepto tiene detalles (base_minima_exenta, etc.)
+            if hasattr(concepto, 'base_minima_exenta') and concepto.base_minima_exenta is not None:
+                concepto.base_minima_exenta = concepto.base_minima_exenta * trm_valor
+
+        # Agregar observación sobre la conversión
+        mensaje_conversion = f"Valores convertidos de USD a COP usando TRM: ${trm_valor:,.2f}"
+        if mensaje_conversion not in resultado.mensajes_error:
+            resultado.mensajes_error.append(mensaje_conversion)
+
+        logger.info(f"Conversión completada. Retención total en COP: ${resultado.valor_retencion:,.2f}")
+        return resultado
+
+    def liquidar_factura_extranjera_con_validaciones(self, analisis_extranjera: Dict[str, Any], tipoMoneda: str = "COP") -> ResultadoLiquidacion:
         """
         FUNCIÓN PRINCIPAL: Liquida factura extranjera con validaciones secuenciales para TODOS los conceptos.
 
@@ -1546,6 +1589,7 @@ class LiquidadorRetencion:
            - Validar base mínima
            - Calcular retención
         7. Crear resultado final con todos los conceptos
+        8. Si tipoMoneda es USD, convertir todos los valores a COP usando TRM
 
         Args:
             analisis_extranjera: Análisis de Gemini con estructura:
@@ -1555,9 +1599,10 @@ class LiquidadorRetencion:
                     "valor_total": 0.0,
                     "observaciones": [...]
                 }
+            tipoMoneda: Tipo de moneda ("COP" o "USD"), por defecto "COP"
 
         Returns:
-            ResultadoLiquidacion con estructura completa
+            ResultadoLiquidacion con estructura completa (valores en COP)
         """
         logger.info("Iniciando liquidación factura extranjera con validaciones manuales para TODOS los conceptos")
 
@@ -1698,6 +1743,27 @@ class LiquidadorRetencion:
             mensajes=observaciones_gemini
         )
 
+        # PASO 8: Convertir de USD a COP si es necesario
+        if tipoMoneda and tipoMoneda.upper() == "USD":
+            logger.info("Moneda detectada: USD - Iniciando conversión a COP usando TRM...")
+            try:
+                with ConversorTRM(timeout=30) as conversor:
+                    trm_valor = conversor.obtener_trm_valor()
+                    logger.info(f"TRM obtenida exitosamente: ${trm_valor:,.2f} COP/USD")
+                    resultado_final = self._convertir_resultado_usd_a_cop(resultado_final, trm_valor)
+            except (TRMServiceError, TRMValidationError) as e:
+                logger.error(f"Error al obtener TRM para conversión: {e}")
+                resultado_final.mensajes_error.append(
+                    f"ADVERTENCIA: No se pudo convertir de USD a COP (Error TRM: {str(e)}). Valores mostrados en USD."
+                )
+            except Exception as e:
+                logger.error(f"Error inesperado en conversión USD a COP: {e}")
+                resultado_final.mensajes_error.append(
+                    f"ADVERTENCIA: Error inesperado en conversión de moneda. Valores mostrados en USD."
+                )
+        else:
+            logger.info(f"Moneda: {tipoMoneda or 'COP'} - No se requiere conversión")
+
         logger.info(f"Factura extranjera liquidada exitosamente: {len(conceptos_procesados)} concepto(s), retención total: ${resultado_final.valor_retencion:,.2f}")
         return resultado_final
 
@@ -1721,7 +1787,7 @@ class LiquidadorRetencion:
     
 
 
-    def liquidar_retefuente_seguro(self, analisis_retefuente: Dict[str, Any], nit_administrativo: str) -> Dict[str, Any]:
+    def liquidar_retefuente_seguro(self, analisis_retefuente: Dict[str, Any], nit_administrativo: str, tipoMoneda: str = "COP") -> Dict[str, Any]:
         """
         Liquida retefuente con manejo seguro de estructura de datos.
 
@@ -1734,10 +1800,12 @@ class LiquidadorRetencion:
         Verifica campos requeridos antes de liquidar
         Manejo robusto de errores con logging detallado
         Fallback seguro en caso de errores
+        Conversión de moneda USD a COP si es necesario
 
         Args:
             analisis_retefuente: Resultado del análisis de Gemini (estructura JSON)
             nit_administrativo: NIT administrativo
+            tipoMoneda: Tipo de moneda de la factura ("COP" o "USD"), por defecto "COP"
 
         Returns:
             Dict con resultado de liquidación o información de error
@@ -1840,7 +1908,7 @@ class LiquidadorRetencion:
             if es_facturacion_exterior:
                 logger.info("Detectada facturación extranjera - Usando liquidar_factura_extranjera_con_validaciones (v3.0)")
                 # Para facturación extranjera, usar datos_analisis (dict) con validaciones manuales
-                resultado = self.liquidar_factura_extranjera_con_validaciones(datos_analisis)
+                resultado = self.liquidar_factura_extranjera_con_validaciones(datos_analisis, tipoMoneda=tipoMoneda)
             else:
                 logger.info("Detectada facturación nacional - Usando liquidar_factura (flujo normal)")
                 # Para facturación nacional, usar objeto AnalisisFactura
