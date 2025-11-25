@@ -857,8 +857,8 @@ async def procesar_facturas_integrado(
                 # Crear liquidador ICA
                 liquidador_ica = LiquidadorICA(database_manager=db_manager)
 
-                # Liquidar ICA
-                resultado_ica = liquidador_ica.liquidar_ica(analisis_ica, estructura_contable)
+                # Liquidar ICA con tipoMoneda
+                resultado_ica = liquidador_ica.liquidar_ica(analisis_ica, estructura_contable, tipoMoneda=tipoMoneda)
 
                 # Agregar resultado al resultado final
                 resultado_final["impuestos"]["ica"] = resultado_ica

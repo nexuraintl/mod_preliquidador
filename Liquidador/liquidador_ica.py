@@ -24,6 +24,10 @@ import logging
 from typing import Dict, List, Any
 from datetime import datetime
 
+# Importar módulo Conversor TRM para conversión USD a COP
+from Conversor import ConversorTRM
+from Conversor.exceptions import TRMServiceError, TRMValidationError
+
 # Configuración de logging
 logger = logging.getLogger(__name__)
 
@@ -52,7 +56,48 @@ class LiquidadorICA:
         self.database_manager = database_manager
         logger.info("LiquidadorICA inicializado siguiendo principios SOLID")
 
-    def liquidar_ica(self, analisis_clasificador: Dict[str, Any], estructura_contable: int) -> Dict[str, Any]:
+    def _convertir_resultado_ica_usd_a_cop(self, resultado: Dict[str, Any], trm_valor: float) -> Dict[str, Any]:
+        """
+        Convierte todos los valores monetarios de ICA de USD a COP.
+
+        SRP: Solo responsable de convertir valores monetarios usando la TRM
+
+        Args:
+            resultado: Diccionario con resultado de ICA en USD
+            trm_valor: Valor de la TRM para conversión
+
+        Returns:
+            Diccionario con todos los valores convertidos a COP
+        """
+        logger.info(f"Convirtiendo resultado ICA de USD a COP usando TRM: {trm_valor}")
+
+        # Convertir valores principales
+        if "valor_total_ica" in resultado:
+            resultado["valor_total_ica"] = resultado["valor_total_ica"] * trm_valor
+
+        if "valor_factura_sin_iva" in resultado:
+            resultado["valor_factura_sin_iva"] = resultado["valor_factura_sin_iva"] * trm_valor
+
+        # Convertir valores en cada actividad relacionada
+        if "actividades_relacionadas" in resultado:
+            for actividad in resultado["actividades_relacionadas"]:
+                if "base_gravable_ubicacion" in actividad:
+                    actividad["base_gravable_ubicacion"] = actividad["base_gravable_ubicacion"] * trm_valor
+                if "valor_ica" in actividad:
+                    actividad["valor_ica"] = actividad["valor_ica"] * trm_valor
+
+        # Agregar mensaje de conversión
+        if "observaciones" not in resultado:
+            resultado["observaciones"] = []
+
+        mensaje_conversion = f"Valores convertidos de USD a COP usando TRM: ${trm_valor:,.2f}"
+        if mensaje_conversion not in resultado["observaciones"]:
+            resultado["observaciones"].append(mensaje_conversion)
+
+        logger.info(f"Conversión ICA completada. Total ICA en COP: ${resultado.get('valor_total_ica', 0):,.2f}")
+        return resultado
+
+    def liquidar_ica(self, analisis_clasificador: Dict[str, Any], estructura_contable: int, tipoMoneda: str = "COP") -> Dict[str, Any]:
         """
         Liquida ICA basándose en el análisis del clasificador (NUEVO FORMATO v3.0).
 
@@ -64,12 +109,15 @@ class LiquidadorICA:
            - Calcular valor_ica = base_gravable_ubicacion * tarifa
         3. Sumar todos los valores
         4. Generar resultado estructurado con nuevo formato
+        5. Si tipoMoneda es USD, convertir todos los valores a COP usando TRM
 
         Args:
             analisis_clasificador: Resultado del ClasificadorICA (NUEVO FORMATO v3.0)
+            estructura_contable: Código de estructura contable
+            tipoMoneda: Tipo de moneda ("COP" o "USD"), por defecto "COP"
 
         Returns:
-            Dict con resultado final de liquidación ICA
+            Dict con resultado final de liquidación ICA (valores en COP)
         """
         logger.info("Iniciando liquidación ICA (NUEVO FORMATO v3.0)...")
 
@@ -90,12 +138,28 @@ class LiquidadorICA:
             if not analisis_clasificador.get("aplica", False):
                 resultado["estado"] = analisis_clasificador.get("estado", "no_aplica_impuesto")
                 logger.info(f"ICA no aplica - Estado: {resultado['estado']}")
+                # Convertir si es USD (aunque no aplica, puede tener valor_factura)
+                if tipoMoneda and tipoMoneda.upper() == "USD":
+                    try:
+                        with ConversorTRM(timeout=30) as conversor:
+                            trm_valor = conversor.obtener_trm_valor()
+                            resultado = self._convertir_resultado_ica_usd_a_cop(resultado, trm_valor)
+                    except Exception as e:
+                        logger.warning(f"No se pudo convertir resultado ICA (no aplica): {e}")
                 return resultado
 
             if analisis_clasificador.get("estado") != "Validado - Listo para liquidación":
                 resultado["aplica"] = True  # Aplica pero no se puede liquidar
                 resultado["estado"] = analisis_clasificador.get("estado", "preliquidacion_sin_finalizar")
                 logger.warning(f"No se puede liquidar - Estado: {resultado['estado']}")
+                # Convertir si es USD
+                if tipoMoneda and tipoMoneda.upper() == "USD":
+                    try:
+                        with ConversorTRM(timeout=30) as conversor:
+                            trm_valor = conversor.obtener_trm_valor()
+                            resultado = self._convertir_resultado_ica_usd_a_cop(resultado, trm_valor)
+                    except Exception as e:
+                        logger.warning(f"No se pudo convertir resultado ICA (sin finalizar): {e}")
                 return resultado
 
             # PASO 2: Extraer datos validados (NUEVO FORMATO v3.0)
@@ -110,6 +174,14 @@ class LiquidadorICA:
                 resultado["actividades_facturadas"] = actividades_facturadas
                 resultado["valor_factura_sin_iva"] = valor_factura_sin_iva  # Preservar estructura completa
                 logger.error("No hay actividades relacionadas")
+                # Convertir si es USD
+                if tipoMoneda and tipoMoneda.upper() == "USD":
+                    try:
+                        with ConversorTRM(timeout=30) as conversor:
+                            trm_valor = conversor.obtener_trm_valor()
+                            resultado = self._convertir_resultado_ica_usd_a_cop(resultado, trm_valor)
+                    except Exception as e:
+                        logger.warning(f"No se pudo convertir resultado ICA (sin actividades): {e}")
                 return resultado
 
             logger.info(f"Liquidando {len(actividades_relacionadas)} actividades relacionadas con valor factura: ${valor_factura_sin_iva:,.2f}")
@@ -154,6 +226,14 @@ class LiquidadorICA:
                 resultado["actividades_facturadas"] = actividades_facturadas
                 resultado["valor_factura_sin_iva"] = valor_factura_sin_iva  # Preservar estructura completa
                 logger.error("No se liquidó ninguna actividad")
+                # Convertir si es USD
+                if tipoMoneda and tipoMoneda.upper() == "USD":
+                    try:
+                        with ConversorTRM(timeout=30) as conversor:
+                            trm_valor = conversor.obtener_trm_valor()
+                            resultado = self._convertir_resultado_ica_usd_a_cop(resultado, trm_valor)
+                    except Exception as e:
+                        logger.warning(f"No se pudo convertir resultado ICA (ninguna liquidada): {e}")
                 return resultado
 
             # PASO 5: Generar resultado final exitoso (NUEVO FORMATO v3.0)
@@ -165,6 +245,28 @@ class LiquidadorICA:
             resultado["valor_factura_sin_iva"] = valor_factura_sin_iva  # Preservar estructura completa
 
             logger.info(f"Liquidación ICA exitosa - Total: ${valor_total_ica:,.2f}")
+
+            # PASO 6: Convertir de USD a COP si es necesario
+            if tipoMoneda and tipoMoneda.upper() == "USD":
+                logger.info("Moneda detectada: USD - Iniciando conversión ICA a COP usando TRM...")
+                try:
+                    with ConversorTRM(timeout=30) as conversor:
+                        trm_valor = conversor.obtener_trm_valor()
+                        logger.info(f"TRM obtenida exitosamente: ${trm_valor:,.2f} COP/USD")
+                        resultado = self._convertir_resultado_ica_usd_a_cop(resultado, trm_valor)
+                except (TRMServiceError, TRMValidationError) as e:
+                    logger.error(f"Error al obtener TRM para conversión ICA: {e}")
+                    resultado["observaciones"].append(
+                        f"ADVERTENCIA: No se pudo convertir de USD a COP (Error TRM: {str(e)}). Valores mostrados en USD."
+                    )
+                except Exception as e:
+                    logger.error(f"Error inesperado en conversión USD a COP (ICA): {e}")
+                    resultado["observaciones"].append(
+                        f"ADVERTENCIA: Error inesperado en conversión de moneda. Valores mostrados en USD."
+                    )
+            else:
+                logger.info(f"Moneda: {tipoMoneda or 'COP'} - No se requiere conversión ICA")
+
             return resultado
 
         except Exception as e:
@@ -176,6 +278,20 @@ class LiquidadorICA:
             resultado["actividades_facturadas"] = analisis_clasificador.get("actividades_facturadas", [])
             resultado["actividades_relacionadas"] = analisis_clasificador.get("actividades_relacionadas", [])
             resultado["valor_factura_sin_iva"] = analisis_clasificador.get("valor_factura_sin_iva", 0.0)
+
+            # Convertir valores USD a COP si es necesario
+            if tipoMoneda and tipoMoneda.upper() == "USD":
+                try:
+                    with ConversorTRM(timeout=30) as conversor:
+                        trm_valor = conversor.obtener_trm_valor()
+                        resultado = self._convertir_resultado_ica_usd_a_cop(resultado, trm_valor)
+                        resultado["observaciones"].append(f"Valores convertidos de USD a COP (TRM: {trm_valor})")
+                except (TRMServiceError, TRMValidationError) as e_trm:
+                    logger.warning(f"No se pudo obtener TRM para conversión (error handler): {e_trm}")
+                    resultado["observaciones"].append(f"ADVERTENCIA: No se pudo convertir de USD a COP - {str(e_trm)}")
+                except Exception as e_conv:
+                    logger.warning(f"Error inesperado al convertir resultado ICA (error handler): {e_conv}")
+                    resultado["observaciones"].append(f"ADVERTENCIA: Error al convertir valores USD - {str(e_conv)}")
 
             return resultado
 
