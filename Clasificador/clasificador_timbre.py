@@ -85,7 +85,7 @@ class ClasificadorTimbre:
             resultado = {
                 "aplica_timbre": bool(resultado_json.get("aplica_timbre", False)),
                 "base_gravable_obs": float(resultado_json.get("base_gravable_obs", 0.0)),
-                "observaciones_analisis": f"Gemini analizo observaciones - aplica_timbre: {resultado_json.get('aplica_timbre', False)}"
+                "observaciones_analisis": f"IA analizo observaciones - aplica_timbre: {resultado_json.get('aplica_timbre', False)}"
             }
 
             logger.info(f"Analisis de observaciones completado: aplica_timbre={resultado['aplica_timbre']}, base_obs={resultado['base_gravable_obs']}")
@@ -95,7 +95,7 @@ class ClasificadorTimbre:
         except json.JSONDecodeError as e:
             logger.error(f"Error parseando JSON de observaciones timbre: {e}")
             logger.error(f"Respuesta problematica: {respuesta}")
-            raise ValueError(f"Error parseando respuesta de Gemini para observaciones timbre: {str(e)}")
+            raise ValueError(f"Error parseando respuesta de IA para observaciones timbre: {str(e)}")
         except Exception as e:
             logger.error(f"Error en analisis de observaciones timbre: {e}")
             raise ValueError(f"Error analizando observaciones timbre: {str(e)}")
@@ -197,7 +197,7 @@ class ClasificadorTimbre:
                 "valor_inicial_contrato": float(resultado_json.get("valor_inicial_contrato", 0.0)),
                 "valor_total_contrato": float(resultado_json.get("valor_total_contrato", 0.0)),
                 "adiciones": self._validar_adiciones(resultado_json.get("adiciones", [])),
-                "observaciones_extraccion": f"Gemini extrajo datos del contrato - ID: {resultado_json.get('id_contrato', 'NO_ENCONTRADO')}"
+                "observaciones_extraccion": f" IA extrajo datos del contrato - ID: {resultado_json.get('id_contrato', 'NO_ENCONTRADO')}"
             }
 
             logger.info(f"Extraccion completada: ID={resultado['id_contrato']}, Fecha={resultado['fecha_suscripcion']}, Adiciones={len(resultado['adiciones'])}")
@@ -207,7 +207,7 @@ class ClasificadorTimbre:
         except json.JSONDecodeError as e:
             logger.error(f"Error parseando JSON de extraccion contrato: {e}")
             logger.error(f"Respuesta problematica: {respuesta}")
-            raise ValueError(f"Error parseando respuesta de Gemini para extraccion contrato: {str(e)}")
+            raise ValueError(f"Error parseando respuesta de IA para extraccion contrato: {str(e)}")
         except Exception as e:
             logger.error(f"Error en extraccion de datos del contrato: {e}")
             raise ValueError(f"Error extrayendo datos del contrato: {str(e)}")
