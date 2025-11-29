@@ -102,7 +102,7 @@ class ClasificadorConsorcio:
         Raises:
             ValueError: Si no se encuentra factura o hay error en procesamiento
         """
-        logger.info("Analizando CONSORCIO con Gemini")
+        logger.info("Analizando CONSORCIO con IA")
 
         # USAR CACHE SI ESTÁ DISPONIBLE
         archivos_directos = archivos_directos or []
@@ -285,7 +285,7 @@ class ClasificadorConsorcio:
             logger.info(f"Consorciados identificados: {len(resultado.get('consorciados', []))}")
             logger.info(f"Conceptos mapeados: {len(conceptos_identificados)}")
             logger.info(f"Valor total: ${resultado.get('valor_total', 0):,.2f}")
-            logger.info("Datos extraidos por Gemini - Validaciones y calculos seran realizados por liquidador_consorcios.py")
+            logger.info("Datos extraidos por IA - Validaciones y calculos seran realizados por liquidador_consorcios.py")
 
             return resultado
 

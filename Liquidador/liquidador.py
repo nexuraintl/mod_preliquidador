@@ -1852,7 +1852,7 @@ class LiquidadorRetencion:
                     "observaciones": [
                         "Error en estructura de datos del análisis",
                         f"Faltan campos: {', '.join(campos_faltantes)}",
-                        "Revise el análisis de Gemini"
+                        " La IA no pudo identificar los campos faltantes en la documentacion"
                     ],
                     "estado": "preliquidacion_sin_finalizar"  # NUEVO: Error en estructura
                 }
