@@ -696,7 +696,7 @@ class ProcesadorGemini:
         except json.JSONDecodeError as e:
             logger.error(f"Error parseando JSON de impuestos especiales: {e}")
             logger.error(f"Respuesta problemática: {respuesta}")
-            raise ValueError(f"Error parseando respuesta de Gemini para impuestos especiales: {str(e)}")
+            raise ValueError(f"Error parseando respuesta para impuestos especiales: {str(e)}")
         except Exception as e:
             logger.error(f"Error en análisis de impuestos especiales: {e}")
             raise ValueError(f"Error analizando impuestos especiales: {str(e)}")
@@ -843,15 +843,15 @@ class ProcesadorGemini:
             )
             
             if not respuesta:
-                raise ValueError("Gemini devolvió respuesta None en análisis híbrido - posible problema de validación de archivos")
+                raise ValueError("IA devolvió respuesta None en análisis híbrido - posible problema de validación de archivos")
                 
             if not hasattr(respuesta, 'text') or not respuesta.text:
-                raise ValueError(" Gemini devolvió respuesta sin texto - archivos validados correctamente pero sin respuesta")
+                raise ValueError(" IA devolvió respuesta sin texto - archivos validados correctamente pero sin respuesta")
                 
             texto_respuesta = respuesta.text.strip()
             
             if not texto_respuesta:
-                raise ValueError(" Gemini devolvió texto vacío - validación exitosa pero respuesta vacía")
+                raise ValueError(" IA devolvió texto vacío - validación exitosa pero respuesta vacía")
                 
             logger.info(f" Análisis híbrido de factura completado: {len(texto_respuesta):,} caracteres")
             return texto_respuesta
@@ -1244,27 +1244,27 @@ class ProcesadorGemini:
             )
             
             if not respuesta:
-                raise ValueError("Gemini devolvió respuesta None")
+                raise ValueError("IA devolvió respuesta None")
                 
             if not hasattr(respuesta, 'text') or not respuesta.text:
-                raise ValueError("Gemini devolvió respuesta sin texto")
+                raise ValueError("IA devolvió respuesta sin texto")
                 
             texto_respuesta = respuesta.text.strip()
             
             if not texto_respuesta:
-                raise ValueError("Gemini devolvió texto vacío")
+                raise ValueError("IA devolvió texto vacío")
                 
             logger.info(f" Respuesta de Gemini recibida: {len(texto_respuesta):,} caracteres")
             return texto_respuesta
             
         except asyncio.TimeoutError:
             # ✅ MEJORADO: Mensaje específico con timeout usado
-            error_msg = f"Gemini tardó más de {timeout_segundos}s en responder"
+            error_msg = f"IA tardó más de {timeout_segundos}s en responder"
             logger.error(f" Timeout llamando a Gemini ({timeout_segundos}s)")
             raise ValueError(error_msg)
         except Exception as e:
-            logger.error(f" Error llamando a Gemini: {e}")
-            raise ValueError(f"Error de Gemini: {str(e)}")
+            logger.error(f" Error llamando a IA: {e}")
+            raise ValueError(f"Error de IA: {str(e)}")
 
     def _evaluar_tipo_recurso(self, resultado: Dict[str, Any]) -> bool:
         """
@@ -1737,7 +1737,7 @@ class ProcesadorGemini:
         except json.JSONDecodeError as e:
             logger.error(f" Error parseando JSON de análisis IVA: {e}")
             logger.error(f"Respuesta problemática: {respuesta}")
-            return self._iva_fallback("Error parseando respuesta JSON de Gemini")
+            return self._iva_fallback("Error parseando respuesta JSON de IA")
         except Exception as e:
             logger.error(f" Error en análisis de IVA: {e}")
             return self._iva_fallback(str(e))
@@ -1797,7 +1797,7 @@ class ProcesadorGemini:
             },
             "estado_liquidacion": {
                 "estado": "Error en procesamiento",
-                "observaciones": ["Campo faltante en respuesta de Gemini"]
+                "observaciones": ["Campo faltante en respuesta de IA"]
             }
         }
         
@@ -1830,7 +1830,7 @@ class ProcesadorGemini:
             },
             "clasificacion_concepto": {
                 "categoria": "no_clasificado",
-                "justificacion": "Campo faltante en respuesta de Gemini",
+                "justificacion": "Campo faltante en respuesta de IA",
                 "coincidencia_encontrada": ""
             },
             "validaciones": {
@@ -2017,7 +2017,7 @@ class ProcesadorGemini:
         except json.JSONDecodeError as e:
             logger.error(f" Error parseando JSON de análisis estampillas: {e}")
             logger.error(f"Respuesta problemática: {respuesta}")
-            return self._estampillas_fallback("Error parseando respuesta JSON de Gemini")
+            return self._estampillas_fallback("Error parseando respuesta JSON de IA")
         except Exception as e:
             logger.error(f" Error en análisis de estampillas: {e}")
             return self._estampillas_fallback(str(e))
@@ -2241,7 +2241,7 @@ class ProcesadorGemini:
                 "texto_mencion_tasa": "",
                 "municipio_identificado": "",
                 "texto_municipio": "",
-                "error": f"Error parseando respuesta de Gemini: {str(e)}"
+                "error": f"Error parseando respuesta de IA: {str(e)}"
             }
 
         except Exception as e:
