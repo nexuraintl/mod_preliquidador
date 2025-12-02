@@ -406,7 +406,7 @@ class LiquidadorICA:
         # Actualizar resultado
         actividad_liquidada["nombre_ubicacion"] = nombre_ubicacion
         actividad_liquidada["base_gravable_ubicacion"] = round(base_gravable_ubicacion, 2)
-        actividad_liquidada["tarifa"] = tarifa_bd
+        actividad_liquidada["tarifa"] = tarifa_decimal 
         actividad_liquidada["porc_ubicacion"] = porcentaje_ubicacion
         actividad_liquidada["valor_ica"] = round(valor_ica, 2)
 

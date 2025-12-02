@@ -6,6 +6,8 @@ DIP: Depende de abstracciones (interfaces HTTP)
 """
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional, Dict
@@ -30,11 +32,54 @@ class ConversorTRM:
             timeout: Tiempo maximo de espera para las peticiones (segundos)
         """
         self.timeout = timeout
-        self.session = requests.Session()
+        self.session = self._configurar_session_robusta()
         self.session.headers.update({
             'Content-Type': 'text/xml; charset=utf-8',
             'SOAPAction': ''
         })
+
+    def _configurar_session_robusta(self) -> requests.Session:
+        """
+        Configura session HTTP con resiliencia y connection pooling (SRP)
+
+        Implementa:
+        - Reintentos automaticos con backoff exponencial
+        - Connection pooling optimizado
+        - Manejo de conexiones cerradas por el servidor
+        - Keep-alive configurado
+
+        Returns:
+            Session HTTP configurada y optimizada
+        """
+        session = requests.Session()
+
+        # Estrategia de reintentos con backoff exponencial
+        retry_strategy = Retry(
+            total=3,  # 3 intentos totales
+            backoff_factor=1,  # Espera: 0s, 1s, 2s, 4s
+            status_forcelist=[429, 500, 502, 503, 504],  # Codigos HTTP a reintentar
+            allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"]  # Todos los metodos
+        )
+
+        # HTTPAdapter con connection pooling
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=10,  # Maximo 10 conexiones simultaneas
+            pool_maxsize=10,  # Tamano del pool
+            pool_block=False  # No bloquear si el pool esta lleno
+        )
+
+        # Montar adapter para HTTP y HTTPS
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        # Configurar keep-alive
+        session.headers.update({
+            'Connection': 'keep-alive',
+            'Keep-Alive': 'timeout=30, max=100'
+        })
+
+        return session
 
     def _construir_soap_request(self, fecha: Optional[str] = None) -> str:
         """
