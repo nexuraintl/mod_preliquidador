@@ -4,6 +4,8 @@ import os
 from typing import Optional, Dict, Any, List
 from abc import ABC, abstractmethod
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import logging
 from .auth_provider import IAuthProvider
 
@@ -713,14 +715,59 @@ class NexuraAPIDatabase(DatabaseInterface):
         self.auth_provider = auth_provider
         self.timeout = timeout
 
-        # Configuracion de session para reuso de conexiones (performance)
-        self.session = requests.Session()
+        # Configuracion robusta de session HTTP (SRP: metodo dedicado)
+        self.session = self._configurar_session_robusta()
 
         logger.info(f"NexuraAPIDatabase inicializado: {self.base_url}")
 
         # Validar autenticacion
         if not self.auth_provider.is_authenticated():
             logger.warning("Auth provider no esta autenticado")
+
+    def _configurar_session_robusta(self) -> requests.Session:
+        """
+        Configura session HTTP con resiliencia y connection pooling (SRP)
+
+        Implementa:
+        - Reintentos automaticos con backoff exponencial
+        - Connection pooling optimizado
+        - Manejo de conexiones cerradas por el servidor
+        - Keep-alive configurado
+
+        Returns:
+            Session HTTP configurada y optimizada
+        """
+        session = requests.Session()
+
+        # Estrategia de reintentos con backoff exponencial
+        retry_strategy = Retry(
+            total=3,  # 3 intentos totales
+            backoff_factor=1,  # Espera: 0s, 1s, 2s, 4s
+            status_forcelist=[429, 500, 502, 503, 504],  # Codigos HTTP a reintentar
+            allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"]  # Todos los metodos
+        )
+
+        # HTTPAdapter con connection pooling
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=10,  # Maximo 10 conexiones simultaneas
+            pool_maxsize=10,  # Tamaño del pool
+            pool_block=False  # No bloquear si el pool esta lleno
+        )
+
+        # Montar adapter para HTTP y HTTPS
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        # Configurar keep-alive
+        session.headers.update({
+            'Connection': 'keep-alive',
+            'Keep-Alive': 'timeout=30, max=100'
+        })
+
+        logger.info("Session HTTP configurada con reintentos y connection pooling")
+
+        return session
 
     def _hacer_request(
         self,

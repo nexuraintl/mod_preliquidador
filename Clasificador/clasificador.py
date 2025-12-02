@@ -527,13 +527,13 @@ class ProcesadorGemini:
             return texto_respuesta
             
         except asyncio.TimeoutError:
-            error_msg = f"Gemini tardó más de {timeout_segundos}s en procesar archivos directos"
+            error_msg = f"IA tardó más de {timeout_segundos}s en procesar archivos directos"
             logger.error(f" Timeout híbrido: {error_msg}")
             raise ValueError(error_msg)
         except Exception as e:
             logger.error(f" Error llamando a Gemini en modo híbrido: {e}")
             logger.error(f" Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
-            raise ValueError(f"Error híbrido de Gemini: {str(e)}")
+            raise ValueError(f"Error híbrido de IA: {str(e)}")
 
     # ===============================
     # NOTA: Funciones de Retefuente movidas a clasificador_retefuente.py (SRP)

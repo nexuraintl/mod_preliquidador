@@ -986,13 +986,13 @@ class LiquidadorRetencion:
             "aplica_retencion": True,
             "valor_retencion": valor_retencion_concepto,
             "concepto": concepto_aplicado,
-            "tarifa": tarifa,
+            "tarifa": tarifa /100,  # Convertir a decimal
             "codigo_concepto": codigo_concepto,  # Código del concepto desde BD
             "detalle": {
                 "concepto": concepto_aplicado,
                 "concepto_facturado": concepto_item.concepto_facturado,
                 "base_gravable": base_concepto,
-                "tarifa": tarifa,
+                "tarifa": tarifa / 100,  # Convertir a decimal
                 "valor_retencion": valor_retencion_concepto,
                 "base_minima": base_minima,
                 "codigo_concepto": codigo_concepto
@@ -1708,7 +1708,7 @@ class LiquidadorRetencion:
             conceptos_procesados.append({
                 "datos_concepto": datos_concepto_completo,
                 "base_gravable": base_gravable,
-                "tarifa_aplicable": tarifa_aplicable,
+                "tarifa_aplicable": tarifa_aplicable/100,  # Convertir a decimal
                 "valor_retencion": valor_retencion
             })
 
