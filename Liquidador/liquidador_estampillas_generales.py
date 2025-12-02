@@ -209,7 +209,7 @@ def presentar_resultado_estampillas_generales(respuesta_validada: Dict[str, Any]
                 "aplica": estado in ["preliquidado", "preliquidacion_sin_finalizar"],
                 "estado": estado,
                 "informacion_identificada": {
-                    "porcentaje": estampilla.get("porcentaje"),
+                    "porcentaje": round(estampilla.get("porcentaje") / 100, 8), # Convertir a decimal
                     "valor_base": estampilla.get("valor_base", 0.0),
                     "valor_pesos": estampilla.get("valor"),
                     "fuente_informacion": estampilla.get("texto_referencia")
