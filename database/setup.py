@@ -28,7 +28,7 @@ import logging
 from typing import Optional, Tuple
 
 # Importar componentes del modulo database (DIP: depender de abstracciones)
-from .database import DatabaseManager, SupabaseDatabase, NexuraAPIDatabase, DatabaseInterface
+from .database import DatabaseManager, SupabaseDatabase, NexuraAPIDatabase, DatabaseInterface, DatabaseWithFallback
 from .database_service import crear_business_service, BusinessDataService
 from .auth_provider import AuthProviderFactory, IAuthProvider
 
@@ -88,13 +88,14 @@ def crear_database_por_tipo(tipo_db: str) -> Optional[DatabaseInterface]:
         return SupabaseDatabase(supabase_url, supabase_key)
 
     elif tipo_db == 'nexura':
-        logger.info("Creando database tipo: Nexura API")
+        logger.info("Creando database tipo: Nexura API con fallback a Supabase")
 
         nexura_url = os.getenv("NEXURA_API_BASE_URL")
         auth_type = os.getenv("NEXURA_AUTH_TYPE", "none")
         jwt_token = os.getenv("NEXURA_JWT_TOKEN", "")
         api_key = os.getenv("NEXURA_API_KEY", "")
-        timeout = int(os.getenv("NEXURA_API_TIMEOUT", "30"))
+        # NUEVO: Timeout reducido a 5 segundos para fallback rápido
+        timeout = int(os.getenv("NEXURA_API_TIMEOUT", "5"))
 
         if not nexura_url:
             logger.warning("Variable NEXURA_API_BASE_URL no configurada")
@@ -112,11 +113,34 @@ def crear_database_por_tipo(tipo_db: str) -> Optional[DatabaseInterface]:
             logger.error(f"Error creando auth provider: {e}")
             return None
 
-        return NexuraAPIDatabase(
+        # Crear database primaria (Nexura)
+        nexura_db = NexuraAPIDatabase(
             base_url=nexura_url,
             auth_provider=auth_provider,
             timeout=timeout
         )
+
+        # NUEVO: Intentar crear database de fallback (Supabase)
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+
+        if supabase_url and supabase_key:
+            logger.info("Configurando Supabase como database de fallback")
+            supabase_db = SupabaseDatabase(supabase_url, supabase_key)
+
+            # Retornar DatabaseWithFallback (Decorator Pattern)
+            fallback_db = DatabaseWithFallback(
+                primary_db=nexura_db,
+                fallback_db=supabase_db
+            )
+            logger.info("✅ Sistema de fallback Nexura -> Supabase configurado correctamente")
+            return fallback_db
+        else:
+            logger.warning(
+                "⚠️ Variables SUPABASE_URL y/o SUPABASE_KEY no configuradas. "
+                "Nexura funcionará SIN fallback (puede fallar si Nexura está caída)"
+            )
+            return nexura_db
 
     else:
         logger.error(f"Tipo de database no valido: {tipo_db}")

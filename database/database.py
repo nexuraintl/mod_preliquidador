@@ -2197,16 +2197,29 @@ class NexuraAPIDatabase(DatabaseInterface):
 class DatabaseManager:
     """
     Manager principal que usa el patrón Strategy para manejar diferentes tipos de BD
+
+    IMPORTANTE: Con el sistema de fallback, el health check puede fallar inicialmente
+    pero el fallback se activará en las operaciones reales.
     """
-    
+
     def __init__(self, db_connection: DatabaseInterface) -> None:
         self.db_connection = db_connection
-        
-        # Verificar conexión al inicializar
-        if not self.db_connection.health_check():
-            raise ConnectionError("🚨 No se pudo establecer conexión con la base de datos")
-        
-        print(" DatabaseManager inicializado correctamente")
+
+        # Verificar conexión al inicializar (no lanzar excepción si hay fallback)
+        try:
+            health_status = self.db_connection.health_check()
+            if health_status:
+                logger.info("✅ DatabaseManager inicializado correctamente con conexión activa")
+            else:
+                logger.warning(
+                    "⚠️ DatabaseManager inicializado pero health check falló. "
+                    "Si hay fallback configurado, se activará automáticamente en las operaciones."
+                )
+        except Exception as e:
+            logger.warning(
+                f"⚠️ DatabaseManager inicializado pero health check generó excepción: {str(e)[:100]}. "
+                "Si hay fallback configurado, se activará automáticamente en las operaciones."
+            )
     
     def obtener_negocio_por_codigo(self, codigo: str) -> Dict[str, Any]:
         """
@@ -2421,6 +2434,259 @@ def ejecutar_pruebas_completas(db_manager: DatabaseManager):
         
     else:
         print(f"   ❌ Código '44658': {resultado_especifico['message']}")
+
+# ================================
+# FALLBACK DATABASE - NEXURA CON SUPABASE COMO RESPALDO
+# ================================
+
+class DatabaseWithFallback(DatabaseInterface):
+    """
+    Implementación de Database con sistema de fallback automático.
+
+    PRINCIPIOS SOLID APLICADOS:
+    - SRP: Solo responsabilidad de coordinar fallback entre databases
+    - DIP: Depende de abstracciones (DatabaseInterface)
+    - Strategy Pattern: Usa diferentes estrategias de database
+    - Decorator Pattern: Envuelve databases existentes agregando fallback
+
+    COMPORTAMIENTO:
+    1. Intenta operación con database primaria (Nexura)
+    2. Si falla (timeout, error de conexión, etc.) → intenta con fallback (Supabase)
+    3. Loguea WARNING cuando usa fallback
+    4. Timeout reducido (5s) para detección rápida de fallas
+
+    CASOS DE USO:
+    - Nexura caída → usa Supabase automáticamente
+    - Nexura lenta → timeout 5s y cambia a Supabase
+    - Errores de red → fallback transparente
+
+    Args:
+        primary_db: Database primaria (típicamente Nexura)
+        fallback_db: Database de respaldo (típicamente Supabase)
+
+    Example:
+        >>> nexura = NexuraAPIDatabase(url, auth, timeout=5)
+        >>> supabase = SupabaseDatabase(url, key)
+        >>> db_with_fallback = DatabaseWithFallback(nexura, supabase)
+        >>> manager = DatabaseManager(db_with_fallback)
+    """
+
+    def __init__(self, primary_db: DatabaseInterface, fallback_db: DatabaseInterface):
+        """
+        Inicializa sistema de fallback con database primaria y secundaria.
+
+        Args:
+            primary_db: Database a intentar primero (Nexura)
+            fallback_db: Database de respaldo (Supabase)
+        """
+        self.primary_db = primary_db
+        self.fallback_db = fallback_db
+        self.primary_name = type(primary_db).__name__
+        self.fallback_name = type(fallback_db).__name__
+
+        logger.info(f"DatabaseWithFallback inicializado: {self.primary_name} -> {self.fallback_name}")
+
+    def _ejecutar_con_fallback(self, operacion: str, metodo_primary, metodo_fallback, *args, **kwargs):
+        """
+        Template method para ejecutar operación con fallback automático.
+
+        PRINCIPIO SRP: Centraliza lógica de fallback en un solo lugar
+
+        Args:
+            operacion: Nombre de la operación (para logging)
+            metodo_primary: Método a ejecutar en database primaria
+            metodo_fallback: Método a ejecutar en database fallback
+            *args, **kwargs: Argumentos para los métodos
+
+        Returns:
+            Resultado de la operación (primaria o fallback)
+        """
+        # INTENTO 1: Database primaria (Nexura)
+        try:
+            logger.debug(f"Intentando {operacion} con {self.primary_name}...")
+            resultado = metodo_primary(*args, **kwargs)
+
+            # Verificar si el resultado indica éxito
+            if isinstance(resultado, dict) and not resultado.get('success', True):
+                # La operación falló, intentar fallback
+                raise Exception(resultado.get('message', 'Operación fallida'))
+
+            logger.debug(f"{operacion} exitoso con {self.primary_name}")
+            return resultado
+
+        except Exception as e:
+            # Loguear falla de database primaria
+            logger.warning(
+                f"FALLBACK ACTIVADO: {self.primary_name} falló en {operacion} "
+                f"(Error: {str(e)[:100]}). Intentando con {self.fallback_name}..."
+            )
+
+            # INTENTO 2: Database de fallback (Supabase)
+            try:
+                resultado = metodo_fallback(*args, **kwargs)
+                logger.info(f"{operacion} completado exitosamente usando {self.fallback_name} (FALLBACK)")
+                return resultado
+
+            except Exception as e_fallback:
+                # Ambas databases fallaron
+                logger.error(
+                    f"ERROR CRÍTICO: Tanto {self.primary_name} como {self.fallback_name} "
+                    f"fallaron en {operacion}. Error primario: {str(e)[:50]}, "
+                    f"Error fallback: {str(e_fallback)[:50]}"
+                )
+
+                # Retornar error estructurado
+                return {
+                    'success': False,
+                    'message': f'Error en ambas databases: {str(e_fallback)}',
+                    'error': str(e_fallback),
+                    'primary_error': str(e),
+                    'fallback_error': str(e_fallback)
+                }
+
+    # ================================
+    # IMPLEMENTACIÓN DE DatabaseInterface
+    # ================================
+
+    def obtener_por_codigo(self, codigo: str) -> Dict[str, Any]:
+        """Obtiene negocio por código con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_por_codigo',
+            self.primary_db.obtener_por_codigo,
+            self.fallback_db.obtener_por_codigo,
+            codigo
+        )
+
+    def listar_codigos_disponibles(self, limite: int = 10) -> Dict[str, Any]:
+        """Lista códigos disponibles con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'listar_codigos_disponibles',
+            self.primary_db.listar_codigos_disponibles,
+            self.fallback_db.listar_codigos_disponibles,
+            limite
+        )
+
+    def health_check(self) -> bool:
+        """
+        Verifica salud de conexión con fallback automático.
+
+        COMPORTAMIENTO ESPECIAL:
+        - Intenta primary_db primero
+        - Si falla, intenta fallback_db
+        - Si ambas fallan, retorna False (no lanza excepción)
+        - Siempre retorna bool, nunca lanza excepción
+
+        Returns:
+            bool: True si al menos una database está disponible
+        """
+        try:
+            # Intentar primary primero
+            if self.primary_db.health_check():
+                logger.debug(f"Health check OK con {self.primary_name}")
+                return True
+        except Exception as e:
+            logger.debug(f"Health check falló en {self.primary_name}: {str(e)[:50]}")
+
+        # Si primary falló, intentar fallback
+        try:
+            if self.fallback_db.health_check():
+                logger.info(f"Health check OK con {self.fallback_name} (fallback)")
+                return True
+        except Exception as e:
+            logger.debug(f"Health check falló en {self.fallback_name}: {str(e)[:50]}")
+
+        # Ambas fallaron
+        logger.warning(f"Health check falló en ambas databases: {self.primary_name} y {self.fallback_name}")
+        return False
+
+    def obtener_tipo_recurso(self, codigo_negocio: str) -> Dict[str, Any]:
+        """Obtiene tipo de recurso con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_tipo_recurso',
+            self.primary_db.obtener_tipo_recurso,
+            self.fallback_db.obtener_tipo_recurso,
+            codigo_negocio
+        )
+
+    def obtener_cuantia_contrato(self, id_contrato: str, codigo_negocio: str, nit_proveedor: str) -> Dict[str, Any]:
+        """Obtiene cuantía de contrato con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_cuantia_contrato',
+            self.primary_db.obtener_cuantia_contrato,
+            self.fallback_db.obtener_cuantia_contrato,
+            id_contrato,
+            codigo_negocio,
+            nit_proveedor
+        )
+
+    def obtener_conceptos_retefuente(self, estructura_contable: int) -> Dict[str, Any]:
+        """Obtiene conceptos retefuente con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_conceptos_retefuente',
+            self.primary_db.obtener_conceptos_retefuente,
+            self.fallback_db.obtener_conceptos_retefuente,
+            estructura_contable
+        )
+
+    def obtener_concepto_por_index(self, index: int, estructura_contable: int) -> Dict[str, Any]:
+        """Obtiene concepto por index con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_concepto_por_index',
+            self.primary_db.obtener_concepto_por_index,
+            self.fallback_db.obtener_concepto_por_index,
+            index,
+            estructura_contable
+        )
+
+    def obtener_conceptos_extranjeros(self) -> Dict[str, Any]:
+        """Obtiene conceptos extranjeros con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_conceptos_extranjeros',
+            self.primary_db.obtener_conceptos_extranjeros,
+            self.fallback_db.obtener_conceptos_extranjeros
+        )
+
+    def obtener_paises_con_convenio(self) -> Dict[str, Any]:
+        """Obtiene países con convenio con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_paises_con_convenio',
+            self.primary_db.obtener_paises_con_convenio,
+            self.fallback_db.obtener_paises_con_convenio
+        )
+
+    def obtener_ubicaciones_ica(self) -> Dict[str, Any]:
+        """Obtiene ubicaciones ICA con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_ubicaciones_ica',
+            self.primary_db.obtener_ubicaciones_ica,
+            self.fallback_db.obtener_ubicaciones_ica
+        )
+
+    def obtener_actividades_ica(self, codigo_ubicacion: int, estructura_contable: int) -> Dict[str, Any]:
+        """Obtiene actividades ICA con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_actividades_ica',
+            self.primary_db.obtener_actividades_ica,
+            self.fallback_db.obtener_actividades_ica,
+            codigo_ubicacion,
+            estructura_contable
+        )
+
+    def obtener_tarifa_ica(self, codigo_ubicacion: int, codigo_actividad: int, estructura_contable: int) -> Dict[str, Any]:
+        """Obtiene tarifa ICA con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_tarifa_ica',
+            self.primary_db.obtener_tarifa_ica,
+            self.fallback_db.obtener_tarifa_ica,
+            codigo_ubicacion,
+            codigo_actividad,
+            estructura_contable
+        )
+
+
+# ================================
+# TESTING Y FUNCIONES DE PRUEBA
+# ================================
 
 def main():
     """
