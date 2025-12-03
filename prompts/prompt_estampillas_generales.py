@@ -104,35 +104,35 @@ INSTRUCCIONES CRÍTICAS:
 1.  **IDENTIFICACIÓN DE ESTAMPILLAS**:
    • Busca menciones EXACTAS de los nombres de las estampillas
    • Identifica variaciones comunes:
+   
      - "Estampilla Pro Cultura" / "Estampilla ProCultura"/ ESTAMPILLA PROCULTURA
+     
      - "Estampilla Pro Bienestar" /  "Estampilla Bienestar"
-     - "Estampilla Adulto Mayor" / "Pro Adulto Mayor" / "Estampilla Adulto Mayor / Estampilla Bienestar Adulto Mayor"
+     
+     - "Estampilla Adulto Mayor" / "Pro Adulto Mayor" / "Estampilla Adulto Mayor / Estampilla para el Bienestar Adulto Mayor"
+     
      - "Estampilla Pro Universidad Pedagógica"
+     
      -  "Estampilla FJDC" / Estampilla Francisco José de Caldas
+     
      - "Estampilla Pro Deporte" /  "Estampilla ProDeporte"
+     
+    • ESTAMPILLA BIENESTAR ES DIFERENTE A ESTAMPILLA PARA EL BIENESTAR DEL ADULTO MAYOR
 
 2.  **EXTRACCIÓN DE INFORMACIÓN**:
    Para cada estampilla, extrae SOLO LOS VALORES ENCONTRADOS:
-   • **Nombre exacto** como aparece en el documento
    • **Porcentaje** (ej: 1.5, 2.0, 0.5, 1.1) → Si NO encuentras, usar 0
    • **Valor a deducir** en pesos colombianos → Si NO encuentras, usar 0
    • **valor_base** (base gravable de la estampilla en pesos colombianos) → Si NO encuentras, usar 0
    • **Texto de referencia** donde se encontró la información → null si no hay
-   • **observaciones** → null (NO asignes observaciones, solo identifica datos)
+   • **observaciones** → null (el sistema asignará observaciones después)
 
-3.  **IMPORTANTE - NO ASIGNAR ESTADOS**:
-   • Tu ÚNICA responsabilidad es IDENTIFICAR valores en los documentos
-   • NO determines si la información está completa o incompleta
-   • NO asignes estados como "preliquidado" o "preliquidacion_sin_finalizar"
-   • Si NO encuentras un valor numérico, usa 0 (cero)
-   • El sistema validará después si los datos son coherentes
-
-4.  **CONSOLIDACIÓN ACUMULATIVA**:
+3.  **CONSOLIDACIÓN ACUMULATIVA**:
    • Si FACTURA tiene info de 3 estampillas Y ANEXOS tienen info de 2 adicionales
-   • RESULTADO: Mostrar las 5 estampillas consolidadas
+   • RESULTADO: Mostrar las 6 estampillas consolidadas
    • Si hay duplicados, priorizar información más detallada y completa
 
-5.  **MANEJO DE VALORES NO ENCONTRADOS**:
+4.  **MANEJO DE VALORES NO ENCONTRADOS**:
    • Si NO encuentras porcentaje → porcentaje: 0
    • Si NO encuentras valor → valor: 0
    • Si NO encuentras valor_base → valor_base: 0
@@ -181,8 +181,8 @@ IMPORTANTE:
 • Si una estampilla se menciona múltiples veces, consolidar la información más completa
 • Priorizar información de FACTURA, luego ANEXOS, luego ANEXO CONTRATO
 • Si no encuentras información de alguna estampilla, usar 0 para valores numéricos
-• NO asignes estados ni observaciones (el sistema Python lo hará después)
 • SIEMPRE devolver las 6 estampillas aunque no tengan información
+• NO CONFUNDAS ESTAMPILLA BIENESTAR CON ESTAMPILLA PRO BIENESTAR DEL ADULTO MAYOR
 
 RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 {{
@@ -240,7 +240,6 @@ RESPONDE ÚNICAMENTE EN FORMATO JSON VÁLIDO SIN TEXTO ADICIONAL:
 
  **CRÍTICO - CONDICIONES EXACTAS**:
 • SIEMPRE incluir las 6 estampillas en el resultado (aunque no tengan información)
-• NO incluir campo "estado" en la respuesta (el sistema lo asignará después)
 • Usar 0 (cero) para valores numéricos no encontrados (porcentaje, valor_base, valor)
 • Usar null solo para texto_referencia y observaciones cuando no haya información
 • Consolidar información de TODOS los documentos de forma acumulativa
