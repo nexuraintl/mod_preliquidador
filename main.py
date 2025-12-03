@@ -1039,6 +1039,7 @@ async def procesar_facturas_integrado(
                 "estado": estado_estampilla,
                 "valor_estampilla": 0.0,
                 "tarifa_aplicada": 0.0,
+                "valor_factura_sin_iva": 0.0,
                 "rango_uvt": "",
                 "valor_contrato_pesos": 0.0,
                 "valor_contrato_uvt": 0.0,
