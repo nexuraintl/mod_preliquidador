@@ -903,6 +903,7 @@ class LiquidadorEstampilla:
                 if tipo_contrato == "NO_APLICA":
                     resultado["estado"] = "no_aplica_impuesto"
                     resultado["razon"] = error_objeto
+                    resultado["mensajes_error"].append(error_objeto)
                     logger.info(f"Obra Pública: {error_objeto}")
                 elif tipo_contrato == "NO_IDENTIFICADO":
                     resultado["estado"] = "preliquidacion_sin_finalizar"
@@ -922,6 +923,7 @@ class LiquidadorEstampilla:
                 resultado["aplica"] = False
                 resultado["estado"] = "no_aplica_impuesto"
                 resultado["razon"] = f"Solo contratos de obra aplican contribución. Tipo detectado: {tipo_contrato}"
+                resultado["mensajes_error"].append(f"Solo contratos de obra aplican contribución. Tipo detectado: {tipo_contrato}")
                 logger.info(f"Obra Pública: No aplica para tipo {tipo_contrato}")
                 return resultado
 
@@ -1006,6 +1008,7 @@ class LiquidadorEstampilla:
                 if tipo_contrato == "NO_APLICA":
                     resultado["estado"] = "no_aplica_impuesto"
                     resultado["razon"] = error_objeto
+                    resultado["mensajes_error"].append(error_objeto)
                     logger.info(f"Estampilla: {error_objeto}")
                 elif tipo_contrato == "NO_IDENTIFICADO":
                     resultado["estado"] = "preliquidacion_sin_finalizar"
@@ -1027,6 +1030,7 @@ class LiquidadorEstampilla:
                 resultado["aplica"] = False
                 resultado["estado"] = "no_aplica_impuesto"
                 resultado["razon"] = f"Tipo de contrato '{tipo_contrato}' no aplica para estampilla"
+                resultado["mensajes_error"].append(f"Tipo de contrato '{tipo_contrato}' no aplica para estampilla")
                 logger.info(f"Estampilla: No aplica para tipo {tipo_contrato}")
                 return resultado
 
