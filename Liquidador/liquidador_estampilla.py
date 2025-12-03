@@ -987,6 +987,7 @@ class LiquidadorEstampilla:
             "estado": "preliquidacion_sin_finalizar",
             "valor_estampilla": 0.0,
             "tarifa_aplicada": 0.0,
+            "valor_factura_sin_iva": 0.0,
             "rango_uvt": "",
             "valor_contrato_pesos": 0.0,
             "valor_contrato_uvt": 0.0,
@@ -1072,6 +1073,7 @@ class LiquidadorEstampilla:
             resultado["estado"] = "preliquidado"
             resultado["valor_estampilla"] = valor_estampilla
             resultado["tarifa_aplicada"] = tarifa_aplicable
+            resultado["valor_factura_sin_iva"] = valor_factura
             resultado["rango_uvt"] = rango_texto
             resultado["valor_contrato_pesos"] = valor_contrato_total
             resultado["valor_contrato_uvt"] = valor_contrato_uvt
@@ -1144,7 +1146,7 @@ class LiquidadorEstampilla:
                 logger.error(f"Error en validaciones manuales estampilla: {e}")
                 resultado_integrado["estampilla_universidad"] = {
                     "aplica": False,
-                    "estado": "Error en procesamiento",
+                    "estado": "preliquidacion_sin_finalizar",
                     "razon": str(e),
                     "mensajes_error": [f"Error interno: {str(e)}"]
                 }
