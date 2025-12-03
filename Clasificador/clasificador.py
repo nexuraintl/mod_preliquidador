@@ -112,7 +112,7 @@ class ProcesadorGemini:
 
         # Configuración especial para consorcios (más tokens)
         self.modelo_consorcio = genai.GenerativeModel(
-            'gemini-2.5-flash',
+            'gemini-2.5-flash-preview-09-2025',
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,  # Menos temperatura para más consistencia
                 max_output_tokens=65536,  # 4x más tokens para consorcios grandescandidate_count=1
