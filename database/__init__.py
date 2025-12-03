@@ -35,6 +35,8 @@ from .database import (
 
     # Implementaciones concretas
     SupabaseDatabase,
+    NexuraAPIDatabase,
+    DatabaseWithFallback,
 
     # Context manager (Strategy Pattern)
     DatabaseManager,
@@ -89,6 +91,8 @@ __all__ = [
     # Data Access Layer
     "DatabaseInterface",
     "SupabaseDatabase",
+    "NexuraAPIDatabase",
+    "DatabaseWithFallback",
     "DatabaseManager",
     "ejecutar_pruebas_completas",
 

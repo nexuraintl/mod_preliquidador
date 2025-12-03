@@ -1,5 +1,291 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.11.0 - FEATURE: Sistema de Fallback Automático Nexura → Supabase] - 2025-12-03
+
+### 🎯 OBJETIVO
+
+Implementar mecanismo de **fallback automático** para que cuando la API de Nexura esté caída o no responda, el sistema automáticamente use Supabase como respaldo, garantizando **disponibilidad continua del servicio**.
+
+### 🏗️ ARQUITECTURA
+
+#### Nueva clase DatabaseWithFallback (Strategy + Decorator Patterns)
+
+**Principios SOLID aplicados**:
+- **SRP**: Responsabilidad única de coordinar fallback entre databases
+- **DIP**: Depende de abstracciones (DatabaseInterface)
+- **Strategy Pattern**: Usa diferentes estrategias de database según disponibilidad
+- **Decorator Pattern**: Envuelve databases existentes agregando comportamiento de fallback
+
+**Ubicación**: `database/database.py` - Clase `DatabaseWithFallback`
+
+### 🆕 AÑADIDO
+
+#### 1. Clase DatabaseWithFallback
+
+```python
+class DatabaseWithFallback(DatabaseInterface):
+    """
+    Implementación con fallback automático:
+    1. Intenta operación con database primaria (Nexura)
+    2. Si falla → automáticamente intenta con fallback (Supabase)
+    3. Loguea WARNING cuando usa fallback
+    4. Timeout reducido (5s) para detección rápida
+    """
+    def __init__(self, primary_db: DatabaseInterface, fallback_db: DatabaseInterface):
+        self.primary_db = primary_db
+        self.fallback_db = fallback_db
+```
+
+#### 2. Template Method para ejecución con fallback
+
+```python
+def _ejecutar_con_fallback(self, operacion: str, metodo_primary, metodo_fallback, *args, **kwargs):
+    try:
+        # INTENTO 1: Database primaria (Nexura)
+        resultado = metodo_primary(*args, **kwargs)
+        return resultado
+    except Exception as e:
+        # Loguear WARNING y cambiar a fallback
+        logger.warning(f"FALLBACK ACTIVADO: {self.primary_name} falló. Usando {self.fallback_name}...")
+        # INTENTO 2: Database de fallback (Supabase)
+        return metodo_fallback(*args, **kwargs)
+```
+
+#### 3. Configuración automática en setup.py
+
+```python
+# NUEVO COMPORTAMIENTO cuando DATABASE_TYPE=nexura:
+if tipo_db == 'nexura':
+    # Crear Nexura con timeout reducido (5s)
+    nexura_db = NexuraAPIDatabase(base_url, auth_provider, timeout=5)
+
+    # Verificar si hay credenciales de Supabase
+    if supabase_url and supabase_key:
+        supabase_db = SupabaseDatabase(supabase_url, supabase_key)
+
+        # Retornar DatabaseWithFallback
+        return DatabaseWithFallback(
+            primary_db=nexura_db,
+            fallback_db=supabase_db
+        )
+```
+
+#### 4. Todos los métodos de DatabaseInterface implementados con fallback
+
+- `obtener_por_codigo()`
+- `listar_codigos_disponibles()`
+- `health_check()`
+- `obtener_tipo_recurso()`
+- `obtener_cuantia_contrato()`
+- `obtener_conceptos_retefuente()`
+- `obtener_concepto_por_index()`
+- `obtener_conceptos_extranjeros()`
+- `obtener_paises_con_convenio()`
+- `obtener_ubicaciones_ica()`
+- `obtener_actividades_ica()`
+- `obtener_tarifa_ica()`
+
+### 🔧 CAMBIADO
+
+#### 1. Timeout de Nexura reducido para fallback rápido
+
+**ANTES**:
+```python
+timeout = int(os.getenv("NEXURA_API_TIMEOUT", "30"))  # 30 segundos
+```
+
+**DESPUÉS**:
+```python
+timeout = int(os.getenv("NEXURA_API_TIMEOUT", "5"))  # 5 segundos (rápido)
+```
+
+**Razón**: Detectar rápidamente cuando Nexura está caída y cambiar a Supabase sin hacer esperar al usuario 30 segundos.
+
+#### 2. Exports del módulo database
+
+**ANTES** (`database/__init__.py`):
+```python
+from .database import (
+    DatabaseInterface,
+    SupabaseDatabase,
+    DatabaseManager
+)
+```
+
+**DESPUÉS**:
+```python
+from .database import (
+    DatabaseInterface,
+    SupabaseDatabase,
+    NexuraAPIDatabase,
+    DatabaseWithFallback,  # ← NUEVO
+    DatabaseManager
+)
+```
+
+#### 3. Lógica de inicialización en setup.py
+
+**ANTES**: Retornaba directamente `NexuraAPIDatabase`
+
+**DESPUÉS**: Retorna `DatabaseWithFallback` si hay credenciales de Supabase, o `NexuraAPIDatabase` solo si no hay fallback configurado (con WARNING)
+
+### 📊 COMPORTAMIENTO DEL SISTEMA
+
+#### Caso 1: Nexura funcionando correctamente
+```
+[DEBUG] Intentando obtener_por_codigo con NexuraAPIDatabase...
+[DEBUG] obtener_por_codigo exitoso con NexuraAPIDatabase
+✅ Resultado: datos desde Nexura
+```
+
+#### Caso 2: Nexura caída → Fallback automático a Supabase
+```
+[WARNING] FALLBACK ACTIVADO: NexuraAPIDatabase falló en obtener_por_codigo
+          (Error: HTTPConnectionPool timeout). Intentando con SupabaseDatabase...
+[INFO] obtener_por_codigo completado exitosamente usando SupabaseDatabase (FALLBACK)
+✅ Resultado: datos desde Supabase
+```
+
+#### Caso 3: Nexura y Supabase caídas
+```
+[WARNING] FALLBACK ACTIVADO: NexuraAPIDatabase falló...
+[ERROR] ERROR CRÍTICO: Tanto NexuraAPIDatabase como SupabaseDatabase
+        fallaron en obtener_por_codigo.
+❌ Resultado: {'success': False, 'message': 'Error en ambas databases'}
+```
+
+### ✅ BENEFICIOS
+
+1. **Alta disponibilidad**:
+   - ✅ Sistema nunca se cae si Nexura falla (usa Supabase automáticamente)
+   - ✅ Fallback transparente sin intervención manual
+   - ✅ Detección rápida de fallas (timeout 5s)
+
+2. **Monitoreo mejorado**:
+   - ✅ Logs WARNING cuando se usa fallback (fácil detectar problemas con Nexura)
+   - ✅ Trazabilidad completa de qué database se usó
+   - ✅ Logs ERROR si ambas databases fallan
+
+3. **Principios SOLID mantenidos**:
+   - ✅ **SRP**: DatabaseWithFallback solo coordina fallback
+   - ✅ **OCP**: Extensible para agregar más databases de fallback
+   - ✅ **DIP**: Depende de DatabaseInterface (abstracción)
+   - ✅ **Decorator Pattern**: Agrega comportamiento sin modificar clases existentes
+
+4. **Zero downtime**:
+   - ✅ No requiere reinicio de servicio
+   - ✅ Cambio automático entre databases
+   - ✅ Usuario no percibe la falla de Nexura
+
+### 🔧 CONFIGURACIÓN REQUERIDA
+
+#### Variables de entorno obligatorias:
+
+```bash
+# Database primaria
+DATABASE_TYPE=nexura
+
+# Nexura (primaria) - con timeout reducido
+NEXURA_API_BASE_URL="https://preproduccion-fiducoldex.nexura.com/api"
+NEXURA_AUTH_TYPE=none
+NEXURA_API_TIMEOUT=5  # ← NUEVO DEFAULT: 5 segundos (era 30)
+
+# Supabase (fallback) - OBLIGATORIAS para fallback
+SUPABASE_URL="https://gfcseujjfnaoicdenymt.supabase.co"
+SUPABASE_KEY="eyJhbGciOiJIUzI1NiIs..."
+```
+
+**IMPORTANTE**:
+- ⚠️ Si `SUPABASE_URL` y `SUPABASE_KEY` **NO** están configuradas → Nexura funcionará **SIN fallback** (puede fallar)
+- ✅ Si **SÍ** están configuradas → Sistema automáticamente usará Supabase como respaldo
+
+### 📝 LOGS ESPERADOS AL INICIAR
+
+#### Con fallback configurado:
+```
+[INFO] Inicializando database tipo: nexura
+[INFO] Creando database tipo: Nexura API con fallback a Supabase
+[INFO] Auth provider creado: tipo=none
+[INFO] Configurando Supabase como database de fallback
+[INFO] DatabaseWithFallback inicializado: NexuraAPIDatabase -> SupabaseDatabase
+[INFO] ✅ Sistema de fallback Nexura -> Supabase configurado correctamente
+[INFO] DatabaseManager inicializado correctamente (tipo: nexura)
+```
+
+#### Sin fallback configurado:
+```
+[INFO] Inicializando database tipo: nexura
+[INFO] Creando database tipo: Nexura API con fallback a Supabase
+[INFO] Auth provider creado: tipo=none
+[WARNING] ⚠️ Variables SUPABASE_URL y/o SUPABASE_KEY no configuradas.
+          Nexura funcionará SIN fallback (puede fallar si Nexura está caída)
+[INFO] DatabaseManager inicializado correctamente (tipo: nexura)
+```
+
+### 🎯 USO RECOMENDADO
+
+#### Para producción:
+```bash
+DATABASE_TYPE=nexura
+NEXURA_API_TIMEOUT=5
+# ✅ SIEMPRE configurar Supabase como fallback
+SUPABASE_URL=...
+SUPABASE_KEY=...
+```
+
+#### Para desarrollo/testing:
+```bash
+# Opción 1: Solo Supabase (más estable)
+DATABASE_TYPE=supabase
+
+# Opción 2: Nexura con fallback
+DATABASE_TYPE=nexura
+# Configurar ambas databases
+```
+
+### 🔄 MIGRACIÓN DESDE v3.10.0
+
+**No requiere cambios en código existente**:
+- ✅ Si ya tienes `DATABASE_TYPE=nexura` configurado → Solo agrega variables de Supabase
+- ✅ Si usas `DATABASE_TYPE=supabase` → No cambia nada
+- ✅ Compatibilidad total con código existente (principio OCP)
+
+### 📦 ARCHIVOS MODIFICADOS
+
+1. **database/database.py** (línea ~2425):
+   - Nueva clase `DatabaseWithFallback` (230 líneas)
+   - Implementa todos los métodos de `DatabaseInterface`
+
+2. **database/setup.py** (líneas 90-143):
+   - Modificada función `crear_database_por_tipo()`
+   - Timeout default cambiado: 30s → 5s
+   - Lógica de creación de fallback automático
+
+3. **database/__init__.py** (líneas 32-39, 90-97):
+   - Exports de `NexuraAPIDatabase` y `DatabaseWithFallback`
+   - Actualizado `__all__`
+
+### 🧪 TESTING
+
+Para probar el fallback:
+```python
+# Simular Nexura caída (desconectar VPN o cambiar URL inválida)
+NEXURA_API_BASE_URL="https://invalid-url.com"
+
+# Ejecutar cualquier endpoint
+# Debería ver logs de WARNING y usar Supabase automáticamente
+```
+
+### 🎉 RESULTADO FINAL
+
+✅ **Sistema resiliente**: Si Nexura cae, automáticamente usa Supabase
+✅ **Sin intervención manual**: Fallback completamente automático
+✅ **Monitoreo fácil**: Logs WARNING indican cuando se usa fallback
+✅ **Zero downtime**: Servicio siempre disponible
+✅ **SOLID aplicado**: Arquitectura extensible y mantenible
+
+---
+
 ## [3.10.0 - FIX: Mejoras de resiliencia en conexiones HTTP] - 2025-12-02
 
 ### 🏗️ ARQUITECTURA
