@@ -654,8 +654,9 @@ class LiquidadorConsorcios:
 
         try:
             # PASO 1: Validar estructura básica
-            if not self._validar_estructura_consorcio(analisis_gemini):
-                return self._crear_resultado_error("Estructura de consorcio inválida")
+            es_valida, mensaje_error = self._validar_estructura_consorcio(analisis_gemini)
+            if not es_valida:
+                return self._crear_resultado_error(mensaje_error)
 
             # PASO 2: Validar conceptos identificados
             conceptos_validos, mensaje_concepto = self._validar_conceptos_consorcio(
@@ -727,7 +728,7 @@ class LiquidadorConsorcios:
             logger.error(f"Error en liquidación de consorcio: {e}")
             return self._crear_resultado_error(f"Error en liquidación: {str(e)}")
 
-    def _validar_estructura_consorcio(self, analisis: Dict[str, Any]) -> bool:
+    def _validar_estructura_consorcio(self, analisis: Dict[str, Any]) -> Tuple[bool, str]:
         """
         Valida que el análisis tenga la estructura mínima requerida.
 
@@ -735,24 +736,34 @@ class LiquidadorConsorcios:
             analisis: Análisis de Gemini
 
         Returns:
-            bool: True si la estructura es válida
+            Tuple[bool, str]: (es_valida, mensaje_error_para_usuario)
         """
         campos_requeridos = ['es_consorcio', 'consorciados', 'conceptos_identificados']
 
+        # Mapeo de campos técnicos a mensajes amigables para el usuario
+        mensajes_usuario = {
+            'es_consorcio': 'No se pudo identificar que el documento corresponda a un consorcio',
+            'consorciados': 'No se identificaron los consorciados en los documentos analizados',
+            'conceptos_identificados': 'No se identificaron conceptos de retención en los documentos analizados'
+        }
+
         for campo in campos_requeridos:
             if campo not in analisis:
+                mensaje_usuario = mensajes_usuario.get(campo, f'Falta información requerida: {campo}')
                 logger.error(f"Campo requerido faltante: {campo}")
-                return False
+                return False, mensaje_usuario
 
         if not analisis.get('es_consorcio', False):
-            logger.error("El análisis no corresponde a un consorcio")
-            return False
+            mensaje = 'El documento no corresponde a un consorcio'
+            logger.error(mensaje)
+            return False, mensaje
 
         if not analisis.get('consorciados'):
-            logger.error("No hay consorciados en el análisis")
-            return False
+            mensaje = 'No se encontraron consorciados en los documentos analizados'
+            logger.error(mensaje)
+            return False, mensaje
 
-        return True
+        return True, ""
 
     def _validar_conceptos_consorcio(self,
                                    conceptos_identificados: List[Dict[str, Any]],
