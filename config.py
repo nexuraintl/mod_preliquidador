@@ -637,7 +637,7 @@ OBJETOS_CONTRATO_OBRA_PUBLICA = {
         "palabras_clave": ["construcción", "mantenimiento", "instalación", "TRABAJO MATERIAL"],
         "aplica": True
     }
-    # ⚠️ IMPORTANTE: Solo aplica para contrato de obra, NO interventoría ni servicios conexos
+    #  IMPORTANTE: Solo aplica para contrato de obra, NO interventoría ni servicios conexos
 }
 
 # Rangos UVT y tarifas para estampilla pro universidad nacional

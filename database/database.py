@@ -78,6 +78,11 @@ class DatabaseInterface(ABC):
         """Obtiene la tarifa ICA para una actividad específica en una ubicación"""
         pass
 
+    @abstractmethod
+    def obtener_tarifa_bomberil(self, codigo_ubicacion: int) -> Dict[str, Any]:
+        """Obtiene la tarifa de Sobretasa Bomberil para una ubicación específica"""
+        pass
+
 
 # ================================
 #  IMPLEMENTACIÓN SUPABASE
@@ -668,6 +673,66 @@ class SupabaseDatabase(DatabaseInterface):
                 'data': None,
                 'error': str(e),
                 'message': f'Error al consultar tarifa ICA: {e}'
+            }
+
+    def obtener_tarifa_bomberil(self, codigo_ubicacion: int) -> Dict[str, Any]:
+        """
+        Obtiene la tarifa de Sobretasa Bomberil para una ubicación específica.
+
+        SRP: Solo consulta la tabla TASA_BOMBERIL (Data Access Layer)
+
+        Args:
+            codigo_ubicacion: Código de la ubicación
+
+        Returns:
+            Dict con estructura estándar de respuesta:
+            {
+                'success': bool,
+                'data': {
+                    'tarifa': float | None,
+                    'nombre_ubicacion': str
+                } | None,
+                'message': str
+            }
+        """
+        try:
+            response = self.supabase.table('TASA_BOMBERIL').select(
+                '"CODIGO_UBICACION", "NOMBRE_UBICACION", "TARIFA"'
+            ).eq('"CODIGO_UBICACION"', codigo_ubicacion).execute()
+
+            if response.data and len(response.data) > 0:
+                tarifa_data = response.data[0]
+                tarifa_raw = tarifa_data.get('TARIFA')
+
+                # Convertir tarifa manejando formato con coma decimal (0,5 -> 0.5)
+                tarifa_convertida = None
+                if tarifa_raw is not None:
+                    tarifa_convertida = float(str(tarifa_raw).replace(',', '.'))
+
+                return {
+                    'success': True,
+                    'data': {
+                        'tarifa': tarifa_convertida,
+                        'nombre_ubicacion': tarifa_data.get('NOMBRE_UBICACION', '')
+                    },
+                    'message': f'Tarifa Bomberil encontrada para ubicación {codigo_ubicacion}'
+                }
+            else:
+                return {
+                    'success': True,
+                    'data': {
+                        'tarifa': None,
+                        'nombre_ubicacion': str(codigo_ubicacion)
+                    },
+                    'message': f'No se encontró tarifa Bomberil para ubicación {codigo_ubicacion}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar tarifa Bomberil: {e}'
             }
 
     def health_check(self) -> bool:
@@ -2141,6 +2206,142 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'message': f'Error al consultar tarifa ICA: {e}'
             }
 
+    def obtener_tarifa_bomberil(self, codigo_ubicacion: int) -> Dict[str, Any]:
+        """
+        Obtiene la tarifa de Sobretasa Bomberil para una ubicación específica.
+
+        SRP: Solo consulta endpoint de Sobretasa Bomberil (Data Access Layer)
+
+        Endpoint Nexura API: GET /preliquidador/tasaBomberil/?codigoUbicacion={codigo}
+
+        Args:
+            codigo_ubicacion: Código de la ubicación (ej: 73001 para Ibagué)
+
+        Returns:
+            Dict con estructura estándar de respuesta:
+            {
+                'success': bool,
+                'data': {
+                    'tarifa': float | None,
+                    'nombre_ubicacion': str
+                } | None,
+                'message': str
+            }
+        """
+        try:
+            response = self._hacer_request(
+                endpoint='/preliquidador/tasaBomberil/',
+                method='GET',
+                params={'codigoUbicacion': codigo_ubicacion}
+            )
+
+            error_info = response.get('error', {})
+            error_code = error_info.get('code', -1)
+
+            if error_code == 0:
+                data_array = response.get('data', [])
+
+                if data_array and len(data_array) > 0:
+                    primer_registro = data_array[0]
+                    tarifa_raw = primer_registro.get('TARIFA') or primer_registro.get('tarifa')
+                    nombre_ubicacion = (
+                        primer_registro.get('NOMBRE_UBICACION') or
+                        primer_registro.get('nombre_ubicacion') or
+                        str(codigo_ubicacion)
+                    )
+
+                    # Convertir tarifa manejando formato con coma decimal (0,5 -> 0.5)
+                    tarifa_convertida = None
+                    if tarifa_raw is not None:
+                        tarifa_convertida = float(str(tarifa_raw).replace(',', '.'))
+
+                    logger.info(
+                        f"Tarifa Bomberil obtenida desde Nexura: {tarifa_convertida} "
+                        f"para ubicación '{nombre_ubicacion}' (código: {codigo_ubicacion})"
+                    )
+
+                    return {
+                        'success': True,
+                        'data': {
+                            'tarifa': tarifa_convertida,
+                            'nombre_ubicacion': nombre_ubicacion
+                        },
+                        'message': f'Tarifa Bomberil encontrada para ubicación {codigo_ubicacion}'
+                    }
+                else:
+                    # No hay datos, ubicación no tiene tarifa bomberil
+                    return {
+                        'success': True,
+                        'data': {
+                            'tarifa': None,
+                            'nombre_ubicacion': str(codigo_ubicacion)
+                        },
+                        'message': f'No se encontró tarifa Bomberil para ubicación {codigo_ubicacion}'
+                    }
+
+            elif error_code == 404:
+                logger.info(f"Ubicación {codigo_ubicacion} no tiene Sobretasa Bomberil (404)")
+                return {
+                    'success': True,
+                    'data': {
+                        'tarifa': None,
+                        'nombre_ubicacion': str(codigo_ubicacion)
+                    },
+                    'message': f'No se encontró tarifa Bomberil para ubicación {codigo_ubicacion}'
+                }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f"Error de API: {error_info.get('message', 'Error desconocido')}"
+                }
+
+        except requests.exceptions.Timeout:
+            logger.error("Timeout al consultar tarifa Bomberil")
+            return {
+                'success': False,
+                'data': None,
+                'error': 'Timeout',
+                'message': 'Timeout al consultar tarifa Bomberil en Nexura API'
+            }
+
+        except requests.exceptions.HTTPError as e:
+            if '404' in str(e):
+                logger.info(f"Ubicación {codigo_ubicacion} no tiene Sobretasa Bomberil (HTTP 404)")
+                return {
+                    'success': True,
+                    'data': {
+                        'tarifa': None,
+                        'nombre_ubicacion': str(codigo_ubicacion)
+                    },
+                    'message': f'No se encontró tarifa Bomberil para ubicación {codigo_ubicacion}'
+                }
+            else:
+                logger.error(f"Error HTTP en obtener_tarifa_bomberil: {e}")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f'Error HTTP al consultar tarifa Bomberil: {str(e)}'
+                }
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error de red en obtener_tarifa_bomberil: {e}")
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error de red al consultar tarifa Bomberil: {e}'
+            }
+
+        except Exception as e:
+            logger.error(f"Error inesperado en obtener_tarifa_bomberil: {e}")
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f'Error al consultar tarifa Bomberil: {e}'
+            }
+
     def health_check(self) -> bool:
         """
         Verifica si la conexion a Nexura API funciona
@@ -2373,6 +2574,23 @@ class DatabaseManager:
             - data: Dict con porcentaje_ica y descripcion_actividad
         """
         return self.db_connection.obtener_tarifa_ica(codigo_ubicacion, codigo_actividad, estructura_contable)
+
+    def obtener_tarifa_bomberil(self, codigo_ubicacion: int) -> Dict[str, Any]:
+        """
+        Obtiene la tarifa de Sobretasa Bomberil para una ubicación específica.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            codigo_ubicacion: Código de ubicación
+
+        Returns:
+            Dict con resultado de la consulta incluyendo:
+            - success: bool
+            - message: str
+            - data: Dict con tarifa y nombre_ubicacion
+        """
+        return self.db_connection.obtener_tarifa_bomberil(codigo_ubicacion)
 
 
 def ejecutar_pruebas_completas(db_manager: DatabaseManager):
@@ -2681,6 +2899,15 @@ class DatabaseWithFallback(DatabaseInterface):
             codigo_ubicacion,
             codigo_actividad,
             estructura_contable
+        )
+
+    def obtener_tarifa_bomberil(self, codigo_ubicacion: int) -> Dict[str, Any]:
+        """Obtiene tarifa Bomberil con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_tarifa_bomberil',
+            self.primary_db.obtener_tarifa_bomberil,
+            self.fallback_db.obtener_tarifa_bomberil,
+            codigo_ubicacion
         )
 
 
