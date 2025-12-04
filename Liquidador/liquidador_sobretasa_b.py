@@ -287,6 +287,11 @@ class LiquidadorSobretasaBomberil:
         - Solo consulta tarifa de la BD para una ubicación específica
         - No calcula ni valida lógica de negocio
 
+        ARQUITECTURA SOLID:
+        - Usa DatabaseManager siguiendo DIP (Dependency Inversion)
+        - Respeta la abstracción DatabaseInterface
+        - Permite fallback automático Nexura -> Supabase
+
         Args:
             codigo_ubicacion: Código de ubicación
 
@@ -302,13 +307,23 @@ class LiquidadorSobretasaBomberil:
         try:
             logger.info(f"Consultando tarifa Sobretasa Bomberil para ubicación {codigo_ubicacion}")
 
-            # Consultar tabla TASA_BOMBERIL
-            response = self.database_manager.db_connection.supabase.table("TASA_BOMBERIL").select(
-                "CODIGO_UBICACION, NOMBRE_UBICACION, TARIFA"
-            ).eq("CODIGO_UBICACION", codigo_ubicacion).execute()
+            # Usar DatabaseManager para consulta (respeta arquitectura SOLID)
+            resultado = self.database_manager.obtener_tarifa_bomberil(codigo_ubicacion)
 
-            # Sin registros encontrados
-            if not response.data or len(response.data) == 0:
+            # Verificar éxito de la consulta
+            if not resultado.get('success', False):
+                error_msg = resultado.get('message', 'Error desconocido')
+                logger.error(f"Error en consulta BD: {error_msg}")
+                return {
+                    "tarifa": None,
+                    "nombre_ubicacion": "",
+                    "error": True,
+                    "mensaje": error_msg
+                }
+
+            # Extraer datos de la respuesta
+            data = resultado.get('data')
+            if data is None:
                 logger.info(
                     f"No se encontró tarifa Sobretasa Bomberil para ubicación {codigo_ubicacion}"
                 )
@@ -319,23 +334,17 @@ class LiquidadorSobretasaBomberil:
                     "mensaje": "No aplica para esta ubicación"
                 }
 
-            # Registro encontrado
-            primer_registro = response.data[0]
-            tarifa = primer_registro.get("TARIFA")
-            nombre_ubicacion = primer_registro.get("NOMBRE_UBICACION", "")
+            # Extraer tarifa y nombre de ubicación
+            tarifa = data.get('tarifa')
+            nombre_ubicacion = data.get('nombre_ubicacion', str(codigo_ubicacion))
 
             logger.info(
                 f"Tarifa Sobretasa Bomberil obtenida: {tarifa} para ubicación "
                 f"'{nombre_ubicacion}' (código: {codigo_ubicacion})"
             )
 
-            # Convertir tarifa manejando formato con coma decimal (0,5 -> 0.5)
-            tarifa_convertida = None
-            if tarifa is not None:
-                tarifa_convertida = float(str(tarifa).replace(',', '.'))
-
             return {
-                "tarifa": tarifa_convertida,
+                "tarifa": tarifa,
                 "nombre_ubicacion": nombre_ubicacion,
                 "error": False,
                 "mensaje": "Tarifa obtenida exitosamente"
