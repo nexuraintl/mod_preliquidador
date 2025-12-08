@@ -43,6 +43,7 @@ class ConceptoLiquidado:
     base_minima_normativa: Decimal
     aplica_concepto: bool
     valor_retencion_concepto: Decimal
+    codigo_concepto: Optional[str] = None
     razon_no_aplicacion: Optional[str] = None
 
 @dataclass
@@ -479,17 +480,20 @@ class CalculadorRetencionConsorcio(ICalculadorRetencion):
                 # BASE GRAVABLE DE LA FACTURA (extraída por Gemini por este concepto)
                 base_gravable_factura = Decimal(str(concepto.get('base_gravable', 0)))
 
+                # CODIGO DEL CONCEPTO (obtenido de BD en validar_concepto)
+                codigo_concepto = concepto.get('codigo_concepto', None)
+
                 # BASE MÍNIMA: Primero intentar obtener de BD (ya está en concepto), luego diccionario
                 base_minima_diccionario = None
 
                 # ESTRATEGIA 1: Si ya viene en el concepto (desde BD en validar_concepto)
                 if 'base_pesos' in concepto and concepto['base_pesos'] is not None:
                     base_minima_diccionario = Decimal(str(concepto['base_pesos']))
-                    logger.debug(f"✅ Base mínima obtenida de BD (en concepto): ${base_minima_diccionario:,.2f}")
+                    logger.debug(f" Base mínima obtenida de BD (en concepto): ${base_minima_diccionario:,.2f}")
                 else:
                     # ESTRATEGIA 2: Fallback a diccionario legacy
                     nombre_concepto_dict = concepto.get('concepto', '')
-                    logger.debug(f"🔍 Buscando concepto '{nombre_concepto_dict}' en diccionario legacy")
+                    logger.debug(f" Buscando concepto '{nombre_concepto_dict}' en diccionario legacy")
                     base_minima_diccionario = self._obtener_base_minima_del_diccionario(nombre_concepto_dict, diccionario_conceptos)
 
                 # Calcular base gravable individual del consorciado
@@ -500,14 +504,15 @@ class CalculadorRetencionConsorcio(ICalculadorRetencion):
                     # No aplica este concepto
                     concepto_liquidado = ConceptoLiquidado(
                         nombre_concepto=nombre_concepto,
-                        tarifa_retencion=float(tarifa_retencion),  # Guardar en formato decimal para cálculos
+                        codigo_concepto=codigo_concepto,
+                        tarifa_retencion=float(tarifa_retencion),
                         base_gravable_individual=base_gravable_individual,
                         base_minima_normativa=base_minima_diccionario,
                         aplica_concepto=False,
                         valor_retencion_concepto=Decimal('0'),
                         razon_no_aplicacion=f"Base individual ${base_gravable_individual:,.2f} < Base mínima ${base_minima_diccionario:,.2f}"
                     )
-                    logger.info(f"❌ {nombre_concepto}: {concepto_liquidado.razon_no_aplicacion}")
+                    logger.info(f" {nombre_concepto}: {concepto_liquidado.razon_no_aplicacion}")
                 else:
                     # Calcular retención para este concepto sobre la base gravable individual
                     retencion_concepto = base_gravable_individual * tarifa_retencion
@@ -515,13 +520,14 @@ class CalculadorRetencionConsorcio(ICalculadorRetencion):
 
                     concepto_liquidado = ConceptoLiquidado(
                         nombre_concepto=nombre_concepto,
-                        tarifa_retencion=float(tarifa_retencion),  # Guardar en formato decimal para cálculos
+                        codigo_concepto=codigo_concepto,
+                        tarifa_retencion=float(tarifa_retencion),
                         base_gravable_individual=base_gravable_individual,
                         base_minima_normativa=base_minima_diccionario,
                         aplica_concepto=True,
                         valor_retencion_concepto=retencion_concepto.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                     )
-                    logger.info(f"✅ {nombre_concepto}: Base ${base_gravable_individual:,.2f} × {tarifa_display}% = ${concepto_liquidado.valor_retencion_concepto:,.2f}")
+                    logger.info(f" {nombre_concepto}: Base ${base_gravable_individual:,.2f} × {tarifa_display}% = ${concepto_liquidado.valor_retencion_concepto:,.2f}")
 
                 conceptos_liquidados.append(concepto_liquidado)
 
@@ -529,9 +535,9 @@ class CalculadorRetencionConsorcio(ICalculadorRetencion):
             retencion_final = retencion_total_individual.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
             if retencion_final > 0:
-                logger.info(f"🎯 Retención individual total: ${retencion_final:,.2f}")
+                logger.info(f" Retención individual total: ${retencion_final:,.2f}")
             else:
-                logger.info("❌ Sin retención individual - ningún concepto superó base mínima")
+                logger.info(" Sin retención individual - ningún concepto superó base mínima")
 
             return retencion_final, conceptos_liquidados
 
@@ -555,8 +561,8 @@ class CalculadorRetencionConsorcio(ICalculadorRetencion):
                 return Decimal('0')
 
             # Buscar concepto en el diccionario
-            logger.debug(f"🔍 DEBUG: Buscando '{nombre_concepto}' en {len(diccionario_conceptos)} conceptos")
-            logger.debug(f"🔍 DEBUG: Conceptos disponibles: {list(diccionario_conceptos.keys())[:5]}...")
+            logger.debug(f" DEBUG: Buscando '{nombre_concepto}' en {len(diccionario_conceptos)} conceptos")
+            logger.debug(f" DEBUG: Conceptos disponibles: {list(diccionario_conceptos.keys())[:5]}...")
 
             datos_concepto = diccionario_conceptos.get(nombre_concepto, {})
 
@@ -565,7 +571,7 @@ class CalculadorRetencionConsorcio(ICalculadorRetencion):
                 # Intentar búsqueda similar
                 for concepto_disponible in diccionario_conceptos.keys():
                     if nombre_concepto.lower() in concepto_disponible.lower():
-                        logger.info(f"💡 Concepto similar encontrado: '{concepto_disponible}'")
+                        logger.info(f" Concepto similar encontrado: '{concepto_disponible}'")
                         break
                 return Decimal('0')
 
@@ -576,8 +582,8 @@ class CalculadorRetencionConsorcio(ICalculadorRetencion):
                          datos_concepto.get('base_gravable', 0))))
 
             base_decimal = Decimal(str(base_minima))
-            logger.debug(f"✅ Base mínima para '{nombre_concepto}': ${base_decimal:,.2f}")
-            logger.debug(f"🔍 DEBUG: Datos completos del concepto: {datos_concepto}")
+            logger.debug(f" Base mínima para '{nombre_concepto}': ${base_decimal:,.2f}")
+            logger.debug(f" DEBUG: Datos completos del concepto: {datos_concepto}")
 
             return base_decimal
 
@@ -945,6 +951,7 @@ def convertir_resultado_a_dict(resultado: ResultadoLiquidacionConsorcio) -> Dict
         for concepto_liq in consorciado.conceptos_liquidados:
             concepto_detalle = {
                 "nombre_concepto": concepto_liq.nombre_concepto,
+                "codigo_concepto": concepto_liq.codigo_concepto,
                 "tarifa_retencion": concepto_liq.tarifa_retencion,
                 "base_gravable_individual": float(concepto_liq.base_gravable_individual),
                 "base_minima_normativa": float(concepto_liq.base_minima_normativa),

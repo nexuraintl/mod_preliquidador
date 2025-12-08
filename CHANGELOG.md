@@ -1,5 +1,135 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.1.3 - FEATURE: Campo codigo_concepto en conceptos_liquidados] - 2025-12-08
+
+### 🎯 OBJETIVO
+
+Añadir el campo `codigo_concepto` al array `conceptos_liquidados` de cada consorciado para proporcionar el código del concepto obtenido de la base de datos, facilitando la trazabilidad y el mapeo con sistemas contables.
+
+### 🆕 AÑADIDO
+
+#### 1. Campo codigo_concepto en ConceptoLiquidado
+
+**Ubicación**: `Liquidador/liquidador_consorcios.py` - Dataclass `ConceptoLiquidado` (línea 41)
+
+```python
+@dataclass
+class ConceptoLiquidado:
+    nombre_concepto: str
+    codigo_concepto: Optional[str] = None  # NUEVO CAMPO
+    tarifa_retencion: float
+    base_gravable_individual: Decimal
+    base_minima_normativa: Decimal
+    aplica_concepto: bool
+    valor_retencion_concepto: Decimal
+    razon_no_aplicacion: Optional[str] = None
+```
+
+**Características**:
+- Campo opcional para compatibilidad hacia atrás
+- Valor por defecto `None` para casos sin BD
+- Posición 2 en la estructura (después de `nombre_concepto`)
+
+### 🔧 CAMBIADO
+
+#### 1. Función calcular_retencion_individual()
+
+**Ubicación**: `Liquidador/liquidador_consorcios.py` (línea 430-540)
+
+**Cambios implementados**:
+
+1. **Extracción del codigo_concepto** (línea 484):
+```python
+codigo_concepto = concepto.get('codigo_concepto', None)
+```
+
+2. **Propagación al crear ConceptoLiquidado cuando NO aplica** (línea 507):
+```python
+concepto_liquidado = ConceptoLiquidado(
+    nombre_concepto=nombre_concepto,
+    codigo_concepto=codigo_concepto,  # Propagado desde validar_concepto
+    # ... resto de campos
+)
+```
+
+3. **Propagación al crear ConceptoLiquidado cuando SÍ aplica** (línea 523):
+```python
+concepto_liquidado = ConceptoLiquidado(
+    nombre_concepto=nombre_concepto,
+    codigo_concepto=codigo_concepto,  # Propagado desde validar_concepto
+    # ... resto de campos
+)
+```
+
+#### 2. Función convertir_resultado_a_dict()
+
+**Ubicación**: `Liquidador/liquidador_consorcios.py` (línea 918-987)
+
+**Cambio en serialización JSON** (línea 954):
+```python
+concepto_detalle = {
+    "nombre_concepto": concepto_liq.nombre_concepto,
+    "codigo_concepto": concepto_liq.codigo_concepto,  # Incluido en JSON
+    "tarifa_retencion": concepto_liq.tarifa_retencion,
+    # ... resto de campos
+}
+```
+
+### 📊 FLUJO DE DATOS
+
+```
+validar_concepto() → BD retorna codigo_concepto
+    ↓
+_validar_conceptos_consorcio() → Combina con datos Gemini
+    ↓
+calcular_retencion_individual() → Extrae y propaga codigo
+    ↓
+ConceptoLiquidado almacena codigo_concepto
+    ↓
+convertir_resultado_a_dict() → Serializa en JSON
+    ↓
+RESULTADO: {"codigo_concepto": "25200901"}
+```
+
+### 📝 ESTRUCTURA JSON FINAL
+
+```json
+{
+  "retefuente": {
+    "consorciados": [
+      {
+        "conceptos_liquidados": [
+          {
+            "nombre_concepto": "ALQUILER",
+            "codigo_concepto": "25200901",
+            "tarifa_retencion": 0.03,
+            "base_gravable_individual": 56698437.5,
+            "base_minima_normativa": 100000.0,
+            "aplica_concepto": true,
+            "valor_retencion_concepto": 1700953.13
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### ✅ PRINCIPIOS SOLID APLICADOS
+
+- **SRP**: Cambio afecta solo estructura de datos y serialización
+- **OCP**: Extensión sin modificación - campo opcional agregado
+- **LSP**: No afecta contratos existentes
+- **Compatibilidad**: Campo opcional con valor `null` cuando no disponible
+
+### 🔄 COMPATIBILIDAD
+
+- **Hacia atrás**: SÍ - Campo opcional, no breaking change
+- **Breaking changes**: NO
+- **Versionado**: v3.1.3 (cambio menor)
+
+---
+
 ## [3.11.0 - FEATURE: Sistema de Fallback Automático Nexura → Supabase] - 2025-12-03
 
 ### 🎯 OBJETIVO
