@@ -180,19 +180,11 @@ CONCEPTOS_RETEFUENTE = {
         "base_pesos": 0,
         "tarifa_retencion": 0.03
     },
-    "transporte de pasajeros":{
-        "base_pesos": 100000000,
-        "tarifa_retencion": 0.035
-    },
     "comision a terceros":{
         "base_pesos": 0,
         "tarifa_retencion": 0.11
     },
     "personal de servicio":{
-        "base_pesos": 0,
-        "tarifa_retencion": 0.035
-    },
-    "pago a terceros":{
         "base_pesos": 0,
         "tarifa_retencion": 0.035
     }
