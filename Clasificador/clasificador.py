@@ -1382,7 +1382,7 @@ class ProcesadorGemini:
 
         # Determinar si es facturación extranjera
         if es_fuera_colombia:
-            logger.info("🌍 Facturación extranjera detectada: Proveedor fuera de Colombia")
+            logger.info(" Facturación extranjera detectada: Proveedor fuera de Colombia")
             return True
         else:
             logger.info("🇨🇴 Facturación nacional: Proveedor en Colombia")

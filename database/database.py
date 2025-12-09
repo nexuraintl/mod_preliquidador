@@ -247,13 +247,13 @@ class SupabaseDatabase(DatabaseInterface):
             if response.data and len(response.data) > 0:
                 cuantia_raw = response.data[0]
                 tipo_cuantia = cuantia_raw.get('TIPO_CUANTIA')
-                tarifa = cuantia_raw.get('TARIFA', 0.0)
+                tarifa = cuantia_raw.get('TARIFA', 0.0) 
 
                 # Convertir tarifa a float manejando formato con coma decimal (5,0 -> 5.0)
                 try:
                     if tarifa is not None:
                         tarifa_str = str(tarifa).replace(',', '.')
-                        tarifa = float(tarifa_str)
+                        tarifa = float(tarifa_str) / 100.0  # Convertir porcentaje a decimal
                     else:
                         tarifa = 0.0
                 except (ValueError, TypeError) as e:
@@ -1356,7 +1356,7 @@ class NexuraAPIDatabase(DatabaseInterface):
                 if tarifa_raw:
                     # Remover '%' y espacios, convertir coma a punto
                     tarifa_str = str(tarifa_raw).replace('%', '').replace(',', '.').strip()
-                    tarifa = float(tarifa_str)
+                    tarifa = float(tarifa_str) / 100 # Convertir a decimal (1% -> 0.01)
             except (ValueError, TypeError) as e:
                 logger.warning(f"Error convirtiendo tarifa '{tarifa_raw}': {e}. Usando 0.0")
                 tarifa = 0.0
