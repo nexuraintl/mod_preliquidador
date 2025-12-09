@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
+from config import UVT_2025
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,39 @@ class LiquidadorTimbre:
             )
 
         logger.info(f"ID contrato identificado: {id_contrato}")
+
+        # VALIDACION 1.75: Verificar límite mínimo de 6000 UVT
+        valor_total_contrato = datos_contrato.get("valor_total_contrato", 0.0)
+
+        # Validar que exista valor_total_contrato
+        if valor_total_contrato <= 0:
+            logger.warning(f"Contrato {id_contrato}: valor_total_contrato no disponible o es 0 - No se puede validar límite de 6000 UVT")
+            return self._crear_resultado_sin_finalizar(
+                tipo_cuantia="",
+                observaciones=f"No se pudo determinar el valor total del contrato {id_contrato} para validar el límite mínimo de 6000 UVT requerido",
+                id_contrato=id_contrato
+            )
+
+        # Convertir valor_total_contrato a UVT
+        uvt_contrato = valor_total_contrato / UVT_2025
+        limite_uvt = 6000
+        valor_limite_pesos = limite_uvt * UVT_2025
+
+        logger.info(f"Validando límite UVT para contrato {id_contrato}: Valor ${valor_total_contrato:,.2f} = {uvt_contrato:,.2f} UVT (límite mínimo: {limite_uvt} UVT)")
+
+        # Validar que cumpla límite mínimo de 6000 UVT
+        if uvt_contrato < limite_uvt:
+            logger.info(f"Contrato {id_contrato} NO alcanza el límite mínimo de {limite_uvt} UVT - Impuesto NO aplica")
+            return self._crear_resultado_no_aplica(
+                observaciones=(
+                    f"El contrato {id_contrato} no alcanza el límite mínimo de {limite_uvt:,} UVT "
+                    f"(${valor_limite_pesos:,.2f}) requerido para aplicar el Impuesto al Timbre. "
+                    f"Valor del contrato: ${valor_total_contrato:,.2f} ({uvt_contrato:,.2f} UVT)"
+                ),
+                id_contrato=id_contrato
+            )
+
+        logger.info(f"Contrato {id_contrato} cumple límite mínimo de {limite_uvt} UVT - Continuando con procesamiento")
 
         # Consultar BD para obtener tarifa y tipo_cuantia
         resultado_bd = self._consultar_cuantia_bd(
