@@ -195,6 +195,7 @@ class ClasificadorTimbre:
                 "id_contrato": str(resultado_json.get("id_contrato", "")),
                 "fecha_suscripcion": str(resultado_json.get("fecha_suscripcion", "0000-00-00")),
                 "valor_inicial_contrato": float(resultado_json.get("valor_inicial_contrato", 0.0)),
+                "valor_factura_sin_iva": float(resultado_json.get("valor_factura_sin_iva", 0.0)),
                 "valor_total_contrato": float(resultado_json.get("valor_total_contrato", 0.0)),
                 "adiciones": self._validar_adiciones(resultado_json.get("adiciones", [])),
                 "observaciones_extraccion": f" IA extrajo datos del contrato - ID: {resultado_json.get('id_contrato', 'NO_ENCONTRADO')}"

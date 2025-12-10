@@ -211,13 +211,26 @@ class LiquidadorTimbre:
         logger.info("Procesando cuantia INDETERMINABLE")
 
         id_contrato = datos_contrato.get("id_contrato", "")
+        
+        observacion_base = f"Cuantia indeterminable - Base gravable de observaciones: ${base_gravable_obs:,.2f}"
 
         if base_gravable_obs <= 0:
-            return self._crear_resultado_sin_finalizar(
-                tipo_cuantia="Indeterminable",
-                observaciones="El tipo de cuantia es indeterminable y no se pudo identificar la base gravable en las observaciones",
-                id_contrato=id_contrato
-            )
+            
+            valor_factura_sin_iva = datos_contrato.get("valor_factura_sin_iva", 0.0)
+            
+            if valor_factura_sin_iva > 0:
+                
+                base_gravable_obs = valor_factura_sin_iva
+                logger.info(f"Usando valor factura sin IVA como base gravable: ${base_gravable_obs:,.2f}")
+                observacion_base = f"Base gravable tomada del valor de la factura sin IVA: ${base_gravable_obs:,.2f}"
+                
+            else:
+                
+                return self._crear_resultado_sin_finalizar(
+                    tipo_cuantia="Indeterminable",
+                    observaciones="El tipo de cuantia es indeterminable y no se pudo identificar la base gravable en las observaciones , ni se encontro valor de factura sin IVA en los documentos",
+                    id_contrato=id_contrato
+                )
 
         # Calcular impuesto
         valor_impuesto = base_gravable_obs * tarifa_bd
@@ -230,7 +243,7 @@ class LiquidadorTimbre:
             tipo_cuantia="Indeterminable",
             base_gravable=base_gravable_obs,
             ID_contrato=id_contrato,
-            observaciones=f"Cuantia indeterminable - Base gravable de observaciones: ${base_gravable_obs:,.2f}"
+            observaciones=observacion_base
         )
 
     def _procesar_cuantia_determinable(

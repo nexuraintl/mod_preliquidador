@@ -186,7 +186,13 @@ INFORMACION A EXTRAER:
      b) fecha_adicion: Fecha de la adicion o del OTRO SI en formato YYYY-MM-DD
    - Si NO hay adiciones, devuelve lista vacia: []
    - Si encuentras adiciones pero NO tienen fecha, establece fecha_adicion: "0000-00-00"
-
+   
+6. VALOR FACTURA SIN IVA :
+   - Extrae el valor total de la factura sin incluir IVA solamente del documento que mencione literalmente "FACTURA", "FACTURA DE VENTA" O "FACTURA ELECTRONICA DE VENTA"
+   - Extrae solo el valor numerico
+   
+   
+   
 FORMATO DE RESPUESTA REQUERIDO (JSON estricto):
 ```json
 {{
@@ -194,6 +200,7 @@ FORMATO DE RESPUESTA REQUERIDO (JSON estricto):
   "cita_texto_ID_contrato": "El contrato No. Contrato FNTCE-572-2023 fue suscrito...",
   "fecha_suscripcion": "2024-03-15",
   "valor_inicial_contrato": 10000000.0,
+  "valor_factura_sin_iva": 9500000.0,
   "valor_total_contrato": 12000000.0,
   "adiciones": [
     {{
@@ -247,6 +254,7 @@ EJEMPLO DE RESPUESTA CON DATOS NO ENCONTRADOS:
   "cita_texto_ID_contrato": "",
   "fecha_suscripcion": "0000-00-00",
   "valor_inicial_contrato": 0.0,
+  "valor_factura_sin_iva": 0.0,
   "valor_total_contrato": 0.0,
   "adiciones": [],
   "observaciones": "No se encontraron datos relevantes en los documentos proporcionados."
