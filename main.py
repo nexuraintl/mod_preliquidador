@@ -1073,8 +1073,15 @@ async def procesar_facturas_integrado(
         if not aplica_iva and "iva_reteiva" not in resultado_final["impuestos"]:
             resultado_final["impuestos"]["iva_reteiva"] = {
                 "aplica": False,
-                "estado": "no_aplica_impuesto",
-                "razon": f"El NIT {nit_administrativo} no está configurado para IVA/ReteIVA"
+                "valor_iva_identificado": 0,
+                "valor_subtotal_sin_iva": 0,
+                "valor_reteiva": 0,
+                "porcentaje_iva": 0,
+                "tarifa_reteiva": 0,
+                "es_fuente_nacional": False,
+                "estado_liquidacion": "no_aplica_impuesto",
+                "observaciones": [f"El NIT {nit_administrativo} no está configurado para IVA/ReteIVA"],
+                "calculo_exitoso": False
             }
             logger.info(f" IVA/ReteIVA: No aplica para NIT {nit_administrativo}")
 
