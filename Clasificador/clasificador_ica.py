@@ -113,10 +113,10 @@ class ClasificadorICA:
             with open(archivo_json, 'w', encoding='utf-8') as f:
                 json.dump(data_parseada, f, ensure_ascii=False, indent=2)
 
-            logger.info(f"💾 Respuesta Gemini guardada: {tipo_llamada} → {archivo_json.name}")
+            logger.info(f" Respuesta Gemini guardada: {tipo_llamada} → {archivo_json.name}")
 
         except Exception as e:
-            logger.error(f"❌ Error guardando respuesta Gemini ({tipo_llamada}): {e}")
+            logger.error(f" Error guardando respuesta Gemini ({tipo_llamada}): {e}")
             # No fallar el proceso si no se puede guardar el archivo
 
     async def analizar_ica(
@@ -477,11 +477,14 @@ class ClasificadorICA:
                 contenido_gemini.extend(archivos_procesados)
                 logger.info(f"📎 ICA - Enviando {len(archivos_procesados)} archivos procesados a Gemini para identificar ubicaciones")
 
-            # Llamar a Gemini con contexto completo
+            # Llamar a Gemini con contexto completo (timeout 60 segundos)
             loop = asyncio.get_event_loop()
-            respuesta = await loop.run_in_executor(
-                None,
-                lambda: self.procesador_gemini.modelo.generate_content(contenido_gemini)
+            respuesta = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: self.procesador_gemini.modelo.generate_content(contenido_gemini)
+                ),
+                timeout=60.0
             )
 
             # Limpiar y parsear respuesta
@@ -765,11 +768,14 @@ class ClasificadorICA:
                 contenido_gemini.extend(archivos_procesados)
                 logger.info(f" ICA - Enviando {len(archivos_procesados)} archivos procesados a Gemini para relacionar actividades")
 
-            # Llamar a Gemini con contexto completo
+            # Llamar a Gemini con contexto completo (timeout 60 segundos)
             loop = asyncio.get_event_loop()
-            respuesta = await loop.run_in_executor(
-                None,
-                lambda: self.procesador_gemini.modelo.generate_content(contenido_gemini)
+            respuesta = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: self.procesador_gemini.modelo.generate_content(contenido_gemini)
+                ),
+                timeout=60.0
             )
 
             # Limpiar y parsear respuesta
