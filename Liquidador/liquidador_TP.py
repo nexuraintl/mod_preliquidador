@@ -238,14 +238,19 @@ class LiquidadorTasaProdeporte:
                 resultado.observaciones = "La transaccion no genera Presupuesto"
                 logger.info(f"Tasa Prodeporte: No genera presupuesto ({parametros.genera_presupuesto})")
                 return resultado
-
+            
+            logger.info("Genera presupuesto confirmado marcado como si ")
+            
             # VALIDACION 6: Primeros 2 digitos del rubro == "28"
             if not rubro_str.startswith("28"):
                 resultado.estado = "no_aplica_impuesto"
                 resultado.observaciones = f"El codigo del rubro presupuestal no inicia con 28: {rubro_str}"
                 logger.info(f"Tasa Prodeporte: Rubro no inicia con 28 ({rubro_str})")
                 return resultado
-
+            
+            logger.info(f"Rubro presupuestal valido: {rubro_str} incia con 28 ")
+            
+            
             # VALIDACION 7: Rubro existe en diccionario
             rubro_valido, mensaje_error = validar_rubro_presupuestal(rubro_str)
 
