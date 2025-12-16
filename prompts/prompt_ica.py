@@ -325,12 +325,12 @@ def crear_prompt_relacionar_actividades(
 
     return f"""
 ROL: Eres un ANALISTA EXPERTO en clasificación de actividades económicas para ICA en Colombia.
-Tu función es RELACIONAR actividades facturadas con actividades parametrizadas en base de datos.
+Tu función es RELACIONAR actividades facturadas con actividades parametrizadas en base de datos e identificar si el proovedor es autorretenedor de ICA.
 
 REGLA FUNDAMENTAL:
-- Tu UNICO trabajo es IDENTIFICAR y RELACIONAR conceptos
+- TuS UNICOS trabajos es IDENTIFICAR , RELACIONAR conceptos e identificar si el proovedor es autorretenedor de ICA.
 - NO calculas tarifas, NO validas normativa, NO haces cálculos
-- SOLO relacionas actividades de la FACTURA con actividades de la BASE DE DATOS
+- SOLO relacionas actividades de la FACTURA con actividades de la BASE DE DATOS y revisas si el proovedor es autorretenedor de ICA en el RUT
 
 ═══════════════════════════════════════════════════════════════════════
 PASO 1: UBICACIONES IDENTIFICADAS (PASO ANTERIOR)
@@ -346,7 +346,7 @@ REVISA TODAS las actividades disponibles:
 {actividades_str}
 
 ═══════════════════════════════════════════════════════════════════════
-PASO 3: DOCUMENTOS A ANALIZAR (ENFOQUE EN FACTURA)
+PASO 3: DOCUMENTOS A ANALIZAR (ENFOQUE EN FACTURA y RUT)
 ═══════════════════════════════════════════════════════════════════════
 
 {_generar_seccion_archivos_directos(nombres_archivos_directos)}
@@ -374,6 +374,9 @@ PROCESO OBLIGATORIO:
    - Si encuentras múltiples actividades relacionadas, DEBEN ser de DIFERENTES ubicaciones (codigo_ubicacion diferente)
    - NUNCA dos actividades relacionadas con el mismo codigo_ubicacion
    - Si NO encuentras ninguna relación, dejar actividades_relacionadas con: nombre_act_rel = "", codigo_actividad = 0, codigo_ubicacion = 0
+   
+4.EXTRAER DEL RUT (Formulario de Registro Unico Tributario):
+    -  Busca literalmente en el RUT "AUTORRETENEDOR DE ICA", Si encuentras en el RUT que el proovedor es AUTORRETENEDOR DE ICA , marca el parametro "autorretenedor_ica": true en el JSON de respuesta, de lo contrario marca "autorretenedor_ica": false
 
 ═══════════════════════════════════════════════════════════════════════
 PASO 5: FORMATO DE RESPUESTA JSON (OBLIGATORIO)
@@ -395,10 +398,11 @@ Debes responder UNICAMENTE con un JSON válido siguiendo esta estructura EXACTA:
       "codigo_ubicacion": 2
     }}
   ],
-  "valor_factura_sin_iva": 1000000.0
+  "valor_factura_sin_iva": 1000000.0,
+  "autorretenedor_ica": true | false
 }}
 
-EJEMPLO 1 - Una actividad, una ubicación:
+EJEMPLO 1 - Una actividad, una ubicación no autorretenedor de ica :
 {{
   "actividades_facturadas": ["Servicios de consultoría en sistemas y soporte técnico"],
   "actividades_relacionadas": [
@@ -408,10 +412,11 @@ EJEMPLO 1 - Una actividad, una ubicación:
       "codigo_ubicacion": 1
     }}
   ],
-  "valor_factura_sin_iva": 5000000.0
+  "valor_factura_sin_iva": 5000000.0,
+  "autorretenedor_ica": false
 }}
 
-EJEMPLO 2 - Múltiples actividades facturadas, múltiples ubicaciones:
+EJEMPLO 2 - Múltiples actividades facturadas, múltiples ubicaciones, no autorretenedor de ica :
 {{
   "actividades_facturadas": ["Servicios de ingeniería civil", "Diseño arquitectónico", "Supervisión técnica"],
   "actividades_relacionadas": [
@@ -426,10 +431,11 @@ EJEMPLO 2 - Múltiples actividades facturadas, múltiples ubicaciones:
       "codigo_ubicacion": 5
     }}
   ],
-  "valor_factura_sin_iva": 10000000.0
+  "valor_factura_sin_iva": 10000000.0,
+  "autorretenedor_ica": false
 }}
 
-EJEMPLO 3 - Múltiples actividades, una ubicación:
+EJEMPLO 3 - Múltiples actividades, una ubicación, autorretenedor de ica :
 {{
   "actividades_facturadas": ["Servicios de consultoría empresarial", "Servicios de capacitación", "Asesoría administrativa"],
   "actividades_relacionadas": [
@@ -439,10 +445,11 @@ EJEMPLO 3 - Múltiples actividades, una ubicación:
       "codigo_ubicacion": 1
     }}
   ],
-  "valor_factura_sin_iva": 5000000.0
+  "valor_factura_sin_iva": 5000000.0,
+  "autorenedor_ica": true
 }}
 
-EJEMPLO 4 - NO se pudo relacionar:
+EJEMPLO 4 - NO se pudo relacionar, no autorenedor de ica :
 {{
   "actividades_facturadas": ["Servicios varios no especificados", "Otros servicios"],
   "actividades_relacionadas": [
@@ -452,7 +459,8 @@ EJEMPLO 4 - NO se pudo relacionar:
       "codigo_ubicacion": 0
     }}
   ],
-  "valor_factura_sin_iva": 1000000.0
+  "valor_factura_sin_iva": 1000000.0,
+  "autorretenedor_ica": false
 }}
 
 IMPORTANTE:
@@ -548,6 +556,8 @@ def validar_estructura_actividades(data: Dict[str, Any]) -> bool:
         return False
     if "valor_factura_sin_iva" not in data:
         return False
+    if "autorretenedor_ica" not in data:
+        return False
 
     # Validar actividades_facturadas (lista simple de strings)
     if not isinstance(data["actividades_facturadas"], list):
@@ -567,6 +577,9 @@ def validar_estructura_actividades(data: Dict[str, Any]) -> bool:
 
     # Validar valor_factura_sin_iva es numérico
     if not isinstance(data["valor_factura_sin_iva"], (int, float)):
+        return False
+      
+    if not isinstance(data["autorretenedor_ica"], bool):   
         return False
 
     return True

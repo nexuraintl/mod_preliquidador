@@ -261,6 +261,7 @@ class ClasificadorICA:
             actividades_facturadas = datos_actividades.get("actividades_facturadas", [])
             actividades_relacionadas = datos_actividades.get("actividades_relacionadas", [])
             valor_factura_sin_iva = datos_actividades.get("valor_factura_sin_iva", 0.0)
+            autorretenedor_ica = datos_actividades.get("autorretenedor_ica", False)
 
             logger.info(f"Actividades facturadas: {len(actividades_facturadas)}, Actividades relacionadas: {len(actividades_relacionadas)}")
 
@@ -283,6 +284,7 @@ class ClasificadorICA:
                 resultado_base["actividades_facturadas"] = actividades_facturadas
                 resultado_base["actividades_relacionadas"] = actividades_relacionadas
                 resultado_base["valor_factura_sin_iva"] = valor_factura_sin_iva
+                resultado_base["autorretenedor_ica"] = autorretenedor_ica   
                 resultado_base["observaciones"].extend(validacion_actividades["errores"])
                 resultado_base["observaciones"].extend(validacion_actividades.get("advertencias", []))
                 logger.warning(f"Validación de actividades falló: {validacion_actividades['errores']}")
@@ -301,6 +303,9 @@ class ClasificadorICA:
             resultado_base["actividades_facturadas"] = actividades_facturadas
             resultado_base["actividades_relacionadas"] = actividades_relacionadas
             resultado_base["valor_factura_sin_iva"] = valor_factura_sin_iva
+            resultado_base["autorretenedor_ica"] = autorretenedor_ica
+            
+            logger.info(f"autorretenedor detectado: {autorretenedor_ica} ")
 
             # Aquí el liquidador se encargará del cálculo
             logger.info("Análisis ICA completado exitosamente")
@@ -800,13 +805,15 @@ class ClasificadorICA:
             actividades_facturadas = data.get("actividades_facturadas", [])
             actividades_relacionadas = data.get("actividades_relacionadas", [])
             valor_factura_sin_iva = data.get("valor_factura_sin_iva", 0.0)
+            autorretenedor_ica = data.get("autorretenedor_ica", False)
 
             logger.info(f"Gemini identificó {len(actividades_facturadas)} actividades facturadas y {len(actividades_relacionadas)} actividades relacionadas")
 
             return {
                 "actividades_facturadas": actividades_facturadas,
                 "actividades_relacionadas": actividades_relacionadas,
-                "valor_factura_sin_iva": valor_factura_sin_iva
+                "valor_factura_sin_iva": valor_factura_sin_iva,
+                "autorretenedor_ica": autorretenedor_ica
             }
 
         except json.JSONDecodeError as e:
