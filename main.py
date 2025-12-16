@@ -88,6 +88,9 @@ from config import (
 import pandas as pd
 import io
 
+# Importar utilidades - Respuestas mock para validaciones (SRP)
+from utils.mockups import crear_respuesta_negocio_no_parametrizado
+
 # ===============================
 # INICIALIZACIÓN DE BASE DE DATOS
 # ===============================
@@ -212,14 +215,13 @@ async def procesar_facturas_integrado(
 
         # Extraer NIT administrativo de la base de datos
         if not datos_negocio or 'nit' not in datos_negocio:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "No se pudo obtener el NIT administrativo de la base de datos",
-                    "codigo_del_negocio": codigo_del_negocio,
-                    "datos_negocio": datos_negocio,
-                    "mensaje": "Código de negocio no encontrado o sin NIT asociado"
-                }
+            # Código no parametrizado: retornar respuesta estructurada en lugar de error
+            logger.warning(f"Código de negocio {codigo_del_negocio} no parametrizado en base de datos")
+            respuesta_mock = crear_respuesta_negocio_no_parametrizado(codigo_del_negocio)
+
+            return JSONResponse(
+                status_code=200,  # 200 OK - respuesta válida con estructura estándar
+                content=respuesta_mock
             )
 
         nit_administrativo = str(datos_negocio['nit'])
