@@ -416,6 +416,8 @@ async def procesar_facturas_integrado(
         logger.info(f" Clasificación completada: {len(clasificacion)} documentos")
         logger.info(f" Consorcio detectado: {es_consorcio}")
         logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
+        
+        
         # =================================
         # PASO 4: PROCESAMIENTO PARALELO (TODOS LOS IMPUESTOS)
         # =================================
