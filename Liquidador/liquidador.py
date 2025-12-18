@@ -160,7 +160,8 @@ class LiquidadorRetencion:
                 
                 if regimen_art383 == "SIMPLE":
                     mensajes_error.append("El tercero está en régimen SIMPLE, y no aplica Art. 383")
-                    return self._crear_resultado_no_liquidable( mensajes_error,estado="no_aplica_impuesto",valor_factura_sin_iva=analisis.valor_total or 0)
+                    estado = "no_aplica_impuesto"
+                    return self._crear_resultado_no_liquidable( mensajes_error,estado=estado,valor_factura_sin_iva=analisis.valor_total or 0)
                 
                 mensajes_error.append("Aplicando tarifa convencional porque no aplica Art. 383")
                 logger.warning(" Fallback a tarifa convencional porque no aplica Art. 383")    
@@ -1088,6 +1089,8 @@ class LiquidadorRetencion:
         # NUEVO: Determinar estado si no se proporciona
         if estado is None:
             estado = "preliquidacion_sin_finalizar"  # Default
+        else :
+            estado = estado
 
         # Determinar concepto específico y estado basado en el mensaje de error
         if mensajes_error:
@@ -1103,6 +1106,9 @@ class LiquidadorRetencion:
                 concepto_descriptivo = "No aplica - facturación extranjera"
             elif "base" in primer_mensaje and "mínimo" in primer_mensaje:
                 concepto_descriptivo = "No aplica - base inferior al mínimo"
+                estado = "no_aplica_impuesto"
+            elif "383" in primer_mensaje:
+                concepto_descriptivo = "No aplica - Artículo 383 no cumple condiciones"
                 estado = "no_aplica_impuesto"
             elif "concepto" in primer_mensaje and "identificado" in primer_mensaje:
                 concepto_descriptivo = "No aplica - conceptos no identificados"
