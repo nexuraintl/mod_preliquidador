@@ -327,7 +327,8 @@ class ProcesadorGemini:
             # Detectar tipo recurso extranjero usando validación manual (SRP)
             es_recurso_extranjero = self._evaluar_tipo_recurso(resultado)
             indicadores_extranjera = resultado.get("indicadores_extranjera", [])
-
+            
+            
             # Determinar facturación extranjera basada en ubicación del proveedor
             es_facturacion_extranjera = self._determinar_facturacion_extranjera(resultado)
             

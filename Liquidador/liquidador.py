@@ -152,8 +152,18 @@ class LiquidadorRetencion:
             else:
                 # Si falla el cálculo del Art. 383, continuar con cálculo tradicional
                 mensajes_error.extend(resultado_art383["mensajes_error"])
+
+                
+                regimen_art383 = analisis.naturaleza_tercero.regimen_tributario if analisis.naturaleza_tercero else None
+                
+                logger.info(f"Régimen tributario del tercero: {regimen_art383}")
+                
+                if regimen_art383 == "SIMPLE":
+                    mensajes_error.append("El tercero está en régimen SIMPLE, y no aplica Art. 383")
+                    return self._crear_resultado_no_liquidable( mensajes_error,estado="no_aplica_impuesto",valor_factura_sin_iva=analisis.valor_total or 0)
+                
                 mensajes_error.append("Aplicando tarifa convencional porque no aplica Art. 383")
-                logger.warning(" Fallback a tarifa convencional porque no aplica Art. 383")
+                logger.warning(" Fallback a tarifa convencional porque no aplica Art. 383")    
 
         else:
             # Explicar por qué no aplica Art. 383
