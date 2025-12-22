@@ -423,7 +423,11 @@ async def procesar_facturas_integrado(
         # =================================
 
         logger.info(f" Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
-        logger.info(f"Documentos a analizar: {documentos_clasificados}  ")
+
+        # Log resumido de documentos (sin mostrar contenido completo)
+        docs_resumen = {nombre: {"categoria": info["categoria"], "chars": len(info["texto"])}
+                       for nombre, info in documentos_clasificados.items()}
+        logger.info(f"Documentos a analizar: {docs_resumen}")
         # Crear tareas paralelas para análisis con Gemini
         tareas_analisis = []
         logger.info(" Preparando cache para solucionar concurrencia en workers paralelos")

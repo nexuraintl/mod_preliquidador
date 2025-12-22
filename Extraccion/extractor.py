@@ -23,6 +23,7 @@ from typing import Dict, Any
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+import xml.etree.ElementTree as ET
 
 # Procesamiento de archivos
 import PyPDF2
@@ -433,7 +434,10 @@ FIN DE LA EXTRACCIÓN
         
         elif extension in ['.msg', '.eml']:
             return await self.extraer_texto_emails(contenido, archivo.filename)
-        
+
+        elif extension == '.xml':
+            return await self.extraer_texto_xml(contenido, archivo.filename)
+
         else:
             raise ValueError(f"Tipo de archivo no soportado: {extension}")
     
@@ -1541,9 +1545,276 @@ FECHA: {fecha}
             texto_formateado += "\n[Sin archivos adjuntos]"
         
         texto_formateado += f"\n\n{separador}\n=== FIN DEL EMAIL ===\n{separador}"
-        
+
         return texto_formateado
-    
+
+    async def extraer_texto_xml(self, contenido: bytes, nombre_archivo: str = "documento.xml") -> str:
+        """
+        Extrae texto estructurado de archivo XML preservando jerarquía.
+        Optimizado para facturas electrónicas colombianas (UBL 2.1).
+
+        Características:
+        - Omite firmas digitales (ds:Signature, xades:*)
+        - Extrae CDATA como texto crudo sin parsear
+        - Sin priorización: extrae toda la estructura
+        - Formato simple con indentación
+
+        Args:
+            contenido: Contenido binario del archivo XML
+            nombre_archivo: Nombre del archivo original
+
+        Returns:
+            str: Texto estructurado del XML
+        """
+        try:
+            # 1. Detectar encoding
+            encoding = self._detectar_encoding_xml(contenido)
+
+            # 2. Parsear XML
+            tree = ET.ElementTree(ET.fromstring(contenido))
+            root = tree.getroot()
+
+            # 3. Extraer namespaces
+            namespaces = self._extraer_namespaces(root)
+
+            # 4. Detectar tipo de documento
+            tipo_documento = self._detectar_tipo_documento_xml(root, namespaces)
+
+            # 5. Extraer jerarquía (omitiendo firmas)
+            texto_completo = f"=== {tipo_documento} ===\n\n"
+            texto_completo += f"Elemento Raíz: {self._limpiar_nombre_elemento(root.tag)}\n\n"
+
+            estadisticas = {"total_elementos": 0, "profundidad_maxima": 0, "firmas_omitidas": 0}
+
+            texto_jerarquia = self._extraer_jerarquia_xml(
+                root,
+                nivel=0,
+                estadisticas=estadisticas,
+                omitir_firmas=True
+            )
+
+            texto_completo += texto_jerarquia
+
+            # 6. Metadatos
+            metadatos = {
+                "tipo_documento": tipo_documento,
+                "elemento_raiz": self._limpiar_nombre_elemento(root.tag),
+                "namespaces_detectados": namespaces,
+                "total_elementos": estadisticas["total_elementos"],
+                "profundidad_maxima": estadisticas["profundidad_maxima"],
+                "firmas_omitidas": estadisticas["firmas_omitidas"],
+                "tamaño_archivo_bytes": len(contenido),
+                "encoding": encoding,
+                "metodo": "xml.etree.ElementTree"
+            }
+
+            # 7. Guardar automáticamente
+            self._guardar_texto_extraido(nombre_archivo, texto_completo, "XML", metadatos)
+
+            logger.info(f"XML procesado: {len(texto_completo)} caracteres")
+            logger.info(f"Elementos: {estadisticas['total_elementos']}, Firmas omitidas: {estadisticas['firmas_omitidas']}")
+
+            return texto_completo
+
+        except ET.ParseError as e:
+            error_msg = f"Error parseando XML: {str(e)}"
+            self._guardar_texto_extraido(nombre_archivo, error_msg, "XML_ERROR", {"error": str(e)})
+            return error_msg
+        except Exception as e:
+            error_msg = f"Error procesando XML: {str(e)}"
+            self._guardar_texto_extraido(nombre_archivo, error_msg, "XML_ERROR", {"error": str(e)})
+            return error_msg
+
+    def _detectar_encoding_xml(self, contenido: bytes) -> str:
+        """
+        Detecta encoding del XML desde declaración o BOM.
+
+        Args:
+            contenido: Contenido binario del archivo XML
+
+        Returns:
+            str: Encoding detectado
+        """
+        # Buscar <?xml encoding="..."?>
+        if b'<?xml' in contenido[:200]:
+            declaracion = contenido[:200].split(b'?>')[0]
+            if b'encoding=' in declaracion:
+                # Extraer encoding entre comillas
+                import re
+                match = re.search(rb'encoding=["\']([^"\']+)["\']', declaracion)
+                if match:
+                    return match.group(1).decode('ascii').lower()
+
+        # UTF-8 BOM
+        if contenido.startswith(b'\xef\xbb\xbf'):
+            return 'utf-8-sig'
+
+        return 'utf-8'
+
+    def _extraer_namespaces(self, root) -> dict:
+        """
+        Extrae namespaces del documento XML.
+
+        Args:
+            root: Elemento raíz del XML
+
+        Returns:
+            dict: Diccionario de namespaces
+        """
+        namespaces = {}
+
+        # Extraer namespace del tag raíz
+        if '}' in root.tag:
+            default_ns = root.tag.split('}')[0][1:]
+            namespaces['default'] = default_ns
+
+        # Intentar extraer de atributos (puede no estar disponible en ElementTree)
+        for key, value in root.attrib.items():
+            if key == 'xmlns':
+                namespaces['default'] = value
+            elif key.startswith('xmlns:'):
+                prefix = key.split(':', 1)[1]
+                namespaces[prefix] = value
+
+        # Si no se encontró namespace por atributos, usar el del tag
+        if not namespaces and '}' in root.tag:
+            default_ns = root.tag.split('}')[0][1:]
+            namespaces['default'] = default_ns
+
+        return namespaces
+
+    def _detectar_tipo_documento_xml(self, root, namespaces: dict) -> str:
+        """
+        Detecta tipo de documento basándose en raíz y namespaces.
+
+        Args:
+            root: Elemento raíz del XML
+            namespaces: Namespaces del documento
+
+        Returns:
+            str: Tipo de documento detectado
+        """
+        nombre_raiz = self._limpiar_nombre_elemento(root.tag)
+
+        if 'oasis' in str(namespaces.get('default', '')):
+            if 'Invoice' in nombre_raiz:
+                return "Factura Electrónica UBL 2.1"
+            elif 'AttachedDocument' in nombre_raiz:
+                return "Documento Adjunto de Factura Electrónica"
+            elif 'CreditNote' in nombre_raiz:
+                return "Nota Crédito Electrónica UBL 2.1"
+            else:
+                return f"Documento UBL 2.1 ({nombre_raiz})"
+
+        return f"Documento XML ({nombre_raiz})"
+
+    def _limpiar_nombre_elemento(self, tag: str) -> str:
+        """
+        Remueve namespace URI del tag: {uri}Element → Element.
+
+        Args:
+            tag: Tag XML con o sin namespace
+
+        Returns:
+            str: Nombre del elemento limpio
+        """
+        if '}' in tag:
+            return tag.split('}', 1)[1]
+        return tag
+
+    def _extraer_jerarquia_xml(self, elemento, nivel: int, estadisticas: dict,
+                               omitir_firmas: bool = True) -> str:
+        """
+        Extrae jerarquía XML recursivamente.
+
+        Características:
+        - Omite firmas digitales si omitir_firmas=True
+        - Extrae CDATA como texto crudo
+        - Formato simple con indentación
+
+        Args:
+            elemento: Elemento XML a procesar
+            nivel: Nivel de profundidad actual
+            estadisticas: Dict para rastrear estadísticas
+            omitir_firmas: Si debe omitir firmas digitales
+
+        Returns:
+            str: Texto jerárquico del XML
+        """
+        texto = ""
+        indentacion = "  " * nivel
+
+        # Obtener nombre limpio
+        nombre = self._limpiar_nombre_elemento(elemento.tag)
+
+        # OMITIR FIRMAS DIGITALES
+        if omitir_firmas:
+            if nombre == 'Signature' or nombre.startswith('Qualifying') or nombre.startswith('Signed'):
+                estadisticas["firmas_omitidas"] += 1
+                return indentacion + "[FIRMA DIGITAL OMITIDA]\n"
+
+            # Omitir UBLExtension que solo contiene firmas
+            if nombre == 'UBLExtension':
+                # Verificar si contiene solo ExtensionContent > Signature
+                for hijo in list(elemento):
+                    hijo_nombre = self._limpiar_nombre_elemento(hijo.tag)
+                    if hijo_nombre == 'ExtensionContent':
+                        for nieto in list(hijo):
+                            nieto_nombre = self._limpiar_nombre_elemento(nieto.tag)
+                            if nieto_nombre == 'Signature':
+                                estadisticas["firmas_omitidas"] += 1
+                                return indentacion + "[FIRMA DIGITAL OMITIDA]\n"
+
+        # Actualizar estadísticas
+        estadisticas["total_elementos"] += 1
+        if nivel > estadisticas["profundidad_maxima"]:
+            estadisticas["profundidad_maxima"] = nivel
+
+        # Línea del elemento
+        linea = f"{indentacion}{nombre}"
+
+        # Agregar atributos importantes (excluyendo xmlns)
+        atributos = []
+        for key, value in elemento.attrib.items():
+            if not key.startswith('{') and not key.startswith('xmlns'):
+                key_limpio = self._limpiar_nombre_elemento(key)
+                atributos.append(f"{key_limpio}='{value}'")
+
+        if atributos:
+            linea += f" [{', '.join(atributos)}]"
+
+        # Texto del elemento
+        texto_elemento = (elemento.text or "").strip()
+
+        # MANEJO DE CDATA
+        if texto_elemento:
+            # Detectar si es CDATA con XML (comienza con <?xml)
+            if texto_elemento.startswith('<?xml'):
+                texto += linea + "\n"
+                texto += indentacion + "  [CDATA - Factura XML Embebida - INICIO]\n"
+                # Mostrar TODAS las líneas del CDATA sin truncar
+                lineas_cdata = texto_elemento.split('\n')
+                for linea_cdata in lineas_cdata:
+                    texto += indentacion + "  " + linea_cdata + "\n"
+                texto += indentacion + "  [CDATA - Factura XML Embebida - FIN]\n"
+            else:
+                # Texto normal
+                if len(texto_elemento) > 200:
+                    texto_elemento = texto_elemento[:200] + "..."
+                texto_elemento = texto_elemento.replace('\n', ' ')
+                linea += f": {texto_elemento}"
+                texto += linea + "\n"
+        else:
+            texto += linea + "\n"
+
+        # Procesar hijos recursivamente
+        hijos = list(elemento)
+        if hijos:
+            for hijo in hijos:
+                texto += self._extraer_jerarquia_xml(hijo, nivel + 1, estadisticas, omitir_firmas)
+
+        return texto
+
     def validar_archivo(self, archivo: UploadFile) -> Dict[str, Any]:
         """
         Valida si un archivo es procesable y retorna información sobre él.
@@ -1554,8 +1825,8 @@ FECHA: {fecha}
         Returns:
             Dict con información de validación
         """
-        extensiones_soportadas = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.bmp', 
-                                '.tiff', '.xlsx', '.xls', '.docx', '.doc', '.msg', '.eml']
+        extensiones_soportadas = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.bmp',
+                                '.tiff', '.xlsx', '.xls', '.docx', '.doc', '.msg', '.eml', '.xml']
         
         if not archivo.filename:
             return {
@@ -1600,8 +1871,10 @@ FECHA: {fecha}
                 tipo_procesamiento = "Procesamiento Email (.eml) con email estándar"
             else:
                 tipo_procesamiento = "Procesamiento Email (dependencias limitadas)"
-        
-        
+        elif extension == '.xml':
+            tipo_procesamiento = "Procesamiento XML con xml.etree.ElementTree (facturas electrónicas)"
+
+
         return {
             "valido": True,
             "extension": extension,
