@@ -112,7 +112,7 @@ class ProcesadorGemini:
 
         # Configuración especial para consorcios (más tokens)
         self.modelo_consorcio = genai.GenerativeModel(
-            'gemini-2.5-flash-preview-09-2025',
+            'gemini-3-flash-preview-09-2025',
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,  # Menos temperatura para más consistencia
                 max_output_tokens=65536,  # 4x más tokens para consorcios grandescandidate_count=1
@@ -596,7 +596,7 @@ class ProcesadorGemini:
         logger.info(" Analizando IMPUESTOS ESPECIALES INTEGRADOS con Gemini")
         logger.info(" Impuestos: ESTAMPILLA_UNIVERSIDAD + CONTRIBUCION_OBRA_PUBLICA")
         
-        # 💾 USAR CACHE SI ESTÁ DISPONIBLE
+        #  USAR CACHE SI ESTÁ DISPONIBLE
         archivos_directos = archivos_directos or []
         if cache_archivos:
             logger.info(f"Estampillas usando cache de archivos: {len(cache_archivos)} archivos")
@@ -818,14 +818,18 @@ class ProcesadorGemini:
                     logger.warning(f" Omitiendo archivo con error: {getattr(archivo, 'filename', f'archivo_{i+1}')}")
                     continue
             
-            # 🚨 VALIDACIÓN FINAL: Verificar que tenemos archivos válidos para enviar
+            # 🚨 VALIDACIÓN FINAL: Verificar que tenemos contenido válido para enviar
             archivos_validos = len(contenido_multimodal) - 1  # -1 porque el primer elemento es el prompt
-            
-            if archivos_validos == 0:
+
+            if archivos_validos == 0 and len(archivos_directos) > 0:
+                # Solo lanzar error si se esperaban archivos pero ninguno fue validado
                 error_msg = "No se pudo validar ningún archivo para análisis - todos los archivos presentaron problemas"
                 logger.error(f" {error_msg}")
                 raise ValueError(error_msg)
-            
+            elif archivos_validos == 0:
+                # Análisis solo con texto preprocesado (XML, Excel, Word, etc.)
+                logger.info(" Análisis híbrido: Solo texto preprocesado, sin archivos multimodales")
+
             if archivos_validos < len(archivos_directos):
                 archivos_omitidos = len(archivos_directos) - archivos_validos
                 logger.warning(f"Se omitieron {archivos_omitidos} archivos problemáticos de {len(archivos_directos)} archivos totales")
