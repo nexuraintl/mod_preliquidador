@@ -282,7 +282,53 @@ async def procesar_facturas_integrado(
         logger.info(f" Impuestos a procesar: {impuestos_a_procesar}")
         
         # =================================
-        # PASO 2: EXTRACCIÓN HÍBRIDA DE TEXTO
+        # PASO 2: FILTRADO Y VALIDACIÓN DE ARCHIVOS
+        # =================================
+        
+        # Extensiones soportadas por el sistema
+        EXTENSIONES_SOPORTADAS = {
+            'pdf', 'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp',  # Procesamiento directo
+            'xlsx', 'xls', 'docx', 'doc', 'msg', 'eml', 'xml'  # Preprocesamiento local
+        }
+        
+        # Filtrar archivos con extensiones soportadas
+        archivos_validos = []
+        archivos_ignorados = []
+        
+        for archivo in archivos:
+            try:
+                nombre_archivo = archivo.filename
+                extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
+                
+                if extension in EXTENSIONES_SOPORTADAS:
+                    archivos_validos.append(archivo)
+                else:
+                    archivos_ignorados.append(nombre_archivo)
+                    logger.warning(f" Archivo ignorado (extensión no soportada): {nombre_archivo} (.{extension})")
+            except Exception as e:
+                logger.warning(f" Error clasificando archivo {archivo.filename}: {e}")
+                archivos_ignorados.append(archivo.filename)
+        
+        # Validar que al menos haya un archivo válido
+        if not archivos_validos:
+            logger.error(" Ningún archivo con extensión soportada fue recibido")
+            logger.error(f" Archivos recibidos: {[a.filename for a in archivos]}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "NO_VALID_FILES",
+                    "mensaje": "Ninguno de los archivos recibidos tiene una extensión soportada",
+                    "extensiones_soportadas": list(EXTENSIONES_SOPORTADAS),
+                    "total_archivos_recibidos": len(archivos)
+                }
+            )
+        
+        logger.info(f" Archivos recibidos: {len(archivos)} | Válidos: {len(archivos_validos)} | Ignorados: {len(archivos_ignorados)}")
+        if archivos_ignorados:
+            logger.info(f" Archivos ignorados: {archivos_ignorados}")
+        
+        # =================================
+        # PASO 3: EXTRACCIÓN HÍBRIDA DE TEXTO
         # =================================
         
         logger.info(f" Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
@@ -291,7 +337,7 @@ async def procesar_facturas_integrado(
         archivos_directos = []      # PDFs e imágenes → Gemini directo (multimodal)
         archivos_preprocesamiento = []  # Excel, Email, Word → Procesamiento local
         
-        for archivo in archivos:
+        for archivo in archivos_validos:
             try:
                 nombre_archivo = archivo.filename
                 extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
@@ -348,7 +394,7 @@ async def procesar_facturas_integrado(
         logger.info(f" Extracción local completada: {len(textos_preprocesados)} textos extraídos")
         
         # =================================
-        # PASO 3: CLASIFICACIÓN HÍBRIDA CON MULTIMODALIDAD
+        # PASO 4: CLASIFICACIÓN HÍBRIDA CON MULTIMODALIDAD
         # =================================
 
         # Clasificar documentos usando enfoque híbrido multimodal
