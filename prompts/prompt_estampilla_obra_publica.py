@@ -87,10 +87,6 @@ NO debes:
 {anexos_texto if anexos_texto else "[NO PROPORCIONADO]"}
 <<FIN_ANEXOS>>
 
-<<INICIO_COTIZACIONES>>
-{cotizaciones_texto if cotizaciones_texto else "[NO PROPORCIONADO]"}
-<<FIN_COTIZACIONES>>
-
 <<INICIO_ANEXO_CONTRATO>>
 {anexo_contrato if anexo_contrato else "[NO PROPORCIONADO]"}
 <<FIN_ANEXO_CONTRATO>>
@@ -100,7 +96,7 @@ NO debes:
 
 PASO 1 - EXTRAER OBJETO DEL CONTRATO:
 --------------------------------------
-• ORDEN DE BÚSQUEDA: Anexo Contrato → Factura → Anexos → Cotizaciones
+• ORDEN DE BÚSQUEDA: Anexo Contrato → Factura → Anexos
 • IDENTIFICACION : Buscar TEXTUALMENTE una seccion que mencione OBJETO DEL CONTRATO, No confundas CONCEPTO de la factura con OBJETO del contrato
 • ACCIÓN: Copiar la descripción TEXTUAL EXACTA del objeto del contrato
 • SI NO EXISTE LA SECCION TEXTUAL OBJETO DEL CONTRATO EN LOS DOCUMENTOS : Asignar valor "no_identificado"

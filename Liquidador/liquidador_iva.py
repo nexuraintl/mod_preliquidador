@@ -54,7 +54,6 @@ class DatosExtraccionIVA:
     # Extracción RUT
     rut_disponible: bool
     es_responsable_iva: Optional[bool]
-    codigo_encontrado: float
     texto_evidencia: str
 
     # Extracción factura
@@ -136,21 +135,14 @@ class ValidadorIVA:
 
         # VALIDACIÓN 1: RUT disponible
         if not datos.rut_disponible:
-            return ResultadoValidacionIVA(
-                es_valido=False,
-                estado="preliquidacion_sin_finalizar",
-                observaciones=["RUT no disponible en documentos adjuntos"],
-                warnings=[],
-                valor_iva_calculado=0.0,
-                porcentaje_iva_calculado=0.0
-            )
+            observaciones.append("RUT no disponible en los documentos")
 
         # VALIDACIÓN 2: Responsabilidad IVA identificada
         if datos.es_responsable_iva is None:
             return ResultadoValidacionIVA(
                 es_valido=False,
                 estado="preliquidacion_sin_finalizar",
-                observaciones=["No se identificó responsabilidad de IVA en el RUT"],
+                observaciones=["No se identificó responsabilidad de IVA en la documentación, por favor adjuntar el RUT"],
                 warnings=[],
                 valor_iva_calculado=0.0,
                 porcentaje_iva_calculado=0.0
@@ -861,7 +853,6 @@ class LiquidadorIVA:
             # RUT
             rut_disponible=validaciones.get("rut_disponible", False),
             es_responsable_iva=extraccion_rut.get("es_responsable_iva"),
-            codigo_encontrado=float(extraccion_rut.get("codigo_encontrado", 0.0)),
             texto_evidencia=extraccion_rut.get("texto_evidencia", ""),
 
             # Factura
@@ -1064,7 +1055,6 @@ if __name__ == "__main__":
     analisis_gemini_ejemplo = {
         "extraccion_rut": {
             "es_responsable_iva": True,
-            "codigo_encontrado": 48,
             "texto_evidencia": "RESPONSABILIDADES: 48 - Responsable de IVA"
         },
         "extraccion_factura": {

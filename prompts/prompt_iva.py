@@ -44,7 +44,7 @@ def PROMPT_ANALISIS_IVA(factura_texto: str, rut_texto: str, anexos_texto: str,
 
     return f"""
 ROL: Eres un EXTRACTOR y CLASIFICADOR de información tributaria especializado en IVA colombiano.
-Tu función es ÚNICAMENTE extraer datos específicos de los documentos como el RUT el cual es el FORMULARIO DE REGISTRO UNICO TRIBUTARIO y clasificar conceptos según las categorías predefinidas.
+Tu función es ÚNICAMENTE extraer datos específicos de los documentos  y clasificar conceptos según las categorías predefinidas.
 
 ═══════════════════════════════════════════════════════════════════════
 DOCUMENTOS A ANALIZAR
@@ -101,20 +101,37 @@ TAREAS ESPECÍFICAS DE EXTRACCIÓN
    • Identificar texto de responsabilidad:
      - "48 - Impuesto sobre las ventas - IVA" → es_responsable_iva: true
      - "49 - No responsable de IVA" → es_responsable_iva: false
-     - "53 - Régimen simple de tributación" → es_responsable_iva: false
 
     VALIDACIONES DE CASOS ESPECIALES:
 
    • Si encuentras el RUT pero NO tiene código de responsabilidad IVA:
      → "es_responsable_iva": null
-     → "codigo_encontrado": 0.0
      → "texto_evidencia": "RUT encontrado pero sin código de responsabilidad IVA"
 
-   • Si NO encuentras el RUT en ninguna parte del documento:
+   • Si NO encuentras el RUT en ninguna parte del documento, busca la responsabilidad del IVA en los demas DOCUMENTOS proporcionados (factura, anexos):
      → "rut_disponible": false
-     → "es_responsable_iva": null
-     → "codigo_encontrado": 0.0
-     → "texto_evidencia": "RUT no encontrado después de escanear todo el documento"
+     
+ 1.1 Si NO encuentras el RUT , Extrae la responsabilidad de iva en el siguiente orden Factura → Anexos:
+ 
+     • DEBES buscar palabras clave explicitas como : "Responsable de IVA", "No responsable de IVA", "somos responsables de IVA", "no somos responsables de IVA":
+     
+        • Si encuentras alguna de estas frases, asigna :
+        "rut_disponible" : false
+        "es_responsable_iva" : true or false según corresponda
+        "texto_evidencia" : "Texto exacto donde encontraste la información"
+        
+        • Si NO encuentras ninguna mención a la responsabilidad de IVA en ningun documento, asigna :
+        "rut_disponible" : false
+        "es_responsable_iva" : null
+        "texto_evidencia" : "No se encontró información sobre responsabilidad de IVA "
+        
+        • Si encuentras el valor del IVA en la factura, pero NO encuentras  mención LITERAL a la responsabilidad de IVA , asigna :
+        "rut_disponible" : false
+        "es_responsable_iva" : null
+        "texto_evidencia" : "No se encontró información sobre responsabilidad de IVA "
+        
+ 
+ 
 
 2. SOLO DE LA FACTURA - EXTRAER:
    • Valor del IVA (buscar: "IVA", "I.V.A", "Impuesto")
@@ -143,7 +160,6 @@ Responde ÚNICAMENTE con el siguiente JSON, sin texto adicional:
 {{
     "extraccion_rut": {{
         "es_responsable_iva": true | false | null,
-        "codigo_encontrado": 48 | 49 | 53 | 0.0,
         "texto_evidencia": "Texto exacto donde encontraste la información"
     }},
     "extraccion_factura": {{
@@ -168,11 +184,12 @@ REGLAS CRÍTICAS
 ═══════════════════════════════════════════════════════════════════════
 
 • NO interpretes ni deduzcas información que no esté explícita
-• Si un dato no está disponible, usa 0.0 para números o "no_identificado" para textos
+• Si un dato no está disponible, usa 0.0 para números y null para booleanos
 • La clasificación SOLO se hace si NO hay IVA en la factura
 • Si hay IVA en la factura, SIEMPRE es categoría "gravado"
 • Extrae EXACTAMENTE lo que aparece en los documentos
 • No calcules valores que no estén explícitos en la factura
+• NO ASUMAS la responsabilidad de IVA porque la factura mencione un valor de IVA, solo extrae lo que está escrito
 
 
 """

@@ -112,7 +112,7 @@ class ProcesadorGemini:
 
         # Configuración especial para consorcios (más tokens)
         self.modelo_consorcio = genai.GenerativeModel(
-            'gemini-3-flash-preview-09-2025',
+            'gemini-2.5-flash-preview-09-2025',
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,  # Menos temperatura para más consistencia
                 max_output_tokens=65536,  # 4x más tokens para consorcios grandescandidate_count=1
@@ -245,7 +245,7 @@ class ProcesadorGemini:
                     "detalle": error_msg,
                     "limite_maximo": 20,
                     "archivos_recibidos": len(archivos_directos),
-                    "sugerencia": "Reduzca el número de PDFs/imágenes o use procesamiento por lotes"
+                    "sugerencia": "Reduzca el número de archivos directos"
                 }
             )
 
@@ -1640,7 +1640,7 @@ class ProcesadorGemini:
         """
         logger.info(" Analizando IVA y ReteIVA con Gemini")
         
-        # 💾 USAR CACHE SI ESTÁ DISPONIBLE
+        #  USAR CACHE SI ESTÁ DISPONIBLE
         archivos_directos = archivos_directos or []
         if cache_archivos:
             logger.info(f" IVA usando cache de archivos: {len(cache_archivos)} archivos")
@@ -1769,7 +1769,6 @@ class ProcesadorGemini:
                 "responsabilidad_iva_rut": {
                     "rut_disponible": False,
                     "es_responsable_iva": None,
-                    "codigo_encontrado": "no_encontrado",
                     "texto_referencia": "No disponible"
                 },
                 "concepto_facturado": {
@@ -1823,7 +1822,6 @@ class ProcesadorGemini:
         defaults = {
             "extraccion_rut": {
                 "es_responsable_iva": None,
-                "codigo_encontrado": 0.0,
                 "texto_evidencia": "No disponible"
             },
             "extraccion_factura": {
@@ -1862,7 +1860,6 @@ class ProcesadorGemini:
         return {
             "extraccion_rut": {
                 "es_responsable_iva": None,
-                "codigo_encontrado": 0.0,
                 "texto_evidencia": f"Error en procesamiento: {error_msg}"
             },
             "extraccion_factura": {
