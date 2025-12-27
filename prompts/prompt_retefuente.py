@@ -51,7 +51,7 @@ def PROMPT_ANALISIS_FACTURA(factura_texto: str, rut_texto: str, anexos_texto: st
 
 **PROVEEDOR ESPERADO:** {proveedor}
 
- VALIDACIONES OBLIGATORIAS CONTRA RUT:
+ VALIDACIONES OBLIGATORIAS CONTRA RUT (si está disponible):
 
 1. VALIDACIÓN DE IDENTIDAD:
    - Verifica que el nombre/razón social del proveedor en FACTURA coincida con el nombre en RUT
@@ -102,14 +102,12 @@ OBJETO DEL CONTRATO:
 
  PASO 1: VERIFICACIÓN DEL RUT
 ├─ Si RUT existe → Continuar al PASO 2
-└─ Si RUT NO existe → Saltar PASO 2 y asignar en análisis :
-      "es_persona_natural": null,
-      "regimen_tributario":  null,
-      "es_autorretenedor": false,
+└─ Si RUT NO existe → Continuar al PASO 2 reportarlo en observaciones :
       "observaciones": ["RUT no disponible en documentos adjuntos"]
 
- PASO 2: EXTRACCIÓN DE DATOS DEL RUT (SOLO del documento RUT)
-Buscar TEXTUALMENTE en el RUT:
+ PASO 2: EXTRACCIÓN DE DATOS DE LA NATURALEZA DEL PROVEEDOR 
+Buscar TEXTUALMENTE la informacion en el siguiente orden RUT → FACTURA → ANEXOS:
+Si no encuentras el RUT, buscar en FACTURA, si no en ANEXOS.
 
  TIPO DE CONTRIBUYENTE (Sección 24 o equivalente):
 ├─ Si encuentras "Persona natural" → es_persona_natural: true
@@ -117,14 +115,19 @@ Buscar TEXTUALMENTE en el RUT:
 └─ Si NO encuentras → es_persona_natural: null
 
  RÉGIMEN TRIBUTARIO (Buscar texto exacto):
-├─ Si encuentras "RÉGIMEN SIMPLE" o "SIMPLE" → regimen_tributario: "SIMPLE"
+├─ Si encuentras "RÉGIMEN SIMPLE" o "SIMPLE" o codigo "O-47" → regimen_tributario: "SIMPLE"
 ├─ Si encuentras "RÉGIMEN ORDINARIO" , "ORDINARIO" o "régimen ordinar" → regimen_tributario: "ORDINARIO"
 ├─ Si encuentras "RÉGIMEN ESPECIAL", "ESPECIAL" o "SIN ÁNIMO DE LUCRO" → regimen_tributario: "ESPECIAL"
 └─ Si NO encuentras → regimen_tributario: null
 
  AUTORRETENEDOR:
-├─ Si encuentras texto "ES AUTORRETENEDOR" → es_autorretenedor: true
+├─ Si encuentras texto "ES AUTORRETENEDOR" o codigo "O-15" → es_autorretenedor: true
 └─ Si NO encuentras esa frase → es_autorretenedor: false
+
+CODIGO COMODIN DIAN :
+├─ Si encuentras codigo "R-99-PN" →  regimen_tributario: "ORDINARIO" 
+
+IMPORTANTE : Si encuentras el RUT, prioriza la información de naturaleza del RUT sobre los demas documentos.
 
  PASO 3: IDENTIFICACIÓN DE CONCEPTOS
 
@@ -244,6 +247,7 @@ OBJETO DEL CONTRATO:
 ├─ Buscar EN EL RUT → Sección 24 o "Tipo de contribuyente"
 ├─ Si encuentra "Persona natural" o "natural" → es_persona_natural: true
 ├─ Si encuentra "Persona jurídica" → es_persona_natural: false
+├─ Si NO encuentra RUT → Buscar en FACTURA y ANEXOS en ese orden
 └─ Si NO encuentra información → es_persona_natural: false (DEFAULT)
 
  PASO 2: VALIDAR CONCEPTOS APLICABLES AL ART. 383
@@ -556,8 +560,8 @@ Para CADA consorciado extraer:
 PASO B: ANALIZAR CADA CONSORCIADO INDIVIDUALMENTE
 Para CADA consorciado identificado:
 1. Buscar su RUT individual en los anexos (archivo con su NIT)
-2. Si encuentra RUT individual → Extraer naturaleza tributaria
-3. Si NO encuentra RUT → Todos los campos de naturaleza en null
+2. Si encuentra RUT individual → Extraer naturaleza tributaria del RUT  
+3. Si NO encuentra RUT → Extractar naturaleza tributaria de la FACTURA o ANEXOS en ese orden
 
 Extraer del RUT INDIVIDUAL de cada consorciado:
 TIPO DE CONTRIBUYENTE (Seccion 24 o equivalente):
@@ -595,7 +599,7 @@ PROHIBICIONES ABSOLUTAS:
 ═══════════════════════════════════════════════════════════════════
 NO inventes consorciados no listados
 NO asumas porcentajes de participacion
-NO deduzcas naturaleza sin RUT especifico
+NO deduzcas naturaleza sin informacion especifica
 NO mapees conceptos a categorias tributarias (solo extrae literal)
 NO calcules valores no mostrados
 NO asumas que consorciados tienen misma naturaleza

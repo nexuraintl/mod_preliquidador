@@ -863,11 +863,11 @@ class LiquidadorRetencion:
         
         # 🔧 VALIDACIÓN MEJORADA: Manejar None correctamente
         if not naturaleza or naturaleza is None:
-            resultado["advertencias"].append("No se pudo identificar la naturaleza del tercero. Por favor adjunte el RUT.")
+            resultado["advertencias"].append("No se pudo identificar la naturaleza del tercero. Por favor adjunte el RUT actualizado.")
             logger.warning("Naturaleza del tercero no identificada o es None")
             return resultado
         
-        # 🔧 VALIDACIÓN SEGURA: Verificar que el objeto tiene atributos antes de acceder
+        #  VALIDACIÓN SEGURA: Verificar que el objeto tiene atributos antes de acceder
         try:
             # Validar autorretenedor
             if hasattr(naturaleza, 'es_autorretenedor') and naturaleza.es_autorretenedor is True:
@@ -899,10 +899,10 @@ class LiquidadorRetencion:
             if datos_faltantes:
                 resultado["advertencias"].append(
                     f"Faltan datos: {', '.join(datos_faltantes)}. "
-                    "Por favor adjunte el RUT para completar la información."
+                    "Por favor adjunte el RUT actualizado para completar la información."
                 )
                 resultado["puede_continuar"] = False
-                resultado["mensajes"].append(f"Datos faltantes de la naturaleza del tercero - NO se puede practicar retención : {datos_faltantes}")
+                resultado["mensajes"].append(f"No se identificaron los siguientes datos : {datos_faltantes} de la naturaleza del proveedor, Por favor adjunte el RUT actualizado")
                 resultado["estado"] = "preliquidacion_sin_finalizar"  # NUEVO
                 logger.warning(f"Datos faltantes de la naturaleza del tercero: {datos_faltantes}")
                 return resultado
