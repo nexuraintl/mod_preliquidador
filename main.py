@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
 # Configuración de logging - INFRASTRUCTURE LAYER
@@ -90,6 +91,7 @@ import io
 
 # Importar utilidades - Respuestas mock para validaciones (SRP)
 from utils.mockups import crear_respuesta_negocio_no_parametrizado
+from utils.error_handlers import registrar_exception_handler
 
 # ===============================
 # INICIALIZACIÓN DE BASE DE DATOS
@@ -163,6 +165,10 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan
 )
+
+# SOLID: Registrar exception handler para validaciones (SRP)
+# Convierte errores 422 de validación Pydantic en respuestas 200 OK con estructura mockup
+registrar_exception_handler(app)
 
 
 @app.post("/api/procesar-facturas")
