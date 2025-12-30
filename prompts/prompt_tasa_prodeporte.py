@@ -68,10 +68,10 @@ TAREAS DE EXTRACCION
 
 
 2. MENCION DE TASA PRODEPORTE (analizar SOLO las observaciones):
-   - aplica_tasa_prodeporte: true si encuentras mencion de " validar tasa prodeporte",
+   - aplica_tasa_prodeporte: true, si encuentras mencion de " validar tasa prodeporte",
      "aplicar tasa prodeporte", "revisar tasa pro deporte" o similares que indiquen la aplicacion de la tasa prodeporte.
-   - aplica_tasa_prodeporte: False si no  encuentras mencion de tasa prodeporte o si encuentras " no aplicar tasa prodeporte" o similares que indiquen que NO se debe aplicar.
-   - texto_mencion_tasa: Copia textualmente el fragmento donde identificaste la   mencion de si aplica o no aplica .
+   - aplica_tasa_prodeporte: false, si no  encuentras mencion de tasa prodeporte o si encuentras " no aplicar tasa prodeporte" o similares que indiquen que NO se debe aplicar.
+   - texto_mencion_tasa: Copia textualmente el fragmento donde identificaste la mencion de si aplica o no aplica .
      Debe ser el texto LITERAL de las observaciones. Si no encuentras mencion, string vacio "".
 
 3. MUNICIPIO/DEPARTAMENTO (analizar SOLO las observaciones):

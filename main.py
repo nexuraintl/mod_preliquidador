@@ -166,7 +166,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# SOLID: Registrar exception handler para validaciones (SRP)
+# Registrar exception handler para validaciones (SRP)
 # Convierte errores 422 de validación Pydantic en respuestas 200 OK con estructura mockup
 registrar_exception_handler(app)
 
@@ -1034,7 +1034,7 @@ async def procesar_facturas_integrado(
                         "tipo_cuantia": "",
                         "base_gravable": 0.0,
                         "ID_contrato": "",
-                        "observaciones": analisis_observaciones_timbre.get("observaciones_analisis", "No se identifico aplicacion del impuesto al timbre en observaciones")
+                        "observaciones": "No se identifico aplicacion del impuesto al timbre en observaciones"
                     }
                     logger.info(" Timbre: No aplica según observaciones de PGD")
                 else:

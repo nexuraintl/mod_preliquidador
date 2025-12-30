@@ -1398,10 +1398,12 @@ class ProcesadorGemini:
         Limpia la respuesta de Gemini para extraer y corregir JSON.
 
         Correcciones aplicadas:
-        1. Extrae JSON de bloques markdown
-        2. Corrige comillas dobles duplicadas
-        3. Remueve comas antes de } o ]
-        4. Corrige guiones Unicode (– a -)
+        1. Extrae JSON de bloques markdown (mejorado con regex)
+        2. Limpia caracteres de control no validos en JSON
+        3. Corrige comillas dobles duplicadas
+        4. Remueve comas antes de } o ]
+        5. Corrige guiones Unicode (– a -)
+        6. Normaliza strings vacios problematicos
 
         Args:
             respuesta: Respuesta cruda de Gemini
@@ -1410,17 +1412,20 @@ class ProcesadorGemini:
             str: JSON limpio y corregido
 
         Raises:
-            ValueError: Si no se puede extraer JSON válido
+            ValueError: Si no se puede extraer JSON valido
         """
         try:
-            # PASO 1: Eliminar bloques de código markdown si existen
-            if '```json' in respuesta:
-                inicio_json = respuesta.find('```json') + 7
-                fin_json = respuesta.find('```', inicio_json)
-                if fin_json != -1:
-                    respuesta = respuesta[inicio_json:fin_json].strip()
+            import re
 
-            # PASO 2: Buscar el primer { y el último }
+            # PASO 1 MEJORADO: Eliminar bloques markdown con regex robusto
+            # Elimina ```json seguido de espacios/saltos de linea
+            respuesta = re.sub(r'```json\s*', '', respuesta)
+            # Elimina ``` final seguido de espacios/saltos de linea
+            respuesta = re.sub(r'```\s*$', '', respuesta)
+            # Elimina posibles ``` intermedios
+            respuesta = re.sub(r'```', '', respuesta)
+
+            # PASO 2: Buscar el primer { y el ultimo }
             inicio = respuesta.find('{')
             fin = respuesta.rfind('}') + 1
 
@@ -1428,9 +1433,9 @@ class ProcesadorGemini:
                 json_limpio = respuesta[inicio:fin]
 
                 # PASO 3: Correcciones de sintaxis JSON comunes
-                # 3.1: Corregir comillas dobles duplicadas (CHOCÓ"" -> CHOCÓ")
-                import re
-                json_limpio = re.sub(r'""', '"', json_limpio)
+                # 3.1: Corregir comillas dobles duplicadas SOLO despues de texto (CHOCO"" -> CHOCO")
+                # NO afecta strings vacios validos como ": ""
+                json_limpio = re.sub(r'([a-zA-ZÁ-ú0-9\s])""+', r'\1"', json_limpio)
 
                 # 3.2: Remover comas antes de cierre de objeto o array
                 json_limpio = re.sub(r',\s*}', '}', json_limpio)  # , } -> }
@@ -1439,33 +1444,63 @@ class ProcesadorGemini:
                 # 3.3: Corregir guiones Unicode (– a -)
                 json_limpio = json_limpio.replace('–', '-')
 
-                # PASO 4: Verificar que sea JSON válido
+                # 3.4 NUEVO: Limpiar caracteres de control no validos dentro de strings
+                # Esto elimina \n, \r, \t, etc. que causan "Invalid control character"
+                json_limpio = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_limpio)
+
+                # 3.5 NUEVO: Normalizar strings vacios problematicos
+                # "  " -> "" y "   " -> ""
+                json_limpio = re.sub(r':\s*"\s+"', ': ""', json_limpio)
+
+                # PASO 4: Verificar que sea JSON valido
                 json.loads(json_limpio)
                 logger.info(" JSON limpio y validado correctamente")
                 return json_limpio
             else:
-                raise ValueError("No se encontró JSON válido en la respuesta")
+                raise ValueError("No se encontro JSON valido en la respuesta")
 
         except json.JSONDecodeError as e:
             # Intentar correcciones adicionales
             logger.warning(f"Error de sintaxis JSON: {e}")
-            logger.warning(f"JSON problemático (primeros 500 chars): {json_limpio[:500] if 'json_limpio' in locals() else respuesta[:500]}")
+            logger.warning(f"JSON problematico (primeros 500 chars): {json_limpio[:500] if 'json_limpio' in locals() else respuesta[:500]}")
 
             try:
-                # Intento de corrección agresiva: remover líneas problemáticas
+                # Intento de correccion agresiva: remover lineas problematicas
                 if 'json_limpio' in locals():
-                    logger.info(" Intentando corrección agresiva de JSON...")
-                    # Remover saltos de línea y espacios extras
+                    logger.info(" Intentando correccion agresiva de JSON...")
+                    # Remover saltos de linea y espacios extras
                     json_limpio_agresivo = ' '.join(json_limpio.split())
                     json.loads(json_limpio_agresivo)
-                    logger.info(" Corrección agresiva exitosa")
+                    logger.info(" Correccion agresiva exitosa")
                     return json_limpio_agresivo
             except:
                 pass
 
-            # Si todo falla, devolver respuesta original
-            logger.error(" No se pudo corregir el JSON, usando respuesta original")
-            return respuesta
+            # Si todo falla, intentar limpiar la respuesta original sin markdown
+            try:
+                logger.info(" Intentando limpiar respuesta original sin markdown...")
+                respuesta_sin_markdown = re.sub(r'```json\s*', '', respuesta)
+                respuesta_sin_markdown = re.sub(r'```\s*', '', respuesta_sin_markdown)
+
+                # Buscar JSON en respuesta sin markdown
+                inicio = respuesta_sin_markdown.find('{')
+                fin = respuesta_sin_markdown.rfind('}') + 1
+
+                if inicio != -1 and fin != 0:
+                    json_final = respuesta_sin_markdown[inicio:fin]
+                    # Aplicar limpieza de caracteres de control
+                    json_final = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_final)
+                    json.loads(json_final)
+                    logger.info(" Limpieza de respuesta original exitosa")
+                    return json_final
+            except:
+                pass
+
+            # Si todo falla, devolver respuesta original limpia de markdown
+            logger.error(" No se pudo corregir el JSON, usando respuesta con limpieza basica")
+            respuesta_limpia = re.sub(r'```json\s*', '', respuesta)
+            respuesta_limpia = re.sub(r'```\s*', '', respuesta_limpia)
+            return respuesta_limpia.strip()
 
         except Exception as e:
             logger.error(f" Error limpiando JSON: {e}")
