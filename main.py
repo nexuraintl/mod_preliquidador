@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 # ===============================
 
 # Importar clases desde módulos
+from Clasificador.clasificador_tp import ClasificadorTasaProdeporte
 from Clasificador import ProcesadorGemini, ClasificadorRetefuente
 from Clasificador.clasificador_ica import ClasificadorICA
 from Clasificador.clasificador_timbre import ClasificadorTimbre
@@ -412,6 +413,8 @@ async def procesar_facturas_integrado(
             estructura_contable=estructura_contable,
             db_manager=db_manager
         )
+        
+        clasificador_tasa_prodeporte = ClasificadorTasaProdeporte(procesador_gemini=clasificador )
 
         logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
@@ -528,7 +531,7 @@ async def procesar_facturas_integrado(
 
         # Tarea 5: Análisis de Tasa Prodeporte - NUEVA FUNCIONALIDAD
         if aplica_tasa_prodeporte:
-            tarea_tasa_prodeporte = clasificador.analizar_tasa_prodeporte(documentos_clasificados, None, cache_archivos, observaciones_tp)
+            tarea_tasa_prodeporte = clasificador_tasa_prodeporte.analizar_tasa_prodeporte(documentos_clasificados, None, cache_archivos, observaciones_tp)
             tareas_analisis.append(("tasa_prodeporte", tarea_tasa_prodeporte))
             logger.info(f"✓ Tasa Prodeporte: Análisis activado para NIT {nit_administrativo}")
 
