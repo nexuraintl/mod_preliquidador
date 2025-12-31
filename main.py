@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 # ===============================
 
 # Importar clases desde módulos
+from Clasificador.clasificador_estampillas_g import ClasificadorEstampillasGenerales
 from Clasificador.clasificador_tp import ClasificadorTasaProdeporte
 from Clasificador import ProcesadorGemini, ClasificadorRetefuente
 from Clasificador.clasificador_ica import ClasificadorICA
@@ -415,6 +416,8 @@ async def procesar_facturas_integrado(
         )
         
         clasificador_tasa_prodeporte = ClasificadorTasaProdeporte(procesador_gemini=clasificador )
+        
+        clasificador_estampillas_generales = ClasificadorEstampillasGenerales(procesador_gemini=clasificador )
 
         logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
@@ -526,7 +529,7 @@ async def procesar_facturas_integrado(
         
         # Tarea 4: Análisis de Estampillas Generales -  NUEVA FUNCIONALIDAD
         # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
-        tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
+        tarea_estampillas_generales = clasificador_estampillas_generales.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
         tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
 
         # Tarea 5: Análisis de Tasa Prodeporte - NUEVA FUNCIONALIDAD
