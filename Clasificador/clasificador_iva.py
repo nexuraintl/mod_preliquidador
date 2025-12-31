@@ -41,7 +41,7 @@ class ClasificadorIva:
                   ):
         self.procesador_gemini = procesador_gemini
         
-        logger.info(f"Clasificador Iva inicializado correctamente.")
+        logger.info("Clasificador Iva inicializado correctamente.")
     
     async def analizar_iva(self, documentos_clasificados: Dict[str, Dict], archivos_directos: List[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
         
@@ -101,7 +101,7 @@ class ClasificadorIva:
             if not factura_texto and not posibles_facturas_directas:
                 raise ValueError("No se encontró una FACTURA en los documentos para análisis de IVA")
 
-            logger.info(f"Factura encontrada para analisis IVA")
+            logger.info("Factura encontrada para analisis IVA")
             for archivo in archivos_directos:
                 try:
                     if hasattr(archivo, 'filename') and archivo.filename:
@@ -154,7 +154,7 @@ class ClasificadorIva:
             es_responsable_iva = extraccion_rut.get("es_responsable_iva")
             rut_disponible = validaciones.get("rut_disponible", False)
 
-            logger.info(f" Análisis IVA completado (v2.0 SOLID):")
+            logger.info(" Análisis IVA completado (v2.0 SOLID):")
             logger.info(f"   - Valor IVA: ${valor_iva:,.2f}")
             logger.info(f"   - Responsable IVA: {es_responsable_iva}")
             logger.info(f"   - RUT disponible: {rut_disponible}")

@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 from pathlib import Path
-
+import traceback
 # Google Gemini
 import google.generativeai as genai
 
@@ -40,7 +40,7 @@ class ClasificadorTasaProdeporte:
                   procesador_gemini: 'ProcesadorGemini',
                   ):
         self.procesador_gemini = procesador_gemini
-        logger.info(f"ClasificadorTasaProdeporte inicializado correctamente.") 
+        logger.info("ClasificadorTasaProdeporte inicializado correctamente.") 
         
         
 
@@ -164,7 +164,7 @@ class ClasificadorTasaProdeporte:
                     else:
                         analisis_dict[campo] = ""
 
-            logger.info(f"Análisis Tasa Prodeporte completado:")
+            logger.info("Análisis Tasa Prodeporte completado:")
             logger.info(f"- Factura sin IVA: ${analisis_dict.get('factura_sin_iva', 0):,.2f}")
             logger.info(f"- Aplica Tasa Prodeporte: {analisis_dict.get('aplica_tasa_prodeporte', False)}")
             logger.info(f"- Municipio identificado: {analisis_dict.get('municipio_identificado', 'N/A')}")

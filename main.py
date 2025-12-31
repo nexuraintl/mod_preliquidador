@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 # Importar clases desde módulos
 
+from Clasificador.clasificador_obra_uni import ClasificadorObraUni
 from Clasificador.clasificador_iva import ClasificadorIva   
 from Clasificador.clasificador_estampillas_g import ClasificadorEstampillasGenerales
 from Clasificador.clasificador_tp import ClasificadorTasaProdeporte
@@ -410,7 +411,7 @@ async def procesar_facturas_integrado(
         # Clasificar documentos usando enfoque híbrido multimodal
         clasificador = ProcesadorGemini(estructura_contable=estructura_contable, db_manager=db_manager)
 
-        # Crear clasificador especializado de retefuente (SOLID - Composición)
+        # Instanciar clasificadores especializados
         clasificador_retefuente = ClasificadorRetefuente(
             procesador_gemini=clasificador,
             estructura_contable=estructura_contable,
@@ -422,6 +423,8 @@ async def procesar_facturas_integrado(
         clasificador_estampillas_generales = ClasificadorEstampillasGenerales(procesador_gemini=clasificador )
         
         clasificador_iva = ClasificadorIva(procesador_gemini=clasificador )
+        
+        clasificador_obra_uni = ClasificadorObraUni(procesador_gemini=clasificador )
 
         logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
@@ -521,7 +524,7 @@ async def procesar_facturas_integrado(
         
         # Tarea 2: Análisis de Impuestos Especiales (si aplican)
         if aplica_estampilla or aplica_obra_publica:
-            tarea_impuestos_especiales = clasificador.analizar_estampilla(documentos_clasificados, None, cache_archivos)
+            tarea_impuestos_especiales = clasificador_obra_uni.analizar_estampilla(documentos_clasificados, None, cache_archivos)
             tareas_analisis.append(("impuestos_especiales", tarea_impuestos_especiales))
         
         # Tarea 3: Análisis de IVA (si aplica y no es recurso extranjero) - NUEVA TAREA
