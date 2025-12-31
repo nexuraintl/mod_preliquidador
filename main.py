@@ -47,6 +47,8 @@ logger = logging.getLogger(__name__)
 # ===============================
 
 # Importar clases desde módulos
+from Clasificador.clasificador_estampillas_g import ClasificadorEstampillasGenerales
+from Clasificador.clasificador_tp import ClasificadorTasaProdeporte
 from Clasificador import ProcesadorGemini, ClasificadorRetefuente
 from Clasificador.clasificador_ica import ClasificadorICA
 from Clasificador.clasificador_timbre import ClasificadorTimbre
@@ -166,7 +168,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# SOLID: Registrar exception handler para validaciones (SRP)
+# Registrar exception handler para validaciones (SRP)
 # Convierte errores 422 de validación Pydantic en respuestas 200 OK con estructura mockup
 registrar_exception_handler(app)
 
@@ -412,6 +414,10 @@ async def procesar_facturas_integrado(
             estructura_contable=estructura_contable,
             db_manager=db_manager
         )
+        
+        clasificador_tasa_prodeporte = ClasificadorTasaProdeporte(procesador_gemini=clasificador )
+        
+        clasificador_estampillas_generales = ClasificadorEstampillasGenerales(procesador_gemini=clasificador )
 
         logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
@@ -523,12 +529,12 @@ async def procesar_facturas_integrado(
         
         # Tarea 4: Análisis de Estampillas Generales -  NUEVA FUNCIONALIDAD
         # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
-        tarea_estampillas_generales = clasificador.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
+        tarea_estampillas_generales = clasificador_estampillas_generales.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
         tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
 
         # Tarea 5: Análisis de Tasa Prodeporte - NUEVA FUNCIONALIDAD
         if aplica_tasa_prodeporte:
-            tarea_tasa_prodeporte = clasificador.analizar_tasa_prodeporte(documentos_clasificados, None, cache_archivos, observaciones_tp)
+            tarea_tasa_prodeporte = clasificador_tasa_prodeporte.analizar_tasa_prodeporte(documentos_clasificados, None, cache_archivos, observaciones_tp)
             tareas_analisis.append(("tasa_prodeporte", tarea_tasa_prodeporte))
             logger.info(f"✓ Tasa Prodeporte: Análisis activado para NIT {nit_administrativo}")
 
@@ -1034,7 +1040,7 @@ async def procesar_facturas_integrado(
                         "tipo_cuantia": "",
                         "base_gravable": 0.0,
                         "ID_contrato": "",
-                        "observaciones": analisis_observaciones_timbre.get("observaciones_analisis", "No se identifico aplicacion del impuesto al timbre en observaciones")
+                        "observaciones": "No se identifico aplicacion del impuesto al timbre en observaciones"
                     }
                     logger.info(" Timbre: No aplica según observaciones de PGD")
                 else:

@@ -140,7 +140,9 @@ class ProcesadorGemini:
             # Importar clasificadores especializados
             from .clasificador_retefuente import ClasificadorRetefuente
             from .clasificador_consorcio import ClasificadorConsorcio
-
+            from .clasificador_tp import ClasificadorTasaProdeporte
+            from .clasificador_estampillas_g import ClasificadorEstampillasGenerales
+            
             # Crear instancia de ClasificadorRetefuente
             self.clasificador_retefuente = ClasificadorRetefuente(
                 procesador_gemini=self,
@@ -155,6 +157,15 @@ class ProcesadorGemini:
                 clasificador_retefuente=self.clasificador_retefuente
             )
             logger.info("ClasificadorConsorcio inicializado correctamente")
+            
+            # crear instancia de ClasificadorTasaProdeporte
+            self.clasificador_tasa_prodeporte = ClasificadorTasaProdeporte(procesador_gemini=self)
+            
+            logger.info("ClasificadorTasaProdeporte inicializado correctamente")
+            
+            self.clasificador_estampillas_generales = ClasificadorEstampillasGenerales(procesador_gemini=self)
+            
+            logger.info("ClasificadorEstampillasGenerales inicializado correctamente")
 
         except Exception as e:
             logger.error(f"Error inicializando clasificadores especializados: {e}")
@@ -875,7 +886,7 @@ class ProcesadorGemini:
             raise ValueError(f"Error híbrido en análisis de factura: {str(e)}")
     
     # ===============================
-    # 🆕 NUEVAS FUNCIONES DE VALIDACIÓN ROBUSTA - SINGLE RETRY
+    #  NUEVAS FUNCIONES DE VALIDACIÓN ROBUSTA - SINGLE RETRY
     # ===============================
     
     def _clonar_uploadfile_para_worker(self, archivo_bytes: bytes, nombre_archivo: str) -> 'UploadFile':
@@ -969,7 +980,7 @@ class ProcesadorGemini:
         return archivos_clonados
     
     # ===============================
-    # 🆕 FUNCIÓN COORDINADORA PARA CONCURRENCIA
+    #  FUNCIÓN COORDINADORA PARA CONCURRENCIA
     # ===============================
     
     async def preparar_archivos_para_workers_paralelos(self, archivos_directos: List[UploadFile]) -> Dict[str, bytes]:
@@ -1398,10 +1409,12 @@ class ProcesadorGemini:
         Limpia la respuesta de Gemini para extraer y corregir JSON.
 
         Correcciones aplicadas:
-        1. Extrae JSON de bloques markdown
-        2. Corrige comillas dobles duplicadas
-        3. Remueve comas antes de } o ]
-        4. Corrige guiones Unicode (– a -)
+        1. Extrae JSON de bloques markdown (mejorado con regex)
+        2. Limpia caracteres de control no validos en JSON
+        3. Corrige comillas dobles duplicadas
+        4. Remueve comas antes de } o ]
+        5. Corrige guiones Unicode (– a -)
+        6. Normaliza strings vacios problematicos
 
         Args:
             respuesta: Respuesta cruda de Gemini
@@ -1410,17 +1423,20 @@ class ProcesadorGemini:
             str: JSON limpio y corregido
 
         Raises:
-            ValueError: Si no se puede extraer JSON válido
+            ValueError: Si no se puede extraer JSON valido
         """
         try:
-            # PASO 1: Eliminar bloques de código markdown si existen
-            if '```json' in respuesta:
-                inicio_json = respuesta.find('```json') + 7
-                fin_json = respuesta.find('```', inicio_json)
-                if fin_json != -1:
-                    respuesta = respuesta[inicio_json:fin_json].strip()
+            import re
 
-            # PASO 2: Buscar el primer { y el último }
+            # PASO 1 MEJORADO: Eliminar bloques markdown con regex robusto
+            # Elimina ```json seguido de espacios/saltos de linea
+            respuesta = re.sub(r'```json\s*', '', respuesta)
+            # Elimina ``` final seguido de espacios/saltos de linea
+            respuesta = re.sub(r'```\s*$', '', respuesta)
+            # Elimina posibles ``` intermedios
+            respuesta = re.sub(r'```', '', respuesta)
+
+            # PASO 2: Buscar el primer { y el ultimo }
             inicio = respuesta.find('{')
             fin = respuesta.rfind('}') + 1
 
@@ -1428,9 +1444,9 @@ class ProcesadorGemini:
                 json_limpio = respuesta[inicio:fin]
 
                 # PASO 3: Correcciones de sintaxis JSON comunes
-                # 3.1: Corregir comillas dobles duplicadas (CHOCÓ"" -> CHOCÓ")
-                import re
-                json_limpio = re.sub(r'""', '"', json_limpio)
+                # 3.1: Corregir comillas dobles duplicadas SOLO despues de texto (CHOCO"" -> CHOCO")
+                # NO afecta strings vacios validos como ": ""
+                json_limpio = re.sub(r'([a-zA-ZÁ-ú0-9\s])""+', r'\1"', json_limpio)
 
                 # 3.2: Remover comas antes de cierre de objeto o array
                 json_limpio = re.sub(r',\s*}', '}', json_limpio)  # , } -> }
@@ -1439,33 +1455,63 @@ class ProcesadorGemini:
                 # 3.3: Corregir guiones Unicode (– a -)
                 json_limpio = json_limpio.replace('–', '-')
 
-                # PASO 4: Verificar que sea JSON válido
+                # 3.4 NUEVO: Limpiar caracteres de control no validos dentro de strings
+                # Esto elimina \n, \r, \t, etc. que causan "Invalid control character"
+                json_limpio = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_limpio)
+
+                # 3.5 NUEVO: Normalizar strings vacios problematicos
+                # "  " -> "" y "   " -> ""
+                json_limpio = re.sub(r':\s*"\s+"', ': ""', json_limpio)
+
+                # PASO 4: Verificar que sea JSON valido
                 json.loads(json_limpio)
                 logger.info(" JSON limpio y validado correctamente")
                 return json_limpio
             else:
-                raise ValueError("No se encontró JSON válido en la respuesta")
+                raise ValueError("No se encontro JSON valido en la respuesta")
 
         except json.JSONDecodeError as e:
             # Intentar correcciones adicionales
             logger.warning(f"Error de sintaxis JSON: {e}")
-            logger.warning(f"JSON problemático (primeros 500 chars): {json_limpio[:500] if 'json_limpio' in locals() else respuesta[:500]}")
+            logger.warning(f"JSON problematico (primeros 500 chars): {json_limpio[:500] if 'json_limpio' in locals() else respuesta[:500]}")
 
             try:
-                # Intento de corrección agresiva: remover líneas problemáticas
+                # Intento de correccion agresiva: remover lineas problematicas
                 if 'json_limpio' in locals():
-                    logger.info(" Intentando corrección agresiva de JSON...")
-                    # Remover saltos de línea y espacios extras
+                    logger.info(" Intentando correccion agresiva de JSON...")
+                    # Remover saltos de linea y espacios extras
                     json_limpio_agresivo = ' '.join(json_limpio.split())
                     json.loads(json_limpio_agresivo)
-                    logger.info(" Corrección agresiva exitosa")
+                    logger.info(" Correccion agresiva exitosa")
                     return json_limpio_agresivo
             except:
                 pass
 
-            # Si todo falla, devolver respuesta original
-            logger.error(" No se pudo corregir el JSON, usando respuesta original")
-            return respuesta
+            # Si todo falla, intentar limpiar la respuesta original sin markdown
+            try:
+                logger.info(" Intentando limpiar respuesta original sin markdown...")
+                respuesta_sin_markdown = re.sub(r'```json\s*', '', respuesta)
+                respuesta_sin_markdown = re.sub(r'```\s*', '', respuesta_sin_markdown)
+
+                # Buscar JSON en respuesta sin markdown
+                inicio = respuesta_sin_markdown.find('{')
+                fin = respuesta_sin_markdown.rfind('}') + 1
+
+                if inicio != -1 and fin != 0:
+                    json_final = respuesta_sin_markdown[inicio:fin]
+                    # Aplicar limpieza de caracteres de control
+                    json_final = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_final)
+                    json.loads(json_final)
+                    logger.info(" Limpieza de respuesta original exitosa")
+                    return json_final
+            except:
+                pass
+
+            # Si todo falla, devolver respuesta original limpia de markdown
+            logger.error(" No se pudo corregir el JSON, usando respuesta con limpieza basica")
+            respuesta_limpia = re.sub(r'```json\s*', '', respuesta)
+            respuesta_limpia = re.sub(r'```\s*', '', respuesta_limpia)
+            return respuesta_limpia.strip()
 
         except Exception as e:
             logger.error(f" Error limpiando JSON: {e}")
@@ -1619,7 +1665,7 @@ class ProcesadorGemini:
  
 
     # ===============================
-    # ✅ NUEVA FUNCIONALIDAD: ANÁLISIS DE IVA Y RETEIVA
+    #  NUEVA FUNCIONALIDAD: ANÁLISIS DE IVA Y RETEIVA
     # ===============================
 
     async def analizar_iva(self, documentos_clasificados: Dict[str, Dict], archivos_directos: List[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
@@ -1887,377 +1933,3 @@ class ProcesadorGemini:
             ]
         }
     
-    # ===============================
-    #  NUEVA FUNCIONALIDAD: ANÁLISIS DE ESTAMPILLAS GENERALES
-    # ===============================
-
-    async def analizar_estampillas_generales(self, documentos_clasificados: Dict[str, Dict], archivos_directos: list[UploadFile] = None, cache_archivos: Dict[str, bytes] = None) -> Dict[str, Any]:
-        """
-         Nueva funcionalidad: Análisis de 6 Estampillas Generales.
-        
-        Analiza documentos para identificar información de estampillas:
-        - Procultura
-        - Bienestar
-        - Adulto Mayor
-        - Prouniversidad Pedagógica
-        - Francisco José de Caldas
-        - Prodeporte
-        
-        Solo identificación, NO cálculos.
-        
-        Args:
-            documentos_clasificados: Diccionario {nombre_archivo: {categoria, texto}}
-            
-        Returns:
-            Dict[str, Any]: Análisis completo de estampillas generales
-            
-        Raises:
-            ValueError: Si hay error en el procesamiento
-        """
-        logger.info(" Analizando 6 estampillas generales con Gemini")
-        
-        #  USAR CACHE SI ESTÁ DISPONIBLE (igual que otras funciones)
-        archivos_directos = archivos_directos or []
-        if cache_archivos:
-            logger.info(f" Estampillas generales usando cache de archivos: {len(cache_archivos)} archivos")
-            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
-        elif archivos_directos:
-            logger.info(f" Estampillas generales usando archivos directos originales: {len(archivos_directos)} archivos")
-        
-        try:
-            # Extraer documentos por categoría
-            factura_texto = ""
-            rut_texto = ""
-            anexos_texto = ""
-            cotizaciones_texto = ""
-            anexo_contrato = ""
-            
-            for nombre_archivo, info in documentos_clasificados.items():
-                if info["categoria"] == "FACTURA":
-                    factura_texto = info["texto"]
-                    logger.info(f" Factura encontrada para análisis estampillas: {nombre_archivo}")
-                elif info["categoria"] == "RUT":
-                    rut_texto = info["texto"]
-                    logger.info(f" RUT encontrado para análisis estampillas: {nombre_archivo}")
-                elif info["categoria"] == "ANEXO":
-                    anexos_texto += f"\n\n--- ANEXO: {nombre_archivo} ---\n{info['texto']}"
-                elif info["categoria"] == "COTIZACION":
-                    cotizaciones_texto += f"\n\n--- COTIZACIÓN: {nombre_archivo} ---\n{info['texto']}"
-                elif info["categoria"] == "ANEXO CONCEPTO DE CONTRATO":
-                    anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
-            
-            #  VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
-            hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
-            
-            # 💾 OBTENER NOMBRES DE ARCHIVOS (compatible con cache)
-            nombres_archivos_directos = []
-            if archivos_directos:
-                for archivo in archivos_directos:
-                    try:
-                        if hasattr(archivo, 'filename') and archivo.filename:
-                            nombres_archivos_directos.append(archivo.filename)
-                        else:
-                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                    except Exception as e:
-                        logger.warning(f" Error obteniendo nombre de archivo: {e}")
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-            
-            posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
-            
-            if not hay_factura_texto and not posibles_facturas_directas:
-                raise ValueError("No se encontró una FACTURA en los documentos para análisis de estampillas")
-            logger.info(f"Factura encontrada para análisis estampillas generales")
-            
-            # Generar prompt especializado de estampillas generales
-            prompt = PROMPT_ANALISIS_ESTAMPILLAS_GENERALES(
-                factura_texto=factura_texto,
-                rut_texto=rut_texto,
-                anexos_texto=anexos_texto,
-                cotizaciones_texto=cotizaciones_texto,
-                anexo_contrato=anexo_contrato,
-                nombres_archivos_directos=nombres_archivos_directos
-            )
-            
-            # Llamar a Gemini
-            respuesta = await self._llamar_gemini_hibrido_factura(prompt,archivos_directos)
-            logger.info(f" Respuesta análisis estampillas: {respuesta[:500]}...")
-            
-            # Limpiar respuesta
-            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
-            
-            # Parsear JSON
-            resultado = json.loads(respuesta_limpia)
-            
-            # Guardar respuesta de análisis en Results
-            await self._guardar_respuesta("analisis_estampillas_generales.json", resultado)
-            
-            # Validar estructura mínima requerida
-            if "estampillas_generales" not in resultado:
-                logger.warning(" Campo 'estampillas_generales' no encontrado en respuesta")
-                resultado["estampillas_generales"] = self._obtener_estampillas_default()
-
-            # Extraer información clave para logging (usar resumen interno si existe)
-            estampillas_data = resultado.get("estampillas_generales", [])
-            resumen_data = resultado.get("resumen_analisis", {})
-
-            # Si no hay resumen en la respuesta de Gemini, generarlo solo para logging
-            if not resumen_data:
-                resumen_data = self._obtener_resumen_default(estampillas_data)
-
-            total_identificadas = resumen_data.get("total_estampillas_identificadas", 0)
-            completas = resumen_data.get("estampillas_completas", 0)
-            incompletas = resumen_data.get("estampillas_incompletas", 0)
-
-            logger.info(f" Análisis estampillas completado: {total_identificadas} identificadas, {completas} completas, {incompletas} incompletas")
-
-            # Eliminar resumen_analisis del resultado final - solo se usa internamente para logging
-            if "resumen_analisis" in resultado:
-                del resultado["resumen_analisis"]
-
-            return resultado
-            
-        except json.JSONDecodeError as e:
-            logger.error(f" Error parseando JSON de análisis estampillas: {e}")
-            logger.error(f"Respuesta problemática: {respuesta}")
-            return self._estampillas_fallback("Error parseando respuesta JSON de IA")
-        except Exception as e:
-            logger.error(f" Error en análisis de estampillas: {e}")
-            return self._estampillas_fallback(str(e))
-    
-    def _obtener_estampillas_default(self) -> List[Dict[str, Any]]:
-        """
-        Obtiene estructura por defecto para las 6 estampillas generales.
-
-        NOTA: Los estados se asignan después en el liquidador mediante validaciones Python.
-
-        Returns:
-            List con estructura por defecto de las 6 estampillas (sin estado)
-        """
-        estampillas_nombres = [
-            "Procultura",
-            "Bienestar",
-            "Adulto Mayor",
-            "Prouniversidad Pedagógica",
-            "Francisco José de Caldas",
-            "Prodeporte"
-        ]
-
-        return [
-            {
-                "nombre_estampilla": nombre,
-                "porcentaje": 0.0,  # Default 0
-                "valor_base": 0.0,   # Default 0
-                "valor": 0.0,        # Default 0
-                "texto_referencia": None,
-                "observaciones": "Error en procesamiento - no se pudo analizar"  # Se mantiene para casos de error
-            }
-            for nombre in estampillas_nombres
-        ]
-    
-    def _obtener_resumen_default(self, estampillas: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Genera resumen por defecto basado en lista de estampillas.
-        
-        Args:
-            estampillas: Lista de estampillas procesadas
-            
-        Returns:
-            Dict con resumen por defecto
-        """
-        total = len(estampillas)
-        completas = sum(1 for e in estampillas if e.get("estado") == "preliquidado")
-        incompletas = sum(1 for e in estampillas if e.get("estado") == "preliquidacion_sin_finalizar")
-        no_aplican = sum(1 for e in estampillas if e.get("estado") == "no_aplica_impuesto")
-        
-        return {
-            "total_estampillas_identificadas": completas + incompletas,
-            "estampillas_completas": completas,
-            "estampillas_incompletas": incompletas,
-            "estampillas_no_aplican": no_aplican,
-            "documentos_revisados": ["FACTURA", "ANEXOS", "ANEXO_CONTRATO", "RUT"]
-        }
-    
-    def _estampillas_fallback(self, error_msg: str = "Error procesando estampillas") -> Dict[str, Any]:
-        """
-        Respuesta de emergencia cuando falla el procesamiento de estampillas.
-
-        Args:
-            error_msg: Mensaje de error
-
-        Returns:
-            Dict[str, Any]: Respuesta básica de estampillas
-        """
-        logger.warning(f"Usando fallback de estampillas: {error_msg}")
-
-        estampillas_default = self._obtener_estampillas_default()
-
-        return {
-            "estampillas_generales": estampillas_default,
-            "tipo_procesamiento": "ESTAMPILLAS_FALLBACK",
-            "error": error_msg,
-            "observaciones": [
-                f"Error procesando estampillas: {error_msg}",
-                "Por favor revise manualmente los documentos",
-                "Verifique si los documentos contienen información de estampillas",
-                "Busque menciones de: Procultura, Bienestar, Adulto Mayor, Universidad Pedagógica, Caldas, Prodeporte"
-            ]
-        }
-
-    async def analizar_tasa_prodeporte(
-        self,
-        documentos_clasificados: Dict[str, Dict],
-        archivos_directos: list[UploadFile] = None,
-        cache_archivos: Dict[str, bytes] = None,
-        observaciones_tp: str = None
-    ) -> Dict[str, Any]:
-        """
-        Analiza documentos para extracción de datos de Tasa Prodeporte usando Gemini AI.
-
-        ARQUITECTURA: Separación IA-Validación
-        - Gemini: SOLO extrae datos (factura, IVA, menciones, municipio)
-        - Python: Realiza todas las validaciones y cálculos (en liquidador_TP.py)
-
-        SRP: Solo coordina el análisis con Gemini para Tasa Prodeporte
-
-        Args:
-            documentos_clasificados: Diccionario de documentos clasificados
-            archivos_directos: Lista de archivos directos para procesamiento multimodal
-            cache_archivos: Cache de archivos para workers paralelos
-            observaciones_tp: Observaciones del usuario (opcional)
-
-        Returns:
-            Dict con análisis de Gemini: {
-                "factura_con_iva": float,
-                "factura_sin_iva": float,
-                "iva": float,
-                "aplica_tasa_prodeporte": bool,
-                "texto_mencion_tasa": str,
-                "municipio_identificado": str,
-                "texto_municipio": str
-            }
-        """
-        logger.info("Analizando Tasa Prodeporte con Gemini AI...")
-
-        # USAR CACHE SI ESTÁ DISPONIBLE (igual que estampillas_generales)
-        archivos_directos = archivos_directos or []
-        if cache_archivos:
-            logger.info(f"Tasa Prodeporte usando cache de archivos: {len(cache_archivos)} archivos")
-            archivos_directos = self._obtener_archivos_clonados_desde_cache(cache_archivos)
-        elif archivos_directos:
-            logger.info(f"Tasa Prodeporte usando archivos directos originales: {len(archivos_directos)} archivos")
-
-        try:
-            # Extraer textos de documentos clasificados
-            factura_texto = ""
-            anexos_texto = ""
-
-            for nombre_archivo, datos_doc in documentos_clasificados.items():
-                categoria = datos_doc.get("categoria", "")
-                texto = datos_doc.get("texto", "")
-
-                if categoria == "FACTURA":
-                    factura_texto += f"\n=== {nombre_archivo} ===\n{texto}\n"
-                    logger.info(f"Factura encontrada para análisis Tasa Prodeporte: {nombre_archivo}")
-                elif categoria in ["ANEXO", "ANEXO_CONTRATO", "ANEXO CONCEPTO CONTRATO"]:
-                    anexos_texto += f"\n=== {nombre_archivo} ===\n{texto}\n"
-
-            # Normalizar textos vacíos
-            factura_texto = factura_texto.strip() if factura_texto else "NO DISPONIBLE"
-            anexos_texto = anexos_texto.strip() if anexos_texto else "NO DISPONIBLE"
-
-            # Obtener nombres de archivos directos (compatible con cache)
-            nombres_archivos_directos = []
-            if archivos_directos:
-                for archivo in archivos_directos:
-                    try:
-                        if hasattr(archivo, 'filename') and archivo.filename:
-                            nombres_archivos_directos.append(archivo.filename)
-                        else:
-                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                    except Exception as e:
-                        logger.warning(f"Error obteniendo nombre de archivo: {e}")
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-
-            # Generar prompt especializado
-            from prompts.prompt_tasa_prodeporte import PROMPT_ANALISIS_TASA_PRODEPORTE
-
-            prompt = PROMPT_ANALISIS_TASA_PRODEPORTE(
-                factura_texto=factura_texto,
-                anexos_texto=anexos_texto,
-                observaciones_texto=observaciones_tp if observaciones_tp else "",
-                nombres_archivos_directos=nombres_archivos_directos
-            )
-
-            logger.info(f"Prompt generado para Tasa Prodeporte ({len(prompt)} caracteres)")
-
-            # Llamar a Gemini con soporte multimodal
-            respuesta = await self._llamar_gemini_hibrido_factura(prompt, archivos_directos)
-            logger.info(f"Respuesta análisis Tasa Prodeporte: {respuesta[:500]}...")
-
-            # Limpiar respuesta
-            respuesta_limpia = self._limpiar_respuesta_json(respuesta)
-
-            # Parsear JSON
-            analisis_dict = json.loads(respuesta_limpia)
-
-            # Guardar respuesta de análisis en Results
-            await self._guardar_respuesta("analisis_tasa_prodeporte.json", analisis_dict)
-
-            # Validar estructura esperada
-            campos_esperados = [
-                "factura_con_iva", "factura_sin_iva", "iva",
-                "aplica_tasa_prodeporte", "texto_mencion_tasa",
-                "municipio_identificado", "texto_municipio"
-            ]
-
-            campos_faltantes = [campo for campo in campos_esperados if campo not in analisis_dict]
-
-            if campos_faltantes:
-                logger.warning(f"Campos faltantes en análisis Tasa Prodeporte: {campos_faltantes}")
-                # Agregar campos faltantes con valores por defecto
-                for campo in campos_faltantes:
-                    if campo in ["factura_con_iva", "factura_sin_iva", "iva"]:
-                        analisis_dict[campo] = 0.0
-                    elif campo == "aplica_tasa_prodeporte":
-                        analisis_dict[campo] = False
-                    else:
-                        analisis_dict[campo] = ""
-
-            logger.info(f"Análisis Tasa Prodeporte completado:")
-            logger.info(f"- Factura sin IVA: ${analisis_dict.get('factura_sin_iva', 0):,.2f}")
-            logger.info(f"- Aplica Tasa Prodeporte: {analisis_dict.get('aplica_tasa_prodeporte', False)}")
-            logger.info(f"- Municipio identificado: {analisis_dict.get('municipio_identificado', 'N/A')}")
-
-            return analisis_dict
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parseando JSON de Tasa Prodeporte: {e}")
-            logger.error(f"Respuesta recibida: {respuesta_limpia[:500]}...")
-
-            # Retornar estructura por defecto
-            return {
-                "factura_con_iva": 0.0,
-                "factura_sin_iva": 0.0,
-                "iva": 0.0,
-                "aplica_tasa_prodeporte": False,
-                "texto_mencion_tasa": "",
-                "municipio_identificado": "",
-                "texto_municipio": "",
-                "error": f"Error parseando respuesta de IA: {str(e)}"
-            }
-
-        except Exception as e:
-            logger.error(f"Error analizando Tasa Prodeporte: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-
-            # Retornar estructura por defecto en caso de error
-            return {
-                "factura_con_iva": 0.0,
-                "factura_sin_iva": 0.0,
-                "iva": 0.0,
-                "aplica_tasa_prodeporte": False,
-                "texto_mencion_tasa": "",
-                "municipio_identificado": "",
-                "texto_municipio": "",
-                "error": f"Error técnico: {str(e)}"
-            }
