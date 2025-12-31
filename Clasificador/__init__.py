@@ -16,7 +16,7 @@ from prompts.prompt_clasificador import PROMPT_CLASIFICACION
 from prompts.prompt_retefuente import PROMPT_ANALISIS_FACTURA
 from .clasificador_tp import ClasificadorTasaProdeporte
 from .clasificador_estampillas_g import ClasificadorEstampillasGenerales
-
+from .clasificador_iva import ClasificadorIva
 __all__ = [
     'ProcesadorGemini',
     'ClasificadorRetefuente',
@@ -24,5 +24,6 @@ __all__ = [
     'PROMPT_ANALISIS_FACTURA',
     'ProcesadorConsorcios',
     'ClasificadorTasaProdeporte',
-    'ClasificadorEstampillasGenerales'
+    'ClasificadorEstampillasGenerales',
+    'ClasificadorIva'
 ]

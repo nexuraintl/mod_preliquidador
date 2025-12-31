@@ -47,6 +47,8 @@ logger = logging.getLogger(__name__)
 # ===============================
 
 # Importar clases desde módulos
+
+from Clasificador.clasificador_iva import ClasificadorIva   
 from Clasificador.clasificador_estampillas_g import ClasificadorEstampillasGenerales
 from Clasificador.clasificador_tp import ClasificadorTasaProdeporte
 from Clasificador import ProcesadorGemini, ClasificadorRetefuente
@@ -418,6 +420,8 @@ async def procesar_facturas_integrado(
         clasificador_tasa_prodeporte = ClasificadorTasaProdeporte(procesador_gemini=clasificador )
         
         clasificador_estampillas_generales = ClasificadorEstampillasGenerales(procesador_gemini=clasificador )
+        
+        clasificador_iva = ClasificadorIva(procesador_gemini=clasificador )
 
         logger.info(" Iniciando clasificación híbrida multimodal:")
         logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
@@ -522,7 +526,7 @@ async def procesar_facturas_integrado(
         
         # Tarea 3: Análisis de IVA (si aplica y no es recurso extranjero) - NUEVA TAREA
         if aplica_iva and not es_recurso_extranjero:
-            tarea_iva = clasificador.analizar_iva(documentos_clasificados, None, cache_archivos)
+            tarea_iva = clasificador_iva.analizar_iva(documentos_clasificados, None, cache_archivos)
             tareas_analisis.append(("iva_reteiva", tarea_iva))
         elif aplica_iva and es_recurso_extranjero:
             logger.info(" IVA/ReteIVA: No se procesará - Recurso de fuente extranjera detectado")
