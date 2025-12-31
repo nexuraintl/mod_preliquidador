@@ -407,9 +407,6 @@ class ProcesadorGemini:
             logger.error(f" Textos preprocesados fallidos: {list(textos_preprocesados.keys())}")
             raise ValueError(f"Error en clasificación híbrida: {str(e)}")
 
-    # ===============================
-    # NUEVA FUNCIÓN: _llamar_gemini_hibrido
-    # ===============================
     
     async def _llamar_gemini_hibrido(self, contents: List) -> str:
         """
@@ -557,11 +554,6 @@ class ProcesadorGemini:
             logger.error(f" Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
             raise ValueError(f"Error híbrido de IA: {str(e)}")
 
-    # ===============================
-    # NOTA: Funciones de Retefuente movidas a clasificador_retefuente.py (SRP)
-    # Funciones movidas: analizar_factura, _analizar_articulo_383, _obtener_campo_art383_default,
-    # _art383_fallback, _analisis_fallback, funciones de conceptos retefuente y extranjeros
-    # ===============================
 
     async def analizar_consorcio(self,
                                   documentos_clasificados: Dict[str, Dict],
@@ -634,27 +626,27 @@ class ProcesadorGemini:
             logger.info(f" Análisis híbrido de factura con timeout de {timeout_segundos}s")
             logger.info(f" Contenido: 1 prompt de análisis + {len(archivos_directos)} archivos directos")
 
-            # ✅ CREAR CONTENIDO MULTIMODAL CORRECTO PARA ANÁLISIS
+            #  CREAR CONTENIDO MULTIMODAL CORRECTO PARA ANÁLISIS
             contenido_multimodal = []
 
             # Agregar prompt de análisis (primer elemento)
             contenido_multimodal.append(prompt)
             logger.info(f"Prompt de análisis agregado: {len(prompt):,} caracteres")
 
-            # ✅ PROCESAR ARCHIVOS DIRECTOS CON VALIDACIÓN ROBUSTA
+            #  PROCESAR ARCHIVOS DIRECTOS CON VALIDACIÓN ROBUSTA
             for i, archivo in enumerate(archivos_directos):
                 try:
-                    # 🔍 LOGGING INICIAL PARA DIAGNÓSTICO
+                    #  LOGGING INICIAL PARA DIAGNÓSTICO
                     nombre_archivo_debug = getattr(archivo, 'filename', f'archivo_sin_nombre_{i+1}')
                     tipo_archivo = type(archivo).__name__
                     logger.info(f" Procesando archivo {i+1}/{len(archivos_directos)}: {nombre_archivo_debug} (Tipo: {tipo_archivo})")
                     
-                    # 🆕 PASO 1: LECTURA SEGURA CON RETRY MEJORADA
+                    #  PASO 1: LECTURA SEGURA CON RETRY MEJORADA
                     archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
                     
-                    # 🆕 PASO 2: VALIDACIÓN ESPECÍFICA PARA PDFs
+                    #  PASO 2: VALIDACIÓN ESPECÍFICA PARA PDFs
                     if archivo_bytes.startswith(b'%PDF'):
-                        # 🚨 VALIDACIÓN CRÍTICA: Verificar que el PDF tiene páginas
+                        #  VALIDACIÓN CRÍTICA: Verificar que el PDF tiene páginas
                         if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
                             logger.error(f"PDF inválido o sin páginas, omitiendo: {nombre_archivo}")
                             continue  # Saltar este archivo problemaático
@@ -691,7 +683,7 @@ class ProcesadorGemini:
                         }
                         mime_type = mime_type_map.get(extension, 'application/octet-stream')
                         
-                        # 🚨 VALIDACIÓN ADICIONAL PARA PDFs POR EXTENSIÓN
+                        #  VALIDACIÓN ADICIONAL PARA PDFs POR EXTENSIÓN
                         if extension == 'pdf':
                             if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
                                 logger.error(f" PDF detectado por extensión inválido, omitiendo: {nombre_archivo}")
@@ -716,7 +708,7 @@ class ProcesadorGemini:
                     logger.warning(f" Omitiendo archivo con error: {getattr(archivo, 'filename', f'archivo_{i+1}')}")
                     continue
             
-            # 🚨 VALIDACIÓN FINAL: Verificar que tenemos contenido válido para enviar
+            #  VALIDACIÓN FINAL: Verificar que tenemos contenido válido para enviar
             archivos_validos = len(contenido_multimodal) - 1  # -1 porque el primer elemento es el prompt
 
             if archivos_validos == 0 and len(archivos_directos) > 0:
@@ -771,77 +763,6 @@ class ProcesadorGemini:
                 archivos_info = [getattr(archivo, 'filename', 'sin_nombre') for archivo in archivos_directos]
             logger.error(f" Archivos enviados: {archivos_info}")
             raise ValueError(f"Error híbrido en análisis de factura: {str(e)}")
-    
-    # ===============================
-    #  NUEVAS FUNCIONES DE VALIDACIÓN ROBUSTA - SINGLE RETRY
-    # ===============================
-    
-    def _clonar_uploadfile_para_worker(self, archivo_bytes: bytes, nombre_archivo: str) -> 'UploadFile':
-        """
-        Crea un UploadFile clonado a partir de bytes para uso independiente en workers paralelos.
-        
-        SOLUCIÓN PARA CONCURRENCIA: Cada worker necesita su propia copia del archivo.
-        
-        Args:
-            archivo_bytes: Contenido del archivo en bytes
-            nombre_archivo: Nombre del archivo
-            
-        Returns:
-            UploadFile: Nuevo objeto UploadFile independiente
-        """
-        from io import BytesIO
-        from starlette.datastructures import UploadFile
-        
-        # Crear un nuevo stream independiente
-        stream = BytesIO(archivo_bytes)
-        
-        # Crear nuevo UploadFile con el stream clonado
-        archivo_clonado = UploadFile(
-            filename=nombre_archivo,
-            file=stream,
-            content_type="application/pdf" if nombre_archivo.lower().endswith('.pdf') else "application/octet-stream"
-        )
-        
-        logger.info(f" Archivo clonado para worker independiente: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
-        return archivo_clonado
-    
-    async def _crear_cache_archivos_para_workers(self, archivos_directos: List[UploadFile]) -> Dict[str, bytes]:
-        """
-        Crea cache de archivos en memoria para uso independiente por múltiples workers.
-        
-        SOLUCIÓN CONCURRENCIA: Leer todos los archivos UNA VEZ y cachearlos para workers paralelos.
-        
-        Args:
-            archivos_directos: Lista de archivos UploadFile originales
-            
-        Returns:
-            Dict[str, bytes]: Cache {nombre_archivo: contenido_bytes}
-        """
-        cache_archivos = {}
-        
-        logger.info(f" Creando cache de archivos para workers paralelos: {len(archivos_directos)} archivos")
-        
-        for i, archivo in enumerate(archivos_directos):
-            try:
-                # Leer archivo UNA VEZ usando nuestra función segura
-                archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
-                
-                # Validar PDF si corresponde
-                if archivo_bytes.startswith(b'%PDF'):
-                    if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
-                        logger.error(f" PDF inválido en cache, omitiendo: {nombre_archivo}")
-                        continue
-                
-                # Guardar en cache
-                cache_archivos[nombre_archivo] = archivo_bytes
-                logger.info(f" Archivo cacheado: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
-                
-            except Exception as e:
-                logger.error(f" Error cacheando archivo {i+1}: {e}")
-                continue
-        
-        logger.info(f" Cache creado exitosamente: {len(cache_archivos)} archivos listos para workers")
-        return cache_archivos
     
     def _obtener_archivos_clonados_desde_cache(self, cache_archivos: Dict[str, bytes]) -> List[UploadFile]:
         """
@@ -948,28 +869,6 @@ class ProcesadorGemini:
             )
         
         return archivo_clonado
-    
-    def obtener_archivos_para_worker_desde_cache(self, cache_archivos: Dict[str, bytes]) -> List[UploadFile]:
-        """
-        Obtiene lista de archivos clonados para un worker específico.
-        
-        Args:
-            cache_archivos: Cache de archivos
-            
-        Returns:
-            List[UploadFile]: Archivos independientes para el worker
-        """
-        archivos_worker = []
-        
-        for nombre_archivo, archivo_bytes in cache_archivos.items():
-            try:
-                archivo_clon = self.crear_archivo_clon_para_worker(archivo_bytes, nombre_archivo)
-                archivos_worker.append(archivo_clon)
-            except Exception as e:
-                logger.error(f" Error clonando {nombre_archivo} para worker: {e}")
-                continue
-        
-        return archivos_worker
     
     async def _leer_archivo_seguro(self, archivo: UploadFile) -> tuple[bytes, str]:
         """
@@ -1456,53 +1355,6 @@ class ProcesadorGemini:
             logger.error(f"Error reparando JSON: {e}")
             return json_str
 
-    # ✅ ELIMINADA: Función _es_respuesta_truncada - Ya no necesaria con modelo mejorado
-    
-    def _clasificacion_fallback(self, textos_archivos: Dict[str, str]) -> Dict[str, str]:
-        """
-        Clasificación de emergencia basada en nombres de archivo.
-        
-        Args:
-            textos_archivos: Diccionario con textos de archivos
-            
-        Returns:
-            Dict[str, str]: Clasificación basada en nombres
-        """
-        resultado = {}
-        
-        for nombre_archivo in textos_archivos.keys():
-            nombre_lower = nombre_archivo.lower()
-            
-            if 'factura' in nombre_lower or 'fact' in nombre_lower:
-                resultado[nombre_archivo] = "FACTURA"
-            elif 'rut' in nombre_lower:
-                resultado[nombre_archivo] = "RUT"
-            elif 'cotiz' in nombre_lower or 'presupuesto' in nombre_lower:
-                resultado[nombre_archivo] = "COTIZACION"
-            elif 'contrato' in nombre_lower :
-                resultado[nombre_archivo] = "ANEXO CONCEPTO DE CONTRATO"
-            else:
-                resultado[nombre_archivo] = "ANEXO"
-        
-        logger.warning("Usando clasificación fallback basada en nombres de archivo")
-        return resultado
-
-    # ===============================
-    # NOTA: Funciones auxiliares de conceptos de retefuente movidas a clasificador_retefuente.py
-    # Funciones movidas: _analisis_fallback, _obtener_conceptos_retefuente, _conceptos_hardcodeados,
-    # _obtener_conceptos_completos, _conceptos_completos_hardcodeados, _obtener_conceptos_extranjeros,
-    # _obtener_conceptos_extranjeros_simplificado, _conceptos_extranjeros_simplificados_hardcodeados,
-    # _obtener_paises_convenio, _paises_convenio_hardcodeados, _obtener_preguntas_fuente_nacional,
-    # _preguntas_fuente_hardcodeadas, _conceptos_extranjeros_hardcodeados
-    # ===============================
-
-    # ===============================
-    # NOTA: Lógica de consorcios movida a clasificador_consorcio.py
-    # Funciones movidas: analizar_consorcio (implementación completa), _consorcio_fallback
-    # ===============================
-    
-  
-    
     async def _guardar_respuesta(self, nombre_archivo: str, contenido: dict):
         """
         Guarda la respuesta de Gemini en archivo JSON en la carpeta Results.

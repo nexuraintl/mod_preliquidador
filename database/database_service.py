@@ -96,12 +96,12 @@ class BusinessDataService(IBusinessDataService):
                 "database_available": bool
             }
         """
-        logger.info(f"🔍 Consultando datos de negocio para código: {codigo_negocio}")
+        logger.info(f" Consultando datos de negocio para código: {codigo_negocio}")
 
         # PASO 1: Validar disponibilidad del database manager
         if not self.database_manager:
             warning_msg = "DatabaseManager no está disponible - continuando sin datos de negocio"
-            logger.warning(f"⚠️ {warning_msg}")
+            logger.warning(f" {warning_msg}")
             return self._crear_respuesta_sin_database(codigo_negocio, warning_msg)
 
         # PASO 2: Ejecutar consulta con manejo de errores
@@ -125,7 +125,7 @@ class BusinessDataService(IBusinessDataService):
 
             # PASO 4: Procesar respuesta sin resultados
             error_msg = resultado_consulta.get('message', f'No se encontró negocio con código: {codigo_negocio}')
-            logger.warning(f"⚠️ {error_msg}")
+            logger.warning(f" {error_msg}")
 
             return {
                 "success": False,
@@ -138,7 +138,7 @@ class BusinessDataService(IBusinessDataService):
         except Exception as e:
             # PASO 5: Manejo de errores de base de datos
             error_msg = f"Error consultando base de datos: {str(e)}"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
 
             return {
                 "success": False,
@@ -190,7 +190,7 @@ class BusinessDataService(IBusinessDataService):
                 # Si no tiene método de health check, asumir disponible
                 return True
         except Exception as e:
-            logger.error(f"❌ Error verificando disponibilidad de database: {e}")
+            logger.error(f" Error verificando disponibilidad de database: {e}")
             return False
 
     def validar_tipo_recurso_negocio(self, codigo_negocio: int) -> Dict[str, Any]:
@@ -220,12 +220,12 @@ class BusinessDataService(IBusinessDataService):
                 "error": str | None
             }
         """
-        logger.info(f"🔍 Validando tipo de recurso para código de negocio: {codigo_negocio}")
+        logger.info(f" Validando tipo de recurso para código de negocio: {codigo_negocio}")
 
         # PASO 1: Validar disponibilidad del database manager
         if not self.database_manager:
             warning_msg = "DatabaseManager no está disponible para validar tipo de recurso"
-            logger.warning(f"⚠️ {warning_msg}")
+            logger.warning(f" {warning_msg}")
             return {
                 "success": False,
                 "tipo_recurso": None,
@@ -246,7 +246,7 @@ class BusinessDataService(IBusinessDataService):
 
                 # Distinguir entre no parametrizado y error técnico
                 if 'No existe parametrización' in error_msg:
-                    logger.warning(f"⚠️ Código {codigo_negocio} no parametrizado en tabla RECURSOS")
+                    logger.warning(f" Código {codigo_negocio} no parametrizado en tabla RECURSOS")
                     return {
                         "success": False,
                         "tipo_recurso": None,
@@ -258,7 +258,7 @@ class BusinessDataService(IBusinessDataService):
                     }
                 else:
                     # Error técnico en la consulta
-                    logger.error(f"❌ Error consultando tipo de recurso para código {codigo_negocio}: {error_msg}")
+                    logger.error(f" Error consultando tipo de recurso para código {codigo_negocio}: {error_msg}")
                     return {
                         "success": False,
                         "tipo_recurso": None,
@@ -275,7 +275,7 @@ class BusinessDataService(IBusinessDataService):
 
             # Validar que el tipo de recurso no sea None o vacío
             if not tipo_recurso:
-                logger.warning(f"⚠️ Código {codigo_negocio} existe pero el campo PUBLICO/PRIVADO está vacío")
+                logger.warning(f" Código {codigo_negocio} existe pero el campo PUBLICO/PRIVADO está vacío")
                 return {
                     "success": False,
                     "tipo_recurso": None,
@@ -301,7 +301,7 @@ class BusinessDataService(IBusinessDataService):
 
             # CASO 4: Recursos Privados (no aplica impuestos)
             elif tipo_recurso == "Privados":
-                logger.info(f"ℹ️ Negocio {codigo_negocio} administra recursos privados - No aplican impuestos")
+                logger.info(f"ℹ Negocio {codigo_negocio} administra recursos privados - No aplican impuestos")
                 return {
                     "success": True,
                     "tipo_recurso": "Privados",
@@ -314,7 +314,7 @@ class BusinessDataService(IBusinessDataService):
 
             # CASO 5: Valor desconocido
             else:
-                logger.warning(f"⚠️ Código {codigo_negocio} tiene valor desconocido en PUBLICO/PRIVADO: {tipo_recurso}")
+                logger.warning(f" Código {codigo_negocio} tiene valor desconocido en PUBLICO/PRIVADO: {tipo_recurso}")
                 return {
                     "success": False,
                     "tipo_recurso": tipo_recurso,
@@ -326,7 +326,7 @@ class BusinessDataService(IBusinessDataService):
                 }
 
         except Exception as e:
-            logger.error(f"❌ Error inesperado validando tipo de recurso para código {codigo_negocio}: {e}")
+            logger.error(f" Error inesperado validando tipo de recurso para código {codigo_negocio}: {e}")
             return {
                 "success": False,
                 "tipo_recurso": None,
