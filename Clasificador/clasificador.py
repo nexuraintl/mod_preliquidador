@@ -18,8 +18,10 @@ from datetime import datetime
 from typing import Dict, Any, Tuple
 from pathlib import Path
 
-# Google Gemini
-import google.generativeai as genai
+# Google Gemini (nuevo SDK v2.0)
+from google import genai
+from google.genai import types
+from .gemini_files_manager import GeminiFilesManager
 
 # Modelos de datos (importar desde main)
 from pydantic import BaseModel
@@ -97,33 +99,32 @@ class ProcesadorGemini:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY no está configurada en el archivo .env")
 
-        # Configurar Gemini
-        genai.configure(api_key=self.api_key)
+        # NUEVO SDK v2.0: Inicializar cliente
+        self.client = genai.Client(api_key=self.api_key)
+        self.model_name = 'gemini-2.5-flash-preview-09-2025'
 
-        # Configurar modelo con configuración estándar
-        self.modelo = genai.GenerativeModel(
-            'gemini-2.5-flash-preview-09-2025',
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.4,
-                max_output_tokens=65536,
-                candidate_count=1
-                )
-        )
+        # NUEVO: Inicializar Files Manager (SRP: gestión de archivos)
+        self.files_manager = GeminiFilesManager(api_key=self.api_key)
+
+        # Configuración de generación estándar
+        self.generation_config = {
+            'temperature': 0.4,
+            'max_output_tokens': 65536,
+            'candidate_count': 1
+        }
 
         # Configuración especial para consorcios (más tokens)
-        self.modelo_consorcio = genai.GenerativeModel(
-            'gemini-2.5-flash-preview-09-2025',
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.7,  # Menos temperatura para más consistencia
-                max_output_tokens=65536,  # 4x más tokens para consorcios grandescandidate_count=1
-            )
-        )
+        self.generation_config_consorcio = {
+            'temperature': 0.7,
+            'max_output_tokens': 65536,
+            'candidate_count': 1
+        }
 
         # Nuevos parámetros para consultas BD
         self.estructura_contable = estructura_contable
         self.db_manager = db_manager
 
-        logger.info("ProcesadorGemini inicializado correctamente")
+        logger.info("ProcesadorGemini inicializado correctamente con nuevo SDK v2.0 + Files API")
 
         # ARQUITECTURA SOLID: Inyección de dependencias para clasificadores especializados
         # Inicializar después de que self esté completamente configurado
@@ -277,51 +278,81 @@ class ProcesadorGemini:
             raise ValueError(error_msg)
         
         try:
-            # PASO 1: Crear lista de nombres de archivos directos para el prompt (con manejo seguro)
-            nombres_archivos_directos = []
-            for archivo in archivos_directos:
-                try:
-                    if hasattr(archivo, 'filename') and archivo.filename:
-                        nombres_archivos_directos.append(archivo.filename)
-                    else:
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                except Exception as e:
-                    logger.warning(f" Error obteniendo filename: {e}")
-                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+            # PASO 1: Crear lista de nombres de archivos directos para el prompt (NUEVO v3.0: soporta Files API)
+            from .utils_archivos import obtener_nombre_archivo
+            nombres_archivos_directos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
             
             logger.info(f" Archivos directos para Gemini: {nombres_archivos_directos}")
             logger.info(f" Textos preprocesados: {list(textos_preprocesados.keys())}")
 
             # PASO 2: Generar prompt híbrido usando función modificada (v3.0: con proveedor)
             prompt = PROMPT_CLASIFICACION(textos_preprocesados, nombres_archivos_directos, proveedor)
-            
-            # PASO 3: Preparar contenido para Gemini (archivos directos + prompt)
+
+            # PASO 3: NUEVO v3.0 - Subir archivos a Files API (no bytes inline)
             contents = [prompt]
-            
-            # Agregar archivos directos al contenido (con manejo seguro)
-            for i, archivo in enumerate(archivos_directos):
-                try:
-                    # Resetear el puntero del archivo
-                    if hasattr(archivo, 'seek'):
-                        await archivo.seek(0)
-                    
-                    # Leer contenido del archivo
-                    if hasattr(archivo, 'read'):
-                        archivo_bytes = await archivo.read()
-                    else:
-                        # Si no es un UploadFile estándar, asumir que es bytes directo
-                        archivo_bytes = archivo if isinstance(archivo, bytes) else bytes(archivo)
-                    
-                    contents.append(archivo_bytes)
-                    
-                    # Obtener nombre seguro para logging
-                    nombre_archivo = nombres_archivos_directos[i] if i < len(nombres_archivos_directos) else f"archivo_{i+1}"
-                    logger.info(f" Archivo directo agregado: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
-                    
-                except Exception as e:
-                    logger.error(f" Error procesando archivo directo {i+1}: {e}")
-                    # Continuar con el siguiente archivo en lugar de fallar completamente
-                    continue
+            uploaded_files_refs = []
+
+            if archivos_directos:
+                logger.info(f"Subiendo {len(archivos_directos)} archivos a Files API...")
+
+                for i, archivo in enumerate(archivos_directos):
+                    try:
+                        # Subir archivo a Files API usando GeminiFilesManager
+                        file_result = await self.files_manager.upload_file(
+                            archivo=archivo,
+                            wait_for_active=True,
+                            timeout_seconds=300
+                        )
+
+                        uploaded_files_refs.append(file_result)
+
+                        nombre_archivo = file_result.display_name
+                        logger.info(f"Archivo subido a Files API: {nombre_archivo} -> {file_result.name}")
+
+                    except Exception as e:
+                        logger.error(f"Error subiendo archivo {i+1} a Files API: {e}")
+                        logger.warning(f"Fallback: intentando envío inline para archivo {i+1}")
+
+                        # Fallback: si Files API falla, enviar como bytes inline
+                        try:
+                            if hasattr(archivo, 'seek'):
+                                await archivo.seek(0)
+                            if hasattr(archivo, 'read'):
+                                archivo_bytes = await archivo.read()
+                            else:
+                                archivo_bytes = archivo if isinstance(archivo, bytes) else bytes(archivo)
+
+                            # Detectar MIME type por nombre de archivo
+                            nombre_archivo = getattr(archivo, 'filename', f'archivo_{i+1}')
+                            extension = nombre_archivo.split('.')[-1].lower()
+                            mime_type_map = {
+                                'pdf': 'application/pdf',
+                                'jpg': 'image/jpeg',
+                                'jpeg': 'image/jpeg',
+                                'png': 'image/png',
+                                'gif': 'image/gif',
+                                'txt': 'text/plain'
+                            }
+                            mime_type = mime_type_map.get(extension, 'application/octet-stream')
+
+                            # Crear Part con tipos correctos
+                            part_inline = types.Part.from_bytes(
+                                data=archivo_bytes,
+                                mime_type=mime_type
+                            )
+
+                            contents.append(part_inline)
+                            logger.info(f"Archivo {i+1} ({mime_type}) enviado inline (fallback): {len(archivo_bytes):,} bytes")
+                        except Exception as fallback_error:
+                            logger.error(f"Error en fallback inline: {fallback_error}")
+                            continue
+
+                # Agregar referencias de Files API al contenido
+                for file_ref in uploaded_files_refs:
+                    # Obtener objeto File usando la referencia
+                    file_obj = self.client.files.get(name=file_ref.name)
+                    contents.append(file_obj)
+                    logger.info(f"Referencia Files API agregada: {file_ref.name}")
             
             # PASO 4: Llamar a Gemini con contenido híbrido
             logger.info(f"Llamando a Gemini con {len(contents)} elementos: 1 prompt + {len(archivos_directos)} archivos")
@@ -392,22 +423,24 @@ class ProcesadorGemini:
         
         except Exception as e:
             logger.error(f" Error en clasificación híbrida de documentos: {e}")
-            # Logging seguro de archivos directos fallidos
-            archivos_fallidos_nombres = []
-            for archivo in archivos_directos:
-                try:
-                    if hasattr(archivo, 'filename') and archivo.filename:
-                        archivos_fallidos_nombres.append(archivo.filename)
-                    else:
-                        archivos_fallidos_nombres.append("archivo_sin_nombre")
-                except Exception:
-                    archivos_fallidos_nombres.append("archivo_con_error")
+            # Logging seguro de archivos directos fallidos (NUEVO v3.0: soporta Files API)
+            from .utils_archivos import obtener_nombre_archivo
+            archivos_fallidos_nombres = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
             
             logger.error(f" Archivos directos fallidos: {archivos_fallidos_nombres}")
             logger.error(f" Textos preprocesados fallidos: {list(textos_preprocesados.keys())}")
             raise ValueError(f"Error en clasificación híbrida: {str(e)}")
 
-    
+        finally:
+            # PASO 9 (NUEVO v3.0): Cleanup automático de Files API
+            try:
+                if hasattr(self, 'files_manager') and self.files_manager:
+                    await self.files_manager.cleanup_all(ignore_errors=True)
+                    logger.info(" Cleanup de Files API completado")
+            except Exception as cleanup_error:
+                logger.warning(f" Error en cleanup de Files API: {cleanup_error}")
+
+
     async def _llamar_gemini_hibrido(self, contents: List) -> str:
         """
         Llamada especial a Gemini para contenido híbrido (prompt + archivos directos).
@@ -442,16 +475,24 @@ class ProcesadorGemini:
             archivos_directos = contents[1:] if len(contents) > 1 else []
             for i, archivo_elemento in enumerate(archivos_directos):
                 try:
+                    # NUEVO v3.0: Si es objeto File de Files API, crear Part correcto
+                    if hasattr(archivo_elemento, 'name') and hasattr(archivo_elemento, 'uri') and hasattr(archivo_elemento, 'mime_type'):
+                        # Es un objeto File de Files API - crear Part con file_data
+                        file_part = types.Part(
+                            file_data=types.FileData(
+                                mime_type=archivo_elemento.mime_type,
+                                file_uri=archivo_elemento.uri
+                            )
+                        )
+                        contenido_multimodal.append(file_part)
+                        logger.info(f" Archivo Files API agregado: {archivo_elemento.name} ({archivo_elemento.mime_type})")
+                        continue
+
                     # Si es bytes (resultado de archivo.read()), necesitamos crear objeto correcto
-                    if isinstance(archivo_elemento, bytes):
-                        # Este es el problema: bytes raw sin información de tipo
-                        # Intentar detectar tipo de archivo por magic bytes
+                    elif isinstance(archivo_elemento, bytes):
+                        # Detectar tipo de archivo por magic bytes
                         if archivo_elemento.startswith(b'%PDF'):
-                            # Es un PDF
-                            archivo_objeto = {
-                                "mime_type": "application/pdf",
-                                "data": archivo_elemento
-                            }
+                            mime_type = "application/pdf"
                             logger.info(f" PDF detectado por magic bytes: {len(archivo_elemento):,} bytes")
                         elif archivo_elemento.startswith((b'\xff\xd8\xff', b'\x89PNG')):
                             # Es imagen JPEG o PNG
@@ -459,28 +500,27 @@ class ProcesadorGemini:
                                 mime_type = "image/jpeg"
                             else:
                                 mime_type = "image/png"
-                            archivo_objeto = {
-                                "mime_type": mime_type,
-                                "data": archivo_elemento
-                            }
                             logger.info(f" Imagen detectada por magic bytes: {mime_type}, {len(archivo_elemento):,} bytes")
                         else:
                             # Tipo genérico
-                            archivo_objeto = {
-                                "mime_type": "application/octet-stream",
-                                "data": archivo_elemento
-                            }
+                            mime_type = "application/octet-stream"
                             logger.info(f" Archivo genérico: {len(archivo_elemento):,} bytes")
-                    
+
+                        # Crear Part usando types.Part.from_bytes()
+                        archivo_objeto = types.Part.from_bytes(
+                            data=archivo_elemento,
+                            mime_type=mime_type
+                        )
+
                     elif hasattr(archivo_elemento, 'read'):
                         # Es un UploadFile que no se ha leído aún
                         await archivo_elemento.seek(0)
                         archivo_bytes = await archivo_elemento.read()
-                        
+
                         # Determinar MIME type por extension
                         nombre_archivo = getattr(archivo_elemento, 'filename', f'archivo_{i+1}')
                         extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
-                        
+
                         if extension == 'pdf':
                             mime_type = "application/pdf"
                         elif extension in ['jpg', 'jpeg']:
@@ -497,52 +537,58 @@ class ProcesadorGemini:
                             mime_type = "image/webp"
                         else:
                             mime_type = "application/octet-stream"
-                        
-                        archivo_objeto = {
-                            "mime_type": mime_type,
-                            "data": archivo_bytes
-                        }
+
+                        # Crear Part usando types.Part.from_bytes()
+                        archivo_objeto = types.Part.from_bytes(
+                            data=archivo_bytes,
+                            mime_type=mime_type
+                        )
                         logger.info(f" Archivo {i+1} procesado: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
-                    
+
                     else:
                         # Tipo desconocido, intentar convertir
                         logger.warning(f" Tipo de archivo desconocido: {type(archivo_elemento)}")
-                        archivo_objeto = {
-                            "mime_type": "application/octet-stream",
-                            "data": bytes(archivo_elemento) if not isinstance(archivo_elemento, bytes) else archivo_elemento
-                        }
-                    
+                        bytes_data = bytes(archivo_elemento) if not isinstance(archivo_elemento, bytes) else archivo_elemento
+                        archivo_objeto = types.Part.from_bytes(
+                            data=bytes_data,
+                            mime_type="application/octet-stream"
+                        )
+
                     contenido_multimodal.append(archivo_objeto)
-                    
+
                 except Exception as e:
                     logger.error(f" Error procesando archivo {i+1}: {e}")
                     continue
             
-            # ✅ LLAMAR A GEMINI CON CONTENIDO MULTIMODAL CORRECTO
-            logger.info(f" Enviando a Gemini: {len(contenido_multimodal)} elementos multimodales")
-            
+            # NUEVO SDK v2.0: Llamar a Gemini con contenido multimodal
+            logger.info(f"Enviando a Gemini (nuevo SDK): {len(contenido_multimodal)} elementos")
+
             loop = asyncio.get_event_loop()
-            
+
             respuesta = await asyncio.wait_for(
                 loop.run_in_executor(
-                    None, 
-                    lambda: self.modelo.generate_content(contenido_multimodal)
+                    None,
+                    lambda: self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=contenido_multimodal,
+                        config=self.generation_config
+                    )
                 ),
                 timeout=timeout_segundos
             )
-            
+
             if not respuesta:
                 raise ValueError("Gemini devolvió respuesta None en modo híbrido")
-                
+
             if not hasattr(respuesta, 'text') or not respuesta.text:
                 raise ValueError("Gemini devolvió respuesta sin texto en modo híbrido")
-                
+
             texto_respuesta = respuesta.text.strip()
-            
+
             if not texto_respuesta:
                 raise ValueError("Gemini devolvió texto vacío en modo híbrido")
-                
-            logger.info(f" Respuesta híbrida de Gemini recibida: {len(texto_respuesta):,} caracteres")
+
+            logger.info(f"Respuesta híbrida de Gemini recibida: {len(texto_respuesta):,} caracteres")
             return texto_respuesta
             
         except asyncio.TimeoutError:
@@ -633,47 +679,64 @@ class ProcesadorGemini:
             contenido_multimodal.append(prompt)
             logger.info(f"Prompt de análisis agregado: {len(prompt):,} caracteres")
 
-            #  PROCESAR ARCHIVOS DIRECTOS CON VALIDACIÓN ROBUSTA
+            # NUEVO v3.0: PROCESAR ARCHIVOS CON FILES API + VALIDACIÓN ROBUSTA
+            uploaded_files_refs = []
+
             for i, archivo in enumerate(archivos_directos):
                 try:
                     #  LOGGING INICIAL PARA DIAGNÓSTICO
-                    nombre_archivo_debug = getattr(archivo, 'filename', f'archivo_sin_nombre_{i+1}')
                     tipo_archivo = type(archivo).__name__
+
+                    # NUEVO v3.0: DETECTAR OBJETOS FILE DE GOOGLE FILES API
+                    if hasattr(archivo, 'uri') and hasattr(archivo, 'mime_type'):
+                        # Ya está en Files API, crear Part directamente sin leer bytes
+                        file_part = types.Part(
+                            file_data=types.FileData(
+                                mime_type=archivo.mime_type,
+                                file_uri=archivo.uri
+                            )
+                        )
+                        contenido_multimodal.append(file_part)
+
+                        # Obtener nombre seguro
+                        from .utils_archivos import obtener_nombre_archivo
+                        nombre_archivo = obtener_nombre_archivo(archivo, i)
+
+                        logger.info(f"✅ Archivo {i+1}/{len(archivos_directos)} reutilizado desde Files API: {nombre_archivo} ({tipo_archivo})")
+                        continue  # Pasar al siguiente archivo, este ya está procesado
+
+                    # Para UploadFile normales, continuar con flujo de validación y upload
+                    nombre_archivo_debug = getattr(archivo, 'filename', f'archivo_sin_nombre_{i+1}')
                     logger.info(f" Procesando archivo {i+1}/{len(archivos_directos)}: {nombre_archivo_debug} (Tipo: {tipo_archivo})")
-                    
+
                     #  PASO 1: LECTURA SEGURA CON RETRY MEJORADA
                     archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
-                    
+
                     #  PASO 2: VALIDACIÓN ESPECÍFICA PARA PDFs
-                    if archivo_bytes.startswith(b'%PDF'):
+                    if archivo_bytes.startswith(b'%PDF') or nombre_archivo.lower().endswith('.pdf'):
                         #  VALIDACIÓN CRÍTICA: Verificar que el PDF tiene páginas
                         if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
                             logger.error(f"PDF inválido o sin páginas, omitiendo: {nombre_archivo}")
-                            continue  # Saltar este archivo problemaático
-                        
-                        archivo_objeto = {
-                            "mime_type": "application/pdf",
-                            "data": archivo_bytes
-                        }
+                            continue  # Saltar este archivo problemático
                         logger.info(f" PDF VALIDADO para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
-                        
-                    elif archivo_bytes.startswith((b'\xff\xd8\xff', b'\x89PNG')):
-                        # Imágenes - validación básica
-                        if archivo_bytes.startswith(b'\xff\xd8\xff'):
-                            mime_type = "image/jpeg"
-                        else:
-                            mime_type = "image/png"
-                        
-                        archivo_objeto = {
-                            "mime_type": mime_type,
-                            "data": archivo_bytes
-                        }
-                        logger.info(f" Imagen validada para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
-                        
-                    else:
-                        # Detectar por extensión y validar tamaño mínimo
+
+                    # PASO 3: INTENTAR UPLOAD A FILES API
+                    try:
+                        await archivo.seek(0)  # Resetear antes de upload
+                        file_result = await self.files_manager.upload_file(
+                            archivo=archivo,
+                            wait_for_active=True,
+                            timeout_seconds=300
+                        )
+                        uploaded_files_refs.append(file_result)
+                        logger.info(f"Archivo subido a Files API: {nombre_archivo} -> {file_result.name}")
+
+                    except Exception as upload_error:
+                        logger.warning(f"Error en Files API para {nombre_archivo}: {upload_error}")
+                        logger.info(f"Fallback: enviando {nombre_archivo} inline")
+
+                        # FALLBACK: Envío inline con types.Part.from_bytes()
                         extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
-                        
                         mime_type_map = {
                             'pdf': 'application/pdf',
                             'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
@@ -681,32 +744,48 @@ class ProcesadorGemini:
                             'bmp': 'image/bmp', 'tiff': 'image/tiff', 'tif': 'image/tiff',
                             'webp': 'image/webp'
                         }
-                        mime_type = mime_type_map.get(extension, 'application/octet-stream')
-                        
-                        #  VALIDACIÓN ADICIONAL PARA PDFs POR EXTENSIÓN
-                        if extension == 'pdf':
-                            if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
-                                logger.error(f" PDF detectado por extensión inválido, omitiendo: {nombre_archivo}")
-                                continue
-                        
-                        archivo_objeto = {
-                            "mime_type": mime_type,
-                            "data": archivo_bytes
-                        }
-                        logger.info(f" Archivo validado para análisis: {nombre_archivo} ({len(archivo_bytes):,} bytes, {mime_type})")
-                    
-                    contenido_multimodal.append(archivo_objeto)
-                    
+
+                        # Detectar MIME type por magic bytes o extensión
+                        if archivo_bytes.startswith(b'%PDF'):
+                            mime_type = 'application/pdf'
+                        elif archivo_bytes.startswith(b'\xff\xd8\xff'):
+                            mime_type = 'image/jpeg'
+                        elif archivo_bytes.startswith(b'\x89PNG'):
+                            mime_type = 'image/png'
+                        else:
+                            mime_type = mime_type_map.get(extension, 'application/octet-stream')
+
+                        # Crear Part inline
+                        part_inline = types.Part.from_bytes(
+                            data=archivo_bytes,
+                            mime_type=mime_type
+                        )
+                        contenido_multimodal.append(part_inline)
+                        logger.info(f" Archivo inline: {nombre_archivo} ({mime_type}, {len(archivo_bytes):,} bytes)")
+
                 except ValueError as ve:
                     # Errores específicos de validación
                     logger.error(f" Error de validación en archivo {i+1}: {ve}")
-                    logger.warning(f" Omitiendo archivo problemaático: {getattr(archivo, 'filename', f'archivo_{i+1}')}")
+                    logger.warning(f" Omitiendo archivo problemático: {getattr(archivo, 'filename', f'archivo_{i+1}')}")
                     continue
                 except Exception as e:
                     # Otros errores inesperados
                     logger.error(f" Error inesperado procesando archivo {i+1}: {e}")
                     logger.warning(f" Omitiendo archivo con error: {getattr(archivo, 'filename', f'archivo_{i+1}')}")
                     continue
+
+            # PASO 4: Agregar referencias de archivos SUBIDOS en este flujo
+            # NOTA: Los archivos File de Google (desde cache) ya fueron agregados directamente en el loop
+            for file_ref in uploaded_files_refs:
+                file_obj = self.client.files.get(name=file_ref.name)
+                file_part = types.Part(
+                    file_data=types.FileData(
+                        mime_type=file_obj.mime_type,
+                        file_uri=file_obj.uri
+                    )
+                )
+                contenido_multimodal.append(file_part)
+                logger.info(f" Referencia Files API agregada (recién subido): {file_ref.name}")
             
             #  VALIDACIÓN FINAL: Verificar que tenemos contenido válido para enviar
             archivos_validos = len(contenido_multimodal) - 1  # -1 porque el primer elemento es el prompt
@@ -724,15 +803,19 @@ class ProcesadorGemini:
                 archivos_omitidos = len(archivos_directos) - archivos_validos
                 logger.warning(f"Se omitieron {archivos_omitidos} archivos problemáticos de {len(archivos_directos)} archivos totales")
             
-            # ✅ LLAMAR A GEMINI CON CONTENIDO MULTIMODAL VALIDADO
-            logger.info(f" Enviando análisis a Gemini: {len(contenido_multimodal)} elementos ({archivos_validos} archivos validados)")
-            
+            # ✅ LLAMAR A GEMINI CON CONTENIDO MULTIMODAL VALIDADO (NUEVO SDK v3.0)
+            logger.info(f" Enviando análisis a Gemini (nuevo SDK + Files API): {len(contenido_multimodal)} elementos ({archivos_validos} archivos validados)")
+
             loop = asyncio.get_event_loop()
-            
+
             respuesta = await asyncio.wait_for(
                 loop.run_in_executor(
-                    None, 
-                    lambda: self.modelo.generate_content(contenido_multimodal)
+                    None,
+                    lambda: self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=contenido_multimodal,
+                        config=self.generation_config
+                    )
                 ),
                 timeout=timeout_segundos
             )
@@ -763,75 +846,139 @@ class ProcesadorGemini:
                 archivos_info = [getattr(archivo, 'filename', 'sin_nombre') for archivo in archivos_directos]
             logger.error(f" Archivos enviados: {archivos_info}")
             raise ValueError(f"Error híbrido en análisis de factura: {str(e)}")
-    
-    def _obtener_archivos_clonados_desde_cache(self, cache_archivos: Dict[str, bytes]) -> List[UploadFile]:
-        """
-        Genera lista de UploadFiles clonados desde cache para un worker específico.
-        
-        Args:
-            cache_archivos: Cache de archivos {nombre: bytes}
-            
-        Returns:
-            List[UploadFile]: Lista de archivos clonados independientes
-        """
-        archivos_clonados = []
-        
-        for nombre_archivo, archivo_bytes in cache_archivos.items():
+
+        finally:
+            # PASO 5 (NUEVO v3.0): Cleanup automático de Files API
             try:
-                archivo_clonado = self.crear_archivo_clon_para_worker(archivo_bytes, nombre_archivo)
-                archivos_clonados.append(archivo_clonado)
+                if hasattr(self, 'files_manager') and self.files_manager and uploaded_files_refs:
+                    await self.files_manager.cleanup_all(ignore_errors=True)
+                    logger.info(f" Cleanup Files API: {len(uploaded_files_refs)} archivos eliminados")
+            except Exception as cleanup_error:
+                logger.warning(f" Error en cleanup Files API: {cleanup_error}")
+
+    def _obtener_archivos_clonados_desde_cache(self, cache_archivos):
+        """
+        NUEVO v3.0 - FILES API: Retorna referencias de Files API desde cache (no clona).
+
+        Con Files API, los workers pueden reutilizar las mismas referencias sin clonar.
+        Cada worker usa la misma referencia de archivo en Files API.
+
+        Args:
+            cache_archivos: Dict[str, FileUploadResult] - Cache de referencias Files API
+
+        Returns:
+            List[File]: Lista de objetos File de Files API para reutilizar
+        """
+        from .gemini_files_manager import FileUploadResult
+
+        archivos_referencias = []
+
+        for nombre_archivo, file_ref in cache_archivos.items():
+            try:
+                # Si es FileUploadResult (nuevo cache Files API)
+                if isinstance(file_ref, FileUploadResult):
+                    # Obtener objeto File de Files API
+                    file_obj = self.client.files.get(name=file_ref.name)
+                    archivos_referencias.append(file_obj)
+                    logger.info(f" Referencia Files API reutilizada: {nombre_archivo} -> {file_ref.name}")
+
+                # Si es bytes (cache legacy - fallback)
+                elif isinstance(file_ref, bytes):
+                    logger.warning(f" Cache legacy (bytes) detectado para {nombre_archivo}, creando clon")
+                    archivo_clonado = self.crear_archivo_clon_para_worker(file_ref, nombre_archivo)
+                    archivos_referencias.append(archivo_clonado)
+
+                else:
+                    logger.error(f" Tipo de cache desconocido para {nombre_archivo}: {type(file_ref)}")
+                    continue
+
             except Exception as e:
-                logger.error(f" Error clonando archivo {nombre_archivo}: {e}")
+                logger.error(f" Error obteniendo referencia {nombre_archivo}: {e}")
                 continue
-        
-        logger.info(f" {len(archivos_clonados)} archivos clonados para worker independiente")
-        return archivos_clonados
+
+        logger.info(f" {len(archivos_referencias)} referencias Files API listas para worker")
+        return archivos_referencias
     
     # ===============================
     #  FUNCIÓN COORDINADORA PARA CONCURRENCIA
     # ===============================
     
-    async def preparar_archivos_para_workers_paralelos(self, archivos_directos: List[UploadFile]) -> Dict[str, bytes]:
+    async def preparar_archivos_para_workers_paralelos(self, archivos_directos: List[UploadFile]):
         """
-        SOLUCIÓN CONCURRENCIA: Lee archivos UNA VEZ y crea cache para workers paralelos.
-        
-        Esta función soluciona el problema donde múltiples workers paralelos
-        intentan leer el mismo objeto UploadFile simultáneamente.
-        
+        NUEVO v3.0 - FILES API: Sube archivos UNA VEZ a Files API y crea cache de referencias.
+
+        En lugar de leer bytes y pasarlos a cada worker, ahora:
+        1. Sube archivos a Files API una sola vez
+        2. Cachea las referencias FileUploadResult
+        3. Workers reutilizan las mismas referencias (no re-upload)
+
+        BENEFICIOS:
+        - Archivos hasta 2GB (vs 20MB inline)
+        - Una sola transferencia (vs N transfers para N workers)
+        - Reutilización de referencias en análisis paralelos
+
         Args:
             archivos_directos: Lista de archivos UploadFile originales
-            
+
         Returns:
-            Dict[str, bytes]: Cache {nombre_archivo: contenido_bytes}
+            Dict[str, FileUploadResult]: Cache {nombre_archivo: FileUploadResult}
         """
+        from .gemini_files_manager import FileUploadResult
+
         if not archivos_directos:
             return {}
-            
-        logger.info(f" SOLUCIONANDO CONCURRENCIA: Preparando cache para workers paralelos")
-        logger.info(f" Archivos a procesar: {len(archivos_directos)}")
-        
+
+        logger.info(f"NUEVO CACHE FILES API: Subiendo {len(archivos_directos)} archivos a Files API")
+
         cache_archivos = {}
-        
-        for i, archivo in enumerate(archivos_directos):
+
+        # Upload en paralelo para mejor performance
+        upload_tasks = []
+        for archivo in archivos_directos:
             try:
-                # Leer archivo UNA SOLA VEZ usando validación robusta
+                # Validar archivo antes de subir
                 archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
-                
+
                 # Validar PDF si es necesario
                 if archivo_bytes.startswith(b'%PDF'):
                     if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
-                        logger.error(f" PDF inválido omitido del cache: {nombre_archivo}")
+                        logger.error(f"PDF inválido omitido: {nombre_archivo}")
                         continue
-                
-                # Guardar en cache para workers
-                cache_archivos[nombre_archivo] = archivo_bytes
-                logger.info(f" Archivo cacheado para workers: {nombre_archivo} ({len(archivo_bytes):,} bytes)")
-                
+
+                # Resetear puntero para upload
+                await archivo.seek(0)
+
+                # Crear tarea de upload
+                task = self.files_manager.upload_file(
+                    archivo=archivo,
+                    wait_for_active=True,
+                    timeout_seconds=300
+                )
+                upload_tasks.append((nombre_archivo, task))
+
             except Exception as e:
-                logger.error(f" Error cacheando archivo {i+1}: {e}")
+                from .utils_archivos import obtener_nombre_archivo
+                nombre_error = obtener_nombre_archivo(archivo, 0)
+                logger.error(f"Error validando archivo {nombre_error}: {e}")
                 continue
-        
-        logger.info(f" Cache preparado: {len(cache_archivos)} archivos listos para workers paralelos")
+
+        # Ejecutar uploads en paralelo
+        if upload_tasks:
+            results = await asyncio.gather(
+                *[task for _, task in upload_tasks],
+                return_exceptions=True
+            )
+
+            for (nombre, _), result in zip(upload_tasks, results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error subiendo {nombre} a Files API: {result}")
+                    continue
+
+                if isinstance(result, FileUploadResult):
+                    cache_archivos[nombre] = result
+                    logger.info(f"Archivo cacheado en Files API: {nombre} -> {result.name}")
+
+        logger.info(f"Cache Files API preparado: {len(cache_archivos)} archivos listos para workers")
         return cache_archivos
     
     def crear_archivo_clon_para_worker(self, archivo_bytes: bytes, nombre_archivo: str) -> UploadFile:
@@ -1007,65 +1154,68 @@ class ProcesadorGemini:
     
     async def _llamar_gemini(self, prompt: str, usar_modelo_consorcio: bool = False) -> str:
         """
-        Realiza llamada a Gemini con manejo de errores y timeout MEJORADO.
-        
+        NUEVO SDK v2.0: Llamada a Gemini con manejo de errores y timeout.
+
         Args:
             prompt: Prompt para enviar a Gemini
-            usar_modelo_consorcio: Si usar modelo con más tokens para consorcios
-            
+            usar_modelo_consorcio: Si usar config con más tokens para consorcios
+
         Returns:
             str: Respuesta de Gemini
-            
+
         Raises:
             ValueError: Si hay error en la llamada a Gemini
         """
         try:
-            # Seleccionar modelo según el caso
-            modelo_a_usar = self.modelo_consorcio if usar_modelo_consorcio else self.modelo
-            
-            # ✅ CORREGIDO: Timeout escalonado según complejidad
+            # Seleccionar configuración según el caso
+            config = self.generation_config_consorcio if usar_modelo_consorcio else self.generation_config
+
+            # Timeout escalonado según complejidad
             if usar_modelo_consorcio:
                 timeout_segundos = 120.0  # 2 minutos para consorcios grandes
             elif "impuestos_especiales" in prompt.lower() or "estampilla" in prompt.lower():
                 timeout_segundos = 90.0   # 90s para análisis de impuestos especiales
             else:
-                timeout_segundos = 60.0   # 60s para análisis estándar (antes 30s)
-            
-            logger.info(f" Llamando a Gemini con timeout de {timeout_segundos}s")
-            
+                timeout_segundos = 60.0   # 60s para análisis estándar
+
+            logger.info(f"Llamando a Gemini (nuevo SDK) con timeout de {timeout_segundos}s")
+
             # Crear tarea con timeout
             loop = asyncio.get_event_loop()
-            
-            # Timeout variable según el tipo de llamada
+
+            # NUEVO SDK v2.0: usar client.models.generate_content
             respuesta = await asyncio.wait_for(
                 loop.run_in_executor(
-                    None, 
-                    lambda: modelo_a_usar.generate_content(prompt)
+                    None,
+                    lambda: self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=[prompt],
+                        config=config
+                    )
                 ),
                 timeout=timeout_segundos
             )
-            
+
             if not respuesta:
                 raise ValueError("IA devolvió respuesta None")
-                
+
             if not hasattr(respuesta, 'text') or not respuesta.text:
                 raise ValueError("IA devolvió respuesta sin texto")
-                
+
             texto_respuesta = respuesta.text.strip()
-            
+
             if not texto_respuesta:
                 raise ValueError("IA devolvió texto vacío")
-                
-            logger.info(f" Respuesta de Gemini recibida: {len(texto_respuesta):,} caracteres")
+
+            logger.info(f"Respuesta de Gemini recibida: {len(texto_respuesta):,} caracteres")
             return texto_respuesta
-            
+
         except asyncio.TimeoutError:
-            # ✅ MEJORADO: Mensaje específico con timeout usado
             error_msg = f"IA tardó más de {timeout_segundos}s en responder"
-            logger.error(f" Timeout llamando a Gemini ({timeout_segundos}s)")
+            logger.error(f"Timeout llamando a Gemini ({timeout_segundos}s)")
             raise ValueError(error_msg)
         except Exception as e:
-            logger.error(f" Error llamando a IA: {e}")
+            logger.error(f"Error llamando a IA: {e}")
             raise ValueError(f"Error de IA: {str(e)}")
 
     def _evaluar_tipo_recurso(self, resultado: Dict[str, Any]) -> bool:

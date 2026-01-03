@@ -120,7 +120,7 @@ inicializar_configuracion()
 
 # Configurar APIs
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-#GOOGLE_CLOUD_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
 
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY no está configurada en el archivo .env")
@@ -289,7 +289,7 @@ async def procesar_facturas_integrado(
         if aplica_timbre:
             impuestos_a_procesar.append("IMPUESTO_TIMBRE")
 
-        logger.info(f" Estrategia: PROCESAMIENTO PARALELO (todos los NITs aplican múltiples impuestos)")
+        logger.info(" Estrategia: PROCESAMIENTO PARALELO (todos los NITs aplican múltiples impuestos)")
         logger.info(f" Impuestos a procesar: {impuestos_a_procesar}")
         
         # =================================
@@ -342,7 +342,7 @@ async def procesar_facturas_integrado(
         # PASO 3: EXTRACCIÓN HÍBRIDA DE TEXTO
         # =================================
         
-        logger.info(f" Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
+        logger.info(" Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
         
         # SEPARAR ARCHIVOS POR ESTRATEGIA DE PROCESAMIENTO
         archivos_directos = []      # PDFs e imágenes → Gemini directo (multimodal)
@@ -367,7 +367,7 @@ async def procesar_facturas_integrado(
                 logger.warning(f"Enviando a preprocesamiento por seguridad: {archivo.filename}")
                 archivos_preprocesamiento.append(archivo)
         
-        logger.info(f" Estrategia híbrida multimodal definida:")
+        logger.info(" Estrategia híbrida multimodal definida:")
         logger.info(f" Archivos directos (multimodal): {len(archivos_directos)}")
         logger.info(f" Archivos preprocesamiento local: {len(archivos_preprocesamiento)}")
         
@@ -377,7 +377,7 @@ async def procesar_facturas_integrado(
             extractor = ProcesadorArchivos()
             textos_archivos_original = await extractor.procesar_multiples_archivos(archivos_preprocesamiento)
         else:
-            logger.info(f" No hay archivos para procesamiento local - Solo archivos directos multimodales")
+            logger.info(" No hay archivos para procesamiento local - Solo archivos directos multimodales")
             textos_archivos_original = {}
         
         # Preprocesamiento específico para Excel (solo archivos locales)
@@ -684,7 +684,7 @@ async def procesar_facturas_integrado(
         # PASO 5: LIQUIDACIÓN DE IMPUESTOS
         # =================================
 
-        logger.info(f" Iniciando liquidación de impuestos en paralelo...")
+        logger.info(" Iniciando liquidación de impuestos en paralelo...")
         
         resultado_final = {
             "impuestos_procesados": impuestos_a_procesar,

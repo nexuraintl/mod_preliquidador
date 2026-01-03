@@ -18,6 +18,7 @@ from .clasificador_tp import ClasificadorTasaProdeporte
 from .clasificador_estampillas_g import ClasificadorEstampillasGenerales
 from .clasificador_iva import ClasificadorIva
 from  .clasificador_obra_uni import ClasificadorObraUni
+from .gemini_files_manager import GeminiFilesManager, FileUploadResult
 
 __all__ = [
     'ProcesadorGemini',
@@ -28,5 +29,7 @@ __all__ = [
     'ClasificadorTasaProdeporte',
     'ClasificadorEstampillasGenerales',
     'ClasificadorIva',
-    'ClasificadorObraUni'
+    'ClasificadorObraUni',
+    'GeminiFilesManager',
+    'FileUploadResult'
 ]

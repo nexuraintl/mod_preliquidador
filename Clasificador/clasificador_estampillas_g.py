@@ -10,8 +10,11 @@ from datetime import datetime
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 from pathlib import Path
 
-# Google Gemini
-import google.generativeai as genai
+# Utilidades compartidas (NUEVO v3.0)
+from .utils_archivos import obtener_nombre_archivo
+
+# Google Gemini (nuevo SDK v2.0)
+from google import genai
 
 # FastAPI
 from fastapi import UploadFile
@@ -99,15 +102,8 @@ class ClasificadorEstampillasGenerales:
             #  OBTENER NOMBRES DE ARCHIVOS (compatible con cache)
             nombres_archivos_directos = []
             if archivos_directos:
-                for archivo in archivos_directos:
-                    try:
-                        if hasattr(archivo, 'filename') and archivo.filename:
-                            nombres_archivos_directos.append(archivo.filename)
-                        else:
-                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                    except Exception as e:
-                        logger.warning(f" Error obteniendo nombre de archivo: {e}")
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                # Obtener nombres de archivos (NUEVO v3.0: soporta Files API)
+                nombres_archivos_directos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
             
             posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
             

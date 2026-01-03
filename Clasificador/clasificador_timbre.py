@@ -16,6 +16,9 @@ from datetime import datetime
 from pathlib import Path
 from fastapi import UploadFile
 
+# Utilidades compartidas (NUEVO v3.0)
+from .utils_archivos import obtener_nombre_archivo
+
 from .clasificador import ProcesadorGemini
 from prompts.prompt_timbre import (
     PROMPT_ANALISIS_TIMBRE_OBSERVACIONES,
@@ -151,10 +154,10 @@ class ClasificadorTimbre:
             else:
                 logger.info(f"Extracción timbre TRADICIONAL: {total_textos_preprocesados} textos preprocesados")
 
-            # Obtener nombres de archivos directos para el prompt
+            # Obtener nombres de archivos directos para el prompt (NUEVO v3.0: soporta Files API)
             nombres_archivos = []
             if archivos_directos:
-                nombres_archivos = [archivo.filename for archivo in archivos_directos]
+                nombres_archivos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
 
             # Generar prompt
             prompt = PROMPT_EXTRACCION_CONTRATO_TIMBRE(

@@ -3,17 +3,17 @@ Modulo especializado ara el analisis de iva y reteiva con Google Gemini AI."""
 
 import os
 import json
-
-import os
-import json
 import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 from pathlib import Path
 
-# Google Gemini
-import google.generativeai as genai
+# Utilidades compartidas (NUEVO v3.0)
+from .utils_archivos import obtener_nombre_archivo
+
+# Google Gemini (nuevo SDK v2.0)
+from google import genai
 
 # FastAPI
 from fastapi import UploadFile
@@ -95,22 +95,14 @@ class ClasificadorIva:
                     #  VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
 
             hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
-            nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
+            nombres_archivos_directos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
             posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
             
             if not factura_texto and not posibles_facturas_directas:
                 raise ValueError("No se encontró una FACTURA en los documentos para análisis de IVA")
 
             logger.info("Factura encontrada para analisis IVA")
-            for archivo in archivos_directos:
-                try:
-                    if hasattr(archivo, 'filename') and archivo.filename:
-                        nombres_archivos_directos.append(archivo.filename)
-                    else:
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                except Exception as e:
-                    logger.warning(f" Error obteniendo nombre de archivo: {e}")
-                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+            # Nombres de archivos ya fueron obtenidos arriba (línea 98) usando obtener_nombre_archivo
 
             # Generar prompt especializado de IVA
             prompt = PROMPT_ANALISIS_IVA(
