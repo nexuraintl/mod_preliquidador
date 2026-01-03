@@ -27,6 +27,9 @@ from datetime import datetime
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 from pathlib import Path
 
+# Utilidades compartidas (NUEVO v3.0)
+from .utils_archivos import obtener_nombre_archivo
+
 # FastAPI
 from fastapi import UploadFile
 
@@ -134,22 +137,14 @@ class ClasificadorConsorcio:
                 anexo_contrato += f"\n\n--- ANEXO CONCEPTO DE CONTRATO {nombre_archivo} ---\n{info['texto']}"
 
         hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
-        nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
+        nombres_archivos_directos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
         posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
 
         if not factura_texto and not posibles_facturas_directas:
             raise ValueError("No se encontró una FACTURA en los documentos del consorcio")
         logger.info("Se identificó correctamente la factura del consorcio")
 
-        for archivo in archivos_directos:
-            try:
-                if hasattr(archivo, 'filename') and archivo.filename:
-                    nombres_archivos_directos.append(archivo.filename)
-                else:
-                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-            except Exception as e:
-                logger.warning(f"Error obteniendo nombre de archivo: {e}")
-                nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+        # Nombres de archivos ya fueron obtenidos arriba (línea 140) usando obtener_nombre_archivo
 
         try:
             # NUEVO FLUJO v3.0.10: Dos llamadas separadas para mayor precision

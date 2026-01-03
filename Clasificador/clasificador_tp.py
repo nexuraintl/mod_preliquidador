@@ -14,9 +14,13 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 from pathlib import Path
+import traceback
 
-# Google Gemini
-import google.generativeai as genai
+# Utilidades compartidas (NUEVO v3.0)
+from .utils_archivos import obtener_nombre_archivo
+
+# Google Gemini (nuevo SDK v2.0)
+from google import genai
 
 # FastAPI
 from fastapi import UploadFile
@@ -40,7 +44,7 @@ class ClasificadorTasaProdeporte:
                   procesador_gemini: 'ProcesadorGemini',
                   ):
         self.procesador_gemini = procesador_gemini
-        logger.info(f"ClasificadorTasaProdeporte inicializado correctamente.") 
+        logger.info("ClasificadorTasaProdeporte inicializado correctamente.") 
         
         
 
@@ -109,15 +113,8 @@ class ClasificadorTasaProdeporte:
             # Obtener nombres de archivos directos (compatible con cache)
             nombres_archivos_directos = []
             if archivos_directos:
-                for archivo in archivos_directos:
-                    try:
-                        if hasattr(archivo, 'filename') and archivo.filename:
-                            nombres_archivos_directos.append(archivo.filename)
-                        else:
-                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                    except Exception as e:
-                        logger.warning(f"Error obteniendo nombre de archivo: {e}")
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                # Obtener nombres de archivos (NUEVO v3.0: soporta Files API)
+                nombres_archivos_directos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
 
             # Generar prompt especializado
 
@@ -164,7 +161,7 @@ class ClasificadorTasaProdeporte:
                     else:
                         analisis_dict[campo] = ""
 
-            logger.info(f"Análisis Tasa Prodeporte completado:")
+            logger.info("Análisis Tasa Prodeporte completado:")
             logger.info(f"- Factura sin IVA: ${analisis_dict.get('factura_sin_iva', 0):,.2f}")
             logger.info(f"- Aplica Tasa Prodeporte: {analisis_dict.get('aplica_tasa_prodeporte', False)}")
             logger.info(f"- Municipio identificado: {analisis_dict.get('municipio_identificado', 'N/A')}")

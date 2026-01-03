@@ -17,6 +17,9 @@ from prompts.prompt_retefuente import PROMPT_ANALISIS_FACTURA
 from .clasificador_tp import ClasificadorTasaProdeporte
 from .clasificador_estampillas_g import ClasificadorEstampillasGenerales
 from .clasificador_iva import ClasificadorIva
+from  .clasificador_obra_uni import ClasificadorObraUni
+from .gemini_files_manager import GeminiFilesManager, FileUploadResult
+
 __all__ = [
     'ProcesadorGemini',
     'ClasificadorRetefuente',
@@ -25,5 +28,8 @@ __all__ = [
     'ProcesadorConsorcios',
     'ClasificadorTasaProdeporte',
     'ClasificadorEstampillasGenerales',
-    'ClasificadorIva'
+    'ClasificadorIva',
+    'ClasificadorObraUni',
+    'GeminiFilesManager',
+    'FileUploadResult'
 ]

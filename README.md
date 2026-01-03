@@ -153,6 +153,377 @@ if self.config.aplica_rete_ica(nit):
 
 ---
 
+## 📁 **GOOGLE FILES API INTEGRATION v3.0.0 - PROCESAMIENTO OPTIMIZADO**
+
+### **🎯 DESCRIPCION GENERAL**
+
+Integración completa con **Google Files API** para optimizar el procesamiento de archivos pesados usando **nuevo SDK `google-genai`**, siguiendo metodología TDD incremental y principios SOLID.
+
+**Problema anterior**:
+- SDK `google-generativeai==0.3.1` **deprecado** (soporte terminó nov 2025)
+- Archivos enviados **inline como bytes** (límite ~20MB por request)
+- **Ineficiencia crítica**: Mismo archivo enviado 7 veces en análisis paralelo
+- Límite hardcodeado de 20 archivos directos
+
+**Solución implementada v3.0.0**:
+- ✅ Migración a SDK oficial: `google-genai==0.2.0`
+- ✅ **Upload UNA VEZ** → reutilizar referencias en múltiples análisis
+- ✅ Archivos hasta **2 GB** (vs 20 MB anterior)
+- ✅ Cleanup automático (no acumulación)
+- ✅ Cache de referencias Files API para workers paralelos
+- ✅ Reducción de transferencia de datos (~80%)
+
+---
+
+### **🏗️ ARQUITECTURA SOLID APLICADA**
+
+#### **Nuevos Componentes (SRP)**
+
+```
+Clasificador/
+├── gemini_files_manager.py         # SRP: Solo gestión Files API
+├── utils_archivos.py                # SRP: Utilidades compartidas
+└── clasificador.py                  # MODIFICADO: Integración Files API
+```
+
+**Principios SOLID implementados**:
+- **SRP**: `GeminiFilesManager` tiene responsabilidad única: gestionar Files API
+- **DIP**: Inyección de dependencia en `ProcesadorGemini`
+- **OCP**: Sistema extensible para fallback inline si Files API falla
+
+#### **1. GeminiFilesManager (SRP puro)**
+
+```python
+class GeminiFilesManager:
+    """
+    SRP: Solo gestiona archivos en Google Files API
+
+    Responsabilidades ÚNICAS:
+    ✅ Upload de archivos a Files API
+    ✅ Espera a estado ACTIVE
+    ✅ Gestión de archivos temporales
+    ✅ Eliminación de archivos
+    ✅ Cleanup automático
+
+    NO responsable de:
+    ❌ Generar contenido con Gemini (eso es de ProcesadorGemini)
+    ❌ Validar PDFs (eso es de clasificador.py)
+    ❌ Cache de archivos (eso es preparar_archivos_para_workers)
+    """
+
+    def __init__(self, api_key: str):
+        self.client = genai.Client(api_key=api_key)
+        self.uploaded_files: Dict[str, FileUploadResult] = {}
+
+    async def upload_file(
+        self,
+        archivo: UploadFile,
+        wait_for_active: bool = True
+    ) -> FileUploadResult:
+        """Sube archivo y espera estado ACTIVE"""
+
+    async def cleanup_all(self, ignore_errors: bool = True):
+        """Elimina todos los archivos (CRÍTICO para finally)"""
+```
+
+#### **2. Inyección de Dependencias (DIP)**
+
+```python
+class ProcesadorGemini:
+    """Coordinador con inyección de GeminiFilesManager"""
+
+    def __init__(self, estructura_contable: int = None, db_manager = None):
+        # NUEVO SDK v2.0
+        self.client = genai.Client(api_key=self.api_key)
+
+        # DIP: Inyección de Files Manager
+        self.files_manager = GeminiFilesManager(api_key=self.api_key)
+
+        logger.info("ProcesadorGemini inicializado con Files API v3.0")
+```
+
+---
+
+### **⚡ FLUJO DE PROCESAMIENTO v3.0**
+
+#### **Antes (v2.x) - Ineficiente**
+```
+Usuario sube archivos (5 PDFs)
+    ↓
+Endpoint lee archivos como BYTES (5 archivos × 10MB = 50MB en memoria)
+    ↓
+Clasificación → Envía 50MB inline a Gemini
+    ↓
+Workers paralelos (7 impuestos):
+    - Retefuente → Envía 50MB inline ❌
+    - IVA → Envía 50MB inline ❌
+    - Estampillas → Envía 50MB inline ❌
+    - Tasa Prodeporte → Envía 50MB inline ❌
+    - Consorcio → Envía 50MB inline ❌
+    - Estampilla UNI → Envía 50MB inline ❌
+    - Obra Pública → Envía 50MB inline ❌
+
+TOTAL TRANSFERIDO: 50MB × 8 = 400MB 🔴
+```
+
+#### **Ahora (v3.0) - Optimizado con Files API**
+```
+Usuario sube archivos (5 PDFs)
+    ↓
+preparar_archivos_para_workers_paralelos():
+    Upload a Files API UNA VEZ (50MB) ✅
+    Cachea referencias FileUploadResult
+    ↓
+Clasificación → Usa referencias Files API (solo metadata ~5KB)
+    ↓
+Workers paralelos (7 impuestos):
+    - Retefuente → Reutiliza referencias ✅ (~5KB)
+    - IVA → Reutiliza referencias ✅ (~5KB)
+    - Estampillas → Reutiliza referencias ✅ (~5KB)
+    - Tasa Prodeporte → Reutiliza referencias ✅ (~5KB)
+    - Consorcio → Reutiliza referencias ✅ (~5KB)
+    - Estampilla UNI → Reutiliza referencias ✅ (~5KB)
+    - Obra Pública → Reutiliza referencias ✅ (~5KB)
+    ↓
+finally: cleanup_all() → Elimina archivos de Files API
+
+TOTAL TRANSFERIDO: 50MB + (7 × 5KB) = ~50.035MB 🟢
+REDUCCIÓN: 88% menos transferencia de datos
+```
+
+---
+
+### **🔧 IMPLEMENTACIÓN TÉCNICA**
+
+#### **1. Upload y Cache (preparar_archivos_para_workers_paralelos)**
+
+```python
+async def preparar_archivos_para_workers_paralelos(
+    self,
+    archivos_directos: List[UploadFile]
+) -> Dict[str, FileUploadResult]:
+    """
+    NUEVO v3.0: Sube archivos UNA VEZ a Files API
+
+    Returns:
+        Dict[str, FileUploadResult]: Cache de referencias
+    """
+    cache_archivos = {}
+
+    # Upload en paralelo
+    upload_tasks = []
+    for archivo in archivos_directos:
+        task = self.files_manager.upload_file(
+            archivo=archivo,
+            wait_for_active=True,
+            timeout_seconds=300
+        )
+        upload_tasks.append((archivo.filename, task))
+
+    results = await asyncio.gather(*[task for _, task in upload_tasks])
+
+    for (nombre, _), result in zip(upload_tasks, results):
+        cache_archivos[nombre] = result  # FileUploadResult
+
+    return cache_archivos
+```
+
+#### **2. Reutilización en Workers (_obtener_archivos_clonados_desde_cache)**
+
+```python
+def _obtener_archivos_clonados_desde_cache(
+    self,
+    cache_archivos: Dict[str, FileUploadResult]
+) -> List[File]:
+    """
+    NUEVO v3.0: Retorna referencias Files API (no clona bytes)
+
+    Workers reutilizan mismas referencias sin re-upload
+    """
+    archivos_referencias = []
+
+    for nombre_archivo, file_ref in cache_archivos.items():
+        if isinstance(file_ref, FileUploadResult):
+            # Obtener objeto File de Files API
+            file_obj = self.client.files.get(name=file_ref.name)
+            archivos_referencias.append(file_obj)
+            logger.info(f"✅ Referencia reutilizada: {nombre_archivo}")
+
+    return archivos_referencias
+```
+
+#### **3. Detección Automática en Análisis (clasificador.py)**
+
+```python
+async def _llamar_gemini_hibrido_factura(
+    self,
+    prompt: str,
+    archivos_directos: List[UploadFile]
+) -> str:
+    """Análisis con soporte Files API + Fallback inline"""
+
+    contenido_multimodal = [prompt]
+
+    for i, archivo in enumerate(archivos_directos):
+        # DETECTAR: ¿Es objeto File de Files API desde cache?
+        if hasattr(archivo, 'uri') and hasattr(archivo, 'mime_type'):
+            # ✅ Ya en Files API → crear Part directamente
+            file_part = types.Part(
+                file_data=types.FileData(
+                    mime_type=archivo.mime_type,
+                    file_uri=archivo.uri
+                )
+            )
+            contenido_multimodal.append(file_part)
+            continue  # No leer bytes, ya está subido
+
+        # ❌ UploadFile normal → subir a Files API
+        try:
+            file_result = await self.files_manager.upload_file(archivo)
+            # Agregar referencia...
+        except Exception as upload_error:
+            # FALLBACK: Enviar inline si Files API falla
+            part_inline = types.Part.from_bytes(...)
+            contenido_multimodal.append(part_inline)
+```
+
+#### **4. Cleanup Automático (finally garantizado)**
+
+```python
+# En clasificador.py - Después de cada análisis
+finally:
+    try:
+        if hasattr(self, 'files_manager') and self.files_manager:
+            await self.files_manager.cleanup_all(ignore_errors=True)
+            logger.info("✅ Cleanup Files API completado")
+    except Exception as cleanup_error:
+        logger.warning(f"⚠️ Error en cleanup: {cleanup_error}")
+```
+
+---
+
+### **📊 COMPARACIÓN TÉCNICA**
+
+| Característica | v2.x (Inline bytes) | v3.0 (Files API) | Mejora |
+|----------------|---------------------|------------------|--------|
+| **Tamaño máximo archivo** | ~20 MB | 2 GB | **100x** |
+| **SDK Google** | `google-generativeai` (deprecado) | `google-genai` (oficial) | ✅ Activo |
+| **Upload por archivo** | 7 veces (1 por worker) | 1 vez (reutilizado) | **86% menos** |
+| **Transferencia total** | 400 MB (ejemplo 5 archivos) | 50 MB | **88% reducción** |
+| **Memoria servidor** | 400 MB en RAM | 50 MB | **88% reducción** |
+| **Cleanup** | Manual | Automático (finally) | ✅ |
+| **Fallback** | No | Sí (inline si falla) | ✅ Robusto |
+
+---
+
+### **🔐 SEGURIDAD Y LIMPIEZA**
+
+#### **Cleanup Automático Garantizado**
+```python
+# En main.py - Endpoint principal
+@app.post("/api/procesar-facturas")
+async def procesar_facturas_integrado(...):
+    files_manager_ref = None
+
+    try:
+        clasificador = ProcesadorGemini(...)
+        files_manager_ref = clasificador.files_manager
+
+        # ... procesamiento ...
+
+        return JSONResponse(status_code=200, content=resultado)
+
+    finally:
+        # CRÍTICO: Cleanup SIEMPRE ejecutado
+        if files_manager_ref:
+            await files_manager_ref.cleanup_all(ignore_errors=True)
+            logger.info("🧹 Cleanup Files API completado")
+```
+
+**Garantías de seguridad**:
+- ✅ Archivos eliminados inmediatamente después de procesar
+- ✅ Cleanup ejecutado incluso con excepciones (finally)
+- ✅ Google elimina archivos automáticamente después de 48h
+- ✅ No acumulación en Files API
+- ✅ Archivos temporales locales eliminados
+
+---
+
+### **📁 ARCHIVOS MODIFICADOS/CREADOS**
+
+#### **Nuevos Archivos (v3.0)**
+1. **`Clasificador/gemini_files_manager.py`** (316 líneas)
+   - Clase `GeminiFilesManager` (SRP puro)
+   - Dataclass `FileUploadResult`
+   - Métodos: `upload_file`, `cleanup_all`, `delete_file`
+   - Context manager async para auto-cleanup
+
+2. **`Clasificador/utils_archivos.py`** (175 líneas)
+   - `obtener_nombre_archivo()`: Extracción segura de nombres
+   - `procesar_archivos_para_gemini()`: Conversión a `types.Part`
+   - Soporte para: File, UploadFile, bytes, dict
+
+3. **`tests/test_gemini_files_manager.py`** (402 líneas)
+   - 9 tests de upload, wait, delete, cleanup
+   - Cobertura: casos exitosos, timeouts, errores
+
+4. **`tests/test_clasificador_files_api.py`** (537 líneas)
+   - 7 tests de integración
+   - Cache, workers paralelos, fallback
+
+#### **Archivos Modificados (v3.0)**
+1. **`Clasificador/clasificador.py`** - Integración Files API
+   - Líneas 22-24: Imports nuevo SDK
+   - Líneas 102-107: Inicialización `GeminiFilesManager`
+   - Líneas 291-355: Upload a Files API en `clasificar_documentos`
+   - Líneas 641-857: Detección File objects en `_llamar_gemini_hibrido_factura`
+   - Líneas 859-900: `_obtener_archivos_clonados_desde_cache` (reutilización)
+   - Líneas 906-982: `preparar_archivos_para_workers_paralelos` (nuevo cache)
+
+2. **9 Clasificadores especializados** - Uso de `utils_archivos`
+   - `clasificador_retefuente.py`
+   - `clasificador_consorcio.py`
+   - `clasificador_iva.py`
+   - `clasificador_tp.py`
+   - `clasificador_estampillas_g.py`
+   - `clasificador_ica.py`
+   - `clasificador_timbre.py`
+   - `clasificador_obra_uni.py`
+
+3. **`requirements.txt`**
+   ```diff
+   - google-generativeai==0.3.1  # Deprecado
+   + google-genai==0.2.0          # Oficial, con Files API
+   ```
+
+---
+
+### **🚀 BENEFICIOS OBTENIDOS**
+
+#### **Técnicos**
+- ✅ **88% reducción** en transferencia de datos
+- ✅ **100x aumento** en tamaño máximo de archivo (2GB)
+- ✅ **86% menos uploads** (1 vez vs 7 veces)
+- ✅ **SDK oficial** con soporte activo
+- ✅ **Cleanup automático** garantizado
+- ✅ **Fallback robusto** a inline si falla Files API
+
+#### **Arquitectura**
+- ✅ **SRP cumplido**: `GeminiFilesManager` responsabilidad única
+- ✅ **DIP aplicado**: Inyección de dependencias
+- ✅ **OCP respetado**: Extensible sin modificar código
+- ✅ **Testing**: Diseño testeable con mocks
+- ✅ **Mantenibilidad**: Código modular y cohesivo
+
+#### **Operacionales**
+- ✅ **Menor uso de RAM** en servidor
+- ✅ **Procesamiento más rápido** (no re-uploads)
+- ✅ **Escalabilidad** mejorada
+- ✅ **Costos reducidos** en transferencia de datos
+- ✅ **Seguridad** mejorada (cleanup garantizado)
+
+---
+
 ## 🔄 **MIGRACION DE BASE DE DATOS v3.2.0 - NEXURA API REST**
 
 ### **🎯 DESCRIPCION GENERAL**

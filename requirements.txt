@@ -2,9 +2,9 @@
 # DEPENDENCIAS - PRELIQUIDADOR RETEFUENTE v2.0
 # =======================================
 
-# Framework web
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+# Framework web (actualizados para compatibilidad con anyio 4.x)
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
 
 # Procesamiento de archivos
 pdfplumber==0.11.0
@@ -19,13 +19,13 @@ Pillow==10.1.0
 pdf2image==1.17.0
 PyMuPDF==1.23.8
 
-# Google APIs
-google-generativeai==0.3.1
+# Google APIs (ACTUALIZADO v3.0: nuevo SDK oficial)
+google-genai==0.2.0
 google-cloud-vision==3.4.5
 
 # Utilidades
 python-dotenv==1.0.0
-pydantic==2.5.0
+pydantic==2.10.0
 
 # Logging y debugging
 structlog==23.2.0
@@ -53,3 +53,10 @@ requests==2.31.0
 # extract-msg: Procesa archivos .msg de Outlook
 # Nota: pdf2image requiere poppler-utils en Linux/Mac
 #       En Windows se incluye automáticamente
+
+# CAMBIOS v3.0.0 - MIGRACIÓN SDK Y FILES API:
+# =======================================
+# google-generativeai==0.3.1 → google-genai==0.2.0 (nuevo SDK oficial)
+# fastapi==0.104.1 → fastapi==0.115.0 (compatibilidad anyio 4.x)
+# uvicorn==0.24.0 → uvicorn==0.32.0 (compatibilidad anyio 4.x)
+# pydantic==2.5.0 → pydantic==2.10.0 (requerido por FastAPI 0.115.0)

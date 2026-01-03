@@ -27,6 +27,9 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from pathlib import Path
 
+# Utilidades compartidas (NUEVO v3.0)
+from .utils_archivos import obtener_nombre_archivo, procesar_archivos_para_gemini
+
 # Importar prompts especializados
 from prompts.prompt_ica import (
     crear_prompt_identificacion_ubicaciones,
@@ -346,87 +349,19 @@ class ClasificadorICA:
             logger.error(f"Error consultando UBICACIONES ICA: {e}")
             return []
 
-    async def _procesar_archivos_para_gemini(self, archivos_directos: List[Any]) -> List[Dict[str, Any]]:
+    async def _procesar_archivos_para_gemini(self, archivos_directos: List[Any]) -> List[Any]:
         """
-        Procesa archivos UploadFile para convertirlos al formato esperado por Gemini.
-        
-        RESPONSABILIDAD (SRP):
-        - Convierte UploadFile a formato {"mime_type": ..., "data": bytes}
-        - Determina MIME type correcto según extensión
-        
+        Procesa archivos para convertirlos al formato esperado por Gemini (NUEVO SDK v3.0).
+
+        DELEGACIÓN: Usa función compartida para evitar duplicación de código.
+
         Args:
-            archivos_directos: Lista de archivos (UploadFile, bytes o dict)
-            
+            archivos_directos: Lista de archivos (File de Google, UploadFile, bytes o dict)
+
         Returns:
-            List[Dict]: Archivos en formato Gemini
+            List[types.Part]: Archivos en formato Gemini SDK v3.0
         """
-        archivos_procesados = []
-        
-        for i, archivo_elemento in enumerate(archivos_directos):
-            try:
-                archivo_objeto = None
-                
-                # Caso 1: Ya es un dict con formato correcto
-                if isinstance(archivo_elemento, dict) and "mime_type" in archivo_elemento:
-                    archivo_objeto = archivo_elemento
-                    logger.debug(f"Archivo {i+1} ya está en formato Gemini")
-                
-                # Caso 2: Es bytes directamente
-                elif isinstance(archivo_elemento, bytes):
-                    archivo_objeto = {
-                        "mime_type": "application/octet-stream",
-                        "data": archivo_elemento
-                    }
-                    logger.debug(f"Archivo {i+1} convertido desde bytes")
-                
-                # Caso 3: Es UploadFile (starlette)
-                elif hasattr(archivo_elemento, 'read'):
-                    await archivo_elemento.seek(0)
-                    archivo_bytes = await archivo_elemento.read()
-                    
-                    # Determinar MIME type por extensión
-                    nombre_archivo = getattr(archivo_elemento, 'filename', f'archivo_{i+1}')
-                    extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
-                    
-                    if extension == 'pdf':
-                        mime_type = "application/pdf"
-                    elif extension in ['jpg', 'jpeg']:
-                        mime_type = "image/jpeg"
-                    elif extension == 'png':
-                        mime_type = "image/png"
-                    elif extension == 'gif':
-                        mime_type = "image/gif"
-                    elif extension in ['bmp']:
-                        mime_type = "image/bmp"
-                    elif extension in ['tiff', 'tif']:
-                        mime_type = "image/tiff"
-                    elif extension == 'webp':
-                        mime_type = "image/webp"
-                    else:
-                        mime_type = "application/octet-stream"
-                    
-                    archivo_objeto = {
-                        "mime_type": mime_type,
-                        "data": archivo_bytes
-                    }
-                    logger.debug(f"Archivo {i+1} ({nombre_archivo}): {len(archivo_bytes):,} bytes, {mime_type}")
-                
-                else:
-                    logger.warning(f"Tipo de archivo desconocido: {type(archivo_elemento)}")
-                    archivo_objeto = {
-                        "mime_type": "application/octet-stream",
-                        "data": bytes(archivo_elemento) if not isinstance(archivo_elemento, bytes) else archivo_elemento
-                    }
-                
-                if archivo_objeto:
-                    archivos_procesados.append(archivo_objeto)
-                    
-            except Exception as e:
-                logger.error(f"Error procesando archivo {i+1} para Gemini: {e}")
-                continue
-        
-        logger.info(f"Archivos procesados para Gemini: {len(archivos_procesados)}/{len(archivos_directos)}")
-        return archivos_procesados
+        return await procesar_archivos_para_gemini(archivos_directos)
 
     async def _identificar_ubicaciones_gemini(
         self,
@@ -458,12 +393,9 @@ class ClasificadorICA:
         logger.info("Primera llamada Gemini: identificando ubicaciones (MULTIMODAL)...")
 
         try:
-            # Preparar nombres de archivos directos para el prompt
+            # Preparar nombres de archivos directos para el prompt (NUEVO v3.0: usa función compartida)
             archivos_directos = archivos_directos or []
-            nombres_archivos_directos = [
-                archivo.filename if hasattr(archivo, 'filename') else (archivo.name if hasattr(archivo, 'name') else f"archivo_{i}")
-                for i, archivo in enumerate(archivos_directos)
-            ]
+            nombres_archivos_directos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
 
             # Crear prompt con información de archivos directos
             prompt = crear_prompt_identificacion_ubicaciones(
@@ -482,12 +414,16 @@ class ClasificadorICA:
                 contenido_gemini.extend(archivos_procesados)
                 logger.info(f"📎 ICA - Enviando {len(archivos_procesados)} archivos procesados a Gemini para identificar ubicaciones")
 
-            # Llamar a Gemini con contexto completo (timeout 60 segundos)
+            # Llamar a Gemini con contexto completo (timeout 60 segundos) - NUEVO SDK v3.0
             loop = asyncio.get_event_loop()
             respuesta = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    lambda: self.procesador_gemini.modelo.generate_content(contenido_gemini)
+                    lambda: self.procesador_gemini.client.models.generate_content(
+                        model=self.procesador_gemini.model_name,
+                        contents=contenido_gemini,
+                        config=self.procesador_gemini.generation_config
+                    )
                 ),
                 timeout=60.0
             )
@@ -748,12 +684,9 @@ class ClasificadorICA:
         logger.info("Segunda llamada Gemini: relacionando actividades (MULTIMODAL)...")
 
         try:
-            # Preparar nombres de archivos directos para el prompt
+            # Preparar nombres de archivos directos para el prompt (NUEVO v3.0: usa función compartida)
             archivos_directos = archivos_directos or []
-            nombres_archivos_directos = [
-                archivo.filename if hasattr(archivo, 'filename') else (archivo.name if hasattr(archivo, 'name') else f"archivo_{i}")
-                for i, archivo in enumerate(archivos_directos)
-            ]
+            nombres_archivos_directos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
 
             # Crear prompt con información de archivos directos
             prompt = crear_prompt_relacionar_actividades(
@@ -773,12 +706,16 @@ class ClasificadorICA:
                 contenido_gemini.extend(archivos_procesados)
                 logger.info(f" ICA - Enviando {len(archivos_procesados)} archivos procesados a Gemini para relacionar actividades")
 
-            # Llamar a Gemini con contexto completo (timeout 60 segundos)
+            # Llamar a Gemini con contexto completo (timeout 60 segundos) - NUEVO SDK v3.0
             loop = asyncio.get_event_loop()
             respuesta = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    lambda: self.procesador_gemini.modelo.generate_content(contenido_gemini)
+                    lambda: self.procesador_gemini.client.models.generate_content(
+                        model=self.procesador_gemini.model_name,
+                        contents=contenido_gemini,
+                        config=self.procesador_gemini.generation_config
+                    )
                 ),
                 timeout=60.0
             )

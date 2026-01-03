@@ -27,8 +27,8 @@ from datetime import datetime
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 from pathlib import Path
 
-# Google Gemini
-import google.generativeai as genai
+# Google Gemini (nuevo SDK v2.0)
+from google import genai
 
 # FastAPI
 from fastapi import UploadFile
@@ -61,6 +61,9 @@ from modelos import (
 
 # Configuración de logging
 logger = logging.getLogger(__name__)
+
+# Utilidades compartidas (NUEVO v3.0)
+from .utils_archivos import obtener_nombre_archivo as _obtener_nombre_archivo
 
 # Type checking para evitar imports circulares
 if TYPE_CHECKING:
@@ -182,7 +185,7 @@ class ClasificadorRetefuente:
 
         # VALIDACIÓN HÍBRIDA: Verificar que hay factura (en texto o archivo directo)
         hay_factura_texto = bool(factura_texto.strip()) if factura_texto else False
-        nombres_archivos_directos = [archivo.filename for archivo in archivos_directos]
+        nombres_archivos_directos = [_obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
         posibles_facturas_directas = [nombre for nombre in nombres_archivos_directos if 'factura' in nombre.lower()]
 
         if not hay_factura_texto and not posibles_facturas_directas:
@@ -195,17 +198,8 @@ class ClasificadorRetefuente:
             if usar_hibrido:
                 logger.info("Usando análisis HÍBRIDO con archivos directos + textos preprocesados")
 
-                # CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
-                nombres_archivos_directos = []
-                for archivo in archivos_directos:
-                    try:
-                        if hasattr(archivo, 'filename') and archivo.filename:
-                            nombres_archivos_directos.append(archivo.filename)
-                        else:
-                            nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                    except Exception as e:
-                        logger.warning(f"Error obteniendo nombre de archivo: {e}")
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+                # CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT (NUEVO v3.0: soporta Files API)
+                nombres_archivos_directos = [_obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
 
                 # GENERAR PROMPT HÍBRIDO
                 if es_facturacion_extranjera:
@@ -399,17 +393,8 @@ class ClasificadorRetefuente:
             elif archivos_directos:
                 logger.info(f"Art 383 usando archivos directos originales: {len(archivos_directos)} archivos")
 
-            # CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT
-            nombres_archivos_directos = []
-            for archivo in archivos_directos:
-                try:
-                    if hasattr(archivo, 'filename') and archivo.filename:
-                        nombres_archivos_directos.append(archivo.filename)
-                    else:
-                        nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
-                except Exception as e:
-                    logger.warning(f"Error obteniendo nombre de archivo: {e}")
-                    nombres_archivos_directos.append(f"archivo_directo_{len(nombres_archivos_directos) + 1}")
+            # CREAR LISTA DE NOMBRES DE ARCHIVOS DIRECTOS PARA PROMPT (NUEVO v3.0: soporta Files API)
+            nombres_archivos_directos = [_obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
 
             # Generar prompt específico para Art 383
             prompt_art383 = PROMPT_ANALISIS_ART_383(
