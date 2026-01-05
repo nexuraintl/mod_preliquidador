@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import UploadFile
 
 # Utilidades compartidas (NUEVO v3.0)
-from .utils_archivos import obtener_nombre_archivo
+from utils.utils_archivos import obtener_nombre_archivo
 
 from .clasificador import ProcesadorGemini
 from prompts.prompt_timbre import (

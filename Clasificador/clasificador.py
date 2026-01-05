@@ -279,7 +279,7 @@ class ProcesadorGemini:
         
         try:
             # PASO 1: Crear lista de nombres de archivos directos para el prompt (NUEVO v3.0: soporta Files API)
-            from .utils_archivos import obtener_nombre_archivo
+            from utils.utils_archivos import obtener_nombre_archivo
             nombres_archivos_directos = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
             
             logger.info(f" Archivos directos para Gemini: {nombres_archivos_directos}")
@@ -424,7 +424,7 @@ class ProcesadorGemini:
         except Exception as e:
             logger.error(f" Error en clasificación híbrida de documentos: {e}")
             # Logging seguro de archivos directos fallidos (NUEVO v3.0: soporta Files API)
-            from .utils_archivos import obtener_nombre_archivo
+            from utils.utils_archivos import obtener_nombre_archivo
             archivos_fallidos_nombres = [obtener_nombre_archivo(archivo, i) for i, archivo in enumerate(archivos_directos)]
             
             logger.error(f" Archivos directos fallidos: {archivos_fallidos_nombres}")
@@ -457,7 +457,7 @@ class ProcesadorGemini:
             ValueError: Si hay error en la llamada a Gemini
         """
         try:
-            timeout_segundos = 90.0
+            timeout_segundos = 120.0
             
             logger.info(f" Llamada híbrida a Gemini con timeout de {timeout_segundos}s")
             logger.info(f" Contenido: 1 prompt + {len(contents) - 1} archivos directos")
@@ -699,10 +699,10 @@ class ProcesadorGemini:
                         contenido_multimodal.append(file_part)
 
                         # Obtener nombre seguro
-                        from .utils_archivos import obtener_nombre_archivo
+                        from utils.utils_archivos import obtener_nombre_archivo
                         nombre_archivo = obtener_nombre_archivo(archivo, i)
 
-                        logger.info(f"✅ Archivo {i+1}/{len(archivos_directos)} reutilizado desde Files API: {nombre_archivo} ({tipo_archivo})")
+                        logger.info(f" Archivo {i+1}/{len(archivos_directos)} reutilizado desde Files API: {nombre_archivo} ({tipo_archivo})")
                         continue  # Pasar al siguiente archivo, este ya está procesado
 
                     # Para UploadFile normales, continuar con flujo de validación y upload
@@ -957,7 +957,7 @@ class ProcesadorGemini:
                 upload_tasks.append((nombre_archivo, task))
 
             except Exception as e:
-                from .utils_archivos import obtener_nombre_archivo
+                from utils.utils_archivos import obtener_nombre_archivo
                 nombre_error = obtener_nombre_archivo(archivo, 0)
                 logger.error(f"Error validando archivo {nombre_error}: {e}")
                 continue

@@ -17,7 +17,7 @@ from pathlib import Path
 import traceback
 
 # Utilidades compartidas (NUEVO v3.0)
-from .utils_archivos import obtener_nombre_archivo
+from utils.utils_archivos import obtener_nombre_archivo
 
 # Google Gemini (nuevo SDK v2.0)
 from google import genai

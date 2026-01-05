@@ -63,7 +63,7 @@ from modelos import (
 logger = logging.getLogger(__name__)
 
 # Utilidades compartidas (NUEVO v3.0)
-from .utils_archivos import obtener_nombre_archivo as _obtener_nombre_archivo
+from utils.utils_archivos import obtener_nombre_archivo as _obtener_nombre_archivo
 
 # Type checking para evitar imports circulares
 if TYPE_CHECKING:

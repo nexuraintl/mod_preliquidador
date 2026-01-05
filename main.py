@@ -90,6 +90,8 @@ from config import (
 
 )
 
+from utils.validacion_negocios import validar_negocio
+
 # Dependencias para preprocesamiento Excel
 import pandas as pd
 import io
@@ -220,78 +222,20 @@ async def procesar_facturas_integrado(
         # PASO 1: VALIDACIÓN Y CONFIGURACIÓN
         # =================================
 
-        # Consultar información del negocio usando BusinessService (SOLID: SRP)
+        # Consultar información del negocio usando BusinessService 
         resultado_negocio = business_service.obtener_datos_negocio(codigo_del_negocio)
-        datos_negocio = resultado_negocio.get('data') if resultado_negocio.get('success') else None
-
-        # Extraer NIT administrativo de la base de datos
-        if not datos_negocio or 'nit' not in datos_negocio:
-            # Código no parametrizado: retornar respuesta estructurada en lugar de error
-            logger.warning(f"Código de negocio {codigo_del_negocio} no parametrizado en base de datos")
-            respuesta_mock = crear_respuesta_negocio_no_parametrizado(codigo_del_negocio)
-
-            return JSONResponse(
-                status_code=200,  # 200 OK - respuesta válida con estructura estándar
-                content=respuesta_mock
-            )
-
-        nit_administrativo = str(datos_negocio['nit'])
-        logger.info(f" NIT administrativo obtenido de DB: {nit_administrativo}")
-
-        # Validar NIT administrativo obtenido de DB
-        es_valido, nombre_entidad, impuestos_aplicables = validar_nit_administrativo(nit_administrativo)
-        if not es_valido:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "NIT administrativo no válido",
-                    "nit_recibido": nit_administrativo,
-                    "mensaje": "El NIT no está configurado en el sistema",
-                    "nits_disponibles": list(obtener_nits_disponibles().keys())
-                }
-            )
         
-        logger.info(f" NIT válido: {nombre_entidad}")
-        logger.info(f"Impuestos configurados: {impuestos_aplicables}")
-
-        # Detectar automáticamente qué impuestos aplican usando código de negocio y NIT administrativo
-        # NUEVO v3.1: Se pasa business_service para validar tipo de recurso (Públicos/Privados)
-        nombre_negocio = datos_negocio.get('negocio', 'Desconocido')
-        deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(
-            codigo_del_negocio,
-            nombre_negocio,
-            nit_administrativo,  # Validación doble: NIT + código de negocio
-            business_service  # DIP: Inyección de dependencia para validar tipo de recurso
-        )
-        aplica_retencion = "RETENCION_FUENTE" in impuestos_aplicables
-        aplica_estampilla = deteccion_impuestos["aplica_estampilla_universidad"]
-        aplica_obra_publica = deteccion_impuestos["aplica_contribucion_obra_publica"]
-        aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # VALIDACIÓN IVA
-        aplica_ica = nit_aplica_ICA(nit_administrativo)  # VALIDACIÓN ICA
-        aplica_tasa_prodeporte = nit_aplica_tasa_prodeporte(nit_administrativo)  # VALIDACIÓN TASA PRODEPORTE
-        aplica_timbre = nit_aplica_timbre(nit_administrativo)  # VALIDACIÓN TIMBRE
-
-        logger.info(f" Código de negocio: {codigo_del_negocio} - {nombre_negocio}")
-        logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}, Aplica ICA: {aplica_ica}, Aplica Timbre: {aplica_timbre}")
-
-        # Determinar estrategia de procesamiento
-        impuestos_a_procesar = []
-        if aplica_retencion:
-            impuestos_a_procesar.append("RETENCION_FUENTE")
-        if aplica_estampilla:
-            impuestos_a_procesar.append("ESTAMPILLA_UNIVERSIDAD")
-        if aplica_obra_publica:
-            impuestos_a_procesar.append("CONTRIBUCION_OBRA_PUBLICA")
-        if aplica_iva:
-            impuestos_a_procesar.append("IVA_RETEIVA")
-        if aplica_ica:
-            impuestos_a_procesar.append("RETENCION_ICA")
-        if aplica_timbre:
-            impuestos_a_procesar.append("IMPUESTO_TIMBRE")
-
-        logger.info(" Estrategia: PROCESAMIENTO PARALELO (todos los NITs aplican múltiples impuestos)")
-        logger.info(f" Impuestos a procesar: {impuestos_a_procesar}")
+        #validacion de de impuestos a procesar dada la naturaleza del proovedor 
         
+        resultado_validacion = validar_negocio(resultado_negocio=resultado_negocio,codigo_del_negocio=codigo_del_negocio, business_service=business_service)
+        
+        if isinstance(resultado_validacion,JSONResponse):
+            return resultado_validacion
+        
+        (impuestos_a_procesar, aplica_retencion, aplica_estampilla, aplica_obra_publica, aplica_iva, aplica_ica, aplica_timbre, aplica_tasa_prodeporte, nombre_negocio, nit_administrativo, deteccion_impuestos,nombre_entidad) = resultado_validacion
+        
+        
+       
         # =================================
         # PASO 2: FILTRADO Y VALIDACIÓN DE ARCHIVOS
         # =================================

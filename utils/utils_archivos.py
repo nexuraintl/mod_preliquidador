@@ -102,7 +102,7 @@ async def procesar_archivos_para_gemini(archivos_directos: List[Any]) -> List[An
                     )
                 )
                 nombre_archivo = obtener_nombre_archivo(archivo_elemento, i)
-                logger.info(f"✅ Archivo {i+1} reutilizado desde Files API: {nombre_archivo}")
+                logger.info(f" Archivo {i+1} reutilizado desde Files API: {nombre_archivo}")
 
             # Caso 2: Es bytes directamente
             elif isinstance(archivo_elemento, bytes):
@@ -159,7 +159,7 @@ async def procesar_archivos_para_gemini(archivos_directos: List[Any]) -> List[An
                 logger.debug(f"Archivo {i+1} ({nombre_archivo}): {len(archivo_bytes):,} bytes, {mime_type}")
 
             else:
-                logger.warning(f"⚠️ Tipo de archivo desconocido: {type(archivo_elemento)}")
+                logger.warning(f" Tipo de archivo desconocido: {type(archivo_elemento)}")
                 # No intentar convertir a bytes si no sabemos qué es
                 continue
 
@@ -167,9 +167,9 @@ async def procesar_archivos_para_gemini(archivos_directos: List[Any]) -> List[An
                 archivos_procesados.append(part_objeto)
 
         except Exception as e:
-            logger.error(f"❌ Error procesando archivo {i+1} para Gemini: {e}")
+            logger.error(f" Error procesando archivo {i+1} para Gemini: {e}")
             logger.exception(e)
             continue
 
-    logger.info(f"📊 Archivos procesados para Gemini: {len(archivos_procesados)}/{len(archivos_directos)}")
+    logger.info(f" Archivos procesados para Gemini: {len(archivos_procesados)}/{len(archivos_directos)}")
     return archivos_procesados

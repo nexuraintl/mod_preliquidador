@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Utilidades compartidas (NUEVO v3.0)
-from .utils_archivos import obtener_nombre_archivo, procesar_archivos_para_gemini
+from utils.utils_archivos import obtener_nombre_archivo, procesar_archivos_para_gemini
 
 # Importar prompts especializados
 from prompts.prompt_ica import (
