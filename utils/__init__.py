@@ -12,7 +12,6 @@ from .error_handlers import (
 )
 from .utils_archivos import (obtener_nombre_archivo,
                              procesar_archivos_para_gemini)
-from .validacion_negocios import validar_negocio
 
 __all__ = [
     'crear_respuesta_negocio_no_parametrizado',
@@ -21,6 +20,5 @@ __all__ = [
     'validation_exception_handler',
     'extraer_informacion_errores',
     'obtener_nombre_archivo',
-    'procesar_archivos_para_gemini',
-    'validar_negocio'
-]
+    'procesar_archivos_para_gemini'
+    ]

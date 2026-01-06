@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional
 from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 
-from .mockups import crear_respuesta_negocio_no_parametrizado
+from utils.mockups import crear_respuesta_negocio_no_parametrizado
 from config import (
     obtener_nits_disponibles,
     validar_nit_administrativo,

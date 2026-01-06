@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # ===============================
 
 # Importar clases desde módulos
-
+from app.validacion_archivos import ValidadorArchivos
 from Clasificador.clasificador_obra_uni import ClasificadorObraUni
 from Clasificador.clasificador_iva import ClasificadorIva   
 from Clasificador.clasificador_estampillas_g import ClasificadorEstampillasGenerales
@@ -90,7 +90,7 @@ from config import (
 
 )
 
-from utils.validacion_negocios import validar_negocio
+from app.validacion_negocios import validar_negocio
 
 # Dependencias para preprocesamiento Excel
 import pandas as pd
@@ -239,49 +239,11 @@ async def procesar_facturas_integrado(
         # =================================
         # PASO 2: FILTRADO Y VALIDACIÓN DE ARCHIVOS
         # =================================
-        
-        # Extensiones soportadas por el sistema
-        EXTENSIONES_SOPORTADAS = {
-            'pdf', 'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp',  # Procesamiento directo
-            'xlsx', 'xls', 'docx', 'doc', 'msg', 'eml', 'xml'  # Preprocesamiento local
-        }
-        
-        # Filtrar archivos con extensiones soportadas
-        archivos_validos = []
-        archivos_ignorados = []
-        
-        for archivo in archivos:
-            try:
-                nombre_archivo = archivo.filename
-                extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
                 
-                if extension in EXTENSIONES_SOPORTADAS:
-                    archivos_validos.append(archivo)
-                else:
-                    archivos_ignorados.append(nombre_archivo)
-                    logger.warning(f" Archivo ignorado (extensión no soportada): {nombre_archivo} (.{extension})")
-            except Exception as e:
-                logger.warning(f" Error clasificando archivo {archivo.filename}: {e}")
-                archivos_ignorados.append(archivo.filename)
+        validador_archivos = ValidadorArchivos()
         
-        # Validar que al menos haya un archivo válido
-        if not archivos_validos:
-            logger.error(" Ningún archivo con extensión soportada fue recibido")
-            logger.error(f" Archivos recibidos: {[a.filename for a in archivos]}")
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "NO_VALID_FILES",
-                    "mensaje": "Ninguno de los archivos recibidos tiene una extensión soportada",
-                    "extensiones_soportadas": list(EXTENSIONES_SOPORTADAS),
-                    "total_archivos_recibidos": len(archivos)
-                }
-            )
-        
-        logger.info(f" Archivos recibidos: {len(archivos)} | Válidos: {len(archivos_validos)} | Ignorados: {len(archivos_ignorados)}")
-        if archivos_ignorados:
-            logger.info(f" Archivos ignorados: {archivos_ignorados}")
-        
+        archivos_validos, archivos_ignorados = validador_archivos.validar(archivos)
+   
         # =================================
         # PASO 3: EXTRACCIÓN HÍBRIDA DE TEXTO
         # =================================
