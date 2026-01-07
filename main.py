@@ -235,8 +235,6 @@ async def procesar_facturas_integrado(
         
         (impuestos_a_procesar, aplica_retencion, aplica_estampilla, aplica_obra_publica, aplica_iva, aplica_ica, aplica_timbre, aplica_tasa_prodeporte, nombre_negocio, nit_administrativo, deteccion_impuestos,nombre_entidad) = resultado_validacion
         
-        
-       
         # =================================
         # PASO 2: FILTRADO Y VALIDACIÓN DE ARCHIVOS
         # =================================
@@ -249,67 +247,9 @@ async def procesar_facturas_integrado(
         # PASO 3: EXTRACCIÓN HÍBRIDA DE TEXTO
         # =================================
         
-        logger.info(" Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
+        extractor_hibrido = ExtractorHibrido()
         
-        # SEPARAR ARCHIVOS POR ESTRATEGIA DE PROCESAMIENTO
-        archivos_directos = []      # PDFs e imágenes → Gemini directo (multimodal)
-        archivos_preprocesamiento = []  # Excel, Email, Word → Procesamiento local
-        
-        for archivo in archivos_validos:
-            try:
-                nombre_archivo = archivo.filename
-                extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
-                
-                # Definir qué archivos van directo a Gemini (multimodal)
-                if extension == 'pdf' or extension in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
-                    archivos_directos.append(archivo)
-                    logger.info(f" Archivo directo (multimodal): {nombre_archivo}")
-                else:
-                    # Excel, Email, Word y otros van a procesamiento local
-                    archivos_preprocesamiento.append(archivo)
-                    logger.info(f" Archivo para preprocesamiento: {nombre_archivo}")
-            except Exception as e:
-                logger.warning(f" Error clasificando archivo: {e}")
-                # En caso de error, enviar a preprocesamiento (más seguro)
-                logger.warning(f"Enviando a preprocesamiento por seguridad: {archivo.filename}")
-                archivos_preprocesamiento.append(archivo)
-        
-        logger.info(" Estrategia híbrida multimodal definida:")
-        logger.info(f" Archivos directos (multimodal): {len(archivos_directos)}")
-        logger.info(f" Archivos preprocesamiento local: {len(archivos_preprocesamiento)}")
-        
-        # PROCESAR SOLO ARCHIVOS QUE NECESITAN PREPROCESAMIENTO LOCAL
-        if archivos_preprocesamiento:
-            logger.info(f" Iniciando extracción local para {len(archivos_preprocesamiento)} archivos...")
-            extractor = ProcesadorArchivos()
-            textos_archivos_original = await extractor.procesar_multiples_archivos(archivos_preprocesamiento)
-        else:
-            logger.info(" No hay archivos para procesamiento local - Solo archivos directos multimodales")
-            textos_archivos_original = {}
-        
-        # Preprocesamiento específico para Excel (solo archivos locales)
-        textos_preprocesados = {}
-        for nombre_archivo, contenido_original in textos_archivos_original.items():
-            # Si es Excel, aplicar preprocesamiento
-            if nombre_archivo.lower().endswith(('.xlsx', '.xls')):
-                try:
-                    # Obtener contenido binario original del archivo
-                    archivo_obj = next((arch for arch in archivos_preprocesamiento if arch.filename == nombre_archivo), None)
-                    if archivo_obj:
-                        await archivo_obj.seek(0)  # Resetear puntero
-                        contenido_binario = await archivo_obj.read()
-                        texto_preprocesado = preprocesar_excel_limpio(contenido_binario, nombre_archivo)
-                        textos_preprocesados[nombre_archivo] = texto_preprocesado
-                        logger.info(f" Excel preprocesado: {nombre_archivo}")
-                    else:
-                        textos_preprocesados[nombre_archivo] = contenido_original
-                except Exception as e:
-                    logger.warning(f" Error preprocesando {nombre_archivo}: {e}")
-                    textos_preprocesados[nombre_archivo] = contenido_original
-            else:
-                textos_preprocesados[nombre_archivo] = contenido_original
-        
-        logger.info(f" Extracción local completada: {len(textos_preprocesados)} textos extraídos")
+        archivos_directos, textos_preprocesados = await extractor_hibrido.extraer(archivos_validos)
         
         # =================================
         # PASO 4: CLASIFICACIÓN HÍBRIDA CON MULTIMODALIDAD
