@@ -61,6 +61,7 @@ from Liquidador.liquidador_ica import LiquidadorICA
 from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
 from Liquidador.liquidador_timbre import LiquidadorTimbre
 from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
+from app.extraccion_hibrida import ExtractorHibrido
 
 # Importar módulos de base de datos (SOLID: Clean Architecture Module)
 from database import (
