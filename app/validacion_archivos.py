@@ -3,7 +3,7 @@ Módulo de validación de archivos.
 Proporciona clases para validar extensiones de archivos subidos.
 """
 import logging
-from dataclasses import dataclass, astuple
+from dataclasses import dataclass
 from typing import List, Tuple
 from fastapi import HTTPException, UploadFile
 
@@ -27,7 +27,9 @@ class ResultadoValidacionArchivos:
 
     def __iter__(self):
         """Permite desempaquetar como tupla: validos, ignorados = resultado"""
-        return iter(astuple(self))
+        # Retornar tupla directamente sin astuple() para evitar errores de serialización
+        # con objetos UploadFile que contienen streams no serializables
+        return iter((self.archivos_validos, self.archivos_ignorados))
 
 
 class ValidadorArchivos:

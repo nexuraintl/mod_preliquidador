@@ -27,8 +27,8 @@ from .gemini_files_manager import GeminiFilesManager
 from pydantic import BaseModel
 from typing import List, Optional
 
-# Importación adicional para archivos directos
-from fastapi import UploadFile
+# Importación adicional para archivos directos y manejo de errores HTTP
+from fastapi import UploadFile, HTTPException
 
 #  NUEVAS IMPORTACIONES PARA VALIDACIÓN ROBUSTA DE PDF
 import PyPDF2
@@ -592,13 +592,69 @@ class ProcesadorGemini:
             return texto_respuesta
             
         except asyncio.TimeoutError:
+            # Gateway Timeout - El servicio de IA no respondió a tiempo en modo híbrido
             error_msg = f"IA tardó más de {timeout_segundos}s en procesar archivos directos"
-            logger.error(f" Timeout híbrido: {error_msg}")
-            raise ValueError(error_msg)
+            logger.error(f"Timeout híbrido: {error_msg}")
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "error": "Timeout en clasificación híbrida de documentos",
+                    "tipo": "gateway_timeout",
+                    "servicio_externo": "Google Gemini API",
+                    "timeout_configurado": timeout_segundos,
+                    "mensaje": error_msg,
+                    "modo_procesamiento": "hibrido_multimodal",
+                    "sugerencia": "El servicio de IA no respondió a tiempo. Intente con menos archivos o archivos más pequeños.",
+                    "retry_sugerido": True
+                }
+            )
         except Exception as e:
-            logger.error(f" Error llamando a Gemini en modo híbrido: {e}")
-            logger.error(f" Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
-            raise ValueError(f"Error híbrido de IA: {str(e)}")
+            error_str = str(e).lower()
+            logger.error(f"Error llamando a Gemini en modo híbrido: {e}")
+            logger.error(f"Tipo de contenido enviado: {[type(item) for item in contents[:2]]}")
+
+            # Manejo específico según tipo de error de Gemini
+            if "quota" in error_str or "rate limit" in error_str or "429" in error_str:
+                # Too Many Requests - Límite de rate/quota excedido
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "Límite de uso del servicio de IA excedido",
+                        "tipo": "quota_exceeded",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": str(e),
+                        "modo_procesamiento": "hibrido_multimodal",
+                        "sugerencia": "Se ha excedido la cuota de la API. Intente nuevamente más tarde.",
+                        "retry_sugerido": True
+                    }
+                )
+            elif "authentication" in error_str or "unauthorized" in error_str or "api key" in error_str:
+                # Bad Gateway - Error de autenticación con servicio externo
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "Error de autenticación con servicio de IA",
+                        "tipo": "authentication_error",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": "Problema con las credenciales del servicio de IA",
+                        "sugerencia": "Contacte al administrador del sistema.",
+                        "retry_sugerido": False
+                    }
+                )
+            else:
+                # Bad Gateway - Otros errores del servicio externo
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "Error en clasificación híbrida de documentos",
+                        "tipo": "bad_gateway",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": str(e),
+                        "modo_procesamiento": "hibrido_multimodal",
+                        "sugerencia": "Error en el servicio de IA. Verifique los archivos e intente nuevamente.",
+                        "retry_sugerido": True
+                    }
+                )
 
 
     async def analizar_consorcio(self,
@@ -835,17 +891,76 @@ class ProcesadorGemini:
             return texto_respuesta
             
         except asyncio.TimeoutError:
+            # Gateway Timeout - El servicio de IA no respondió a tiempo en análisis de factura
             error_msg = f"Análisis híbrido tardó más de {timeout_segundos}s en completarse"
-            logger.error(f" Timeout en análisis híbrido: {error_msg}")
-            raise ValueError(error_msg)
+            logger.error(f"Timeout en análisis híbrido: {error_msg}")
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "error": "Timeout en análisis de factura",
+                    "tipo": "gateway_timeout",
+                    "servicio_externo": "Google Gemini API",
+                    "timeout_configurado": timeout_segundos,
+                    "mensaje": error_msg,
+                    "modo_procesamiento": "analisis_factura_multimodal",
+                    "sugerencia": "El análisis de factura excedió el tiempo límite. Intente con documentos más pequeños o menos archivos.",
+                    "retry_sugerido": True
+                }
+            )
         except Exception as e:
-            logger.error(f" Error en análisis híbrido de factura: {e}")
+            error_str = str(e).lower()
+            logger.error(f"Error en análisis híbrido de factura: {e}")
+
             # Manejar archivos_directos que puede ser None
             archivos_info = []
             if archivos_directos:
                 archivos_info = [getattr(archivo, 'filename', 'sin_nombre') for archivo in archivos_directos]
-            logger.error(f" Archivos enviados: {archivos_info}")
-            raise ValueError(f"Error híbrido en análisis de factura: {str(e)}")
+            logger.error(f"Archivos enviados: {archivos_info}")
+
+            # Manejo específico según tipo de error de Gemini
+            if "quota" in error_str or "rate limit" in error_str or "429" in error_str:
+                # Too Many Requests - Límite de rate/quota excedido
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "Límite de uso del servicio de IA excedido",
+                        "tipo": "quota_exceeded",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": str(e),
+                        "archivos_procesados": archivos_info,
+                        "modo_procesamiento": "analisis_factura_multimodal",
+                        "sugerencia": "Se ha excedido la cuota de la API. Intente nuevamente más tarde.",
+                        "retry_sugerido": True
+                    }
+                )
+            elif "authentication" in error_str or "unauthorized" in error_str or "api key" in error_str:
+                # Bad Gateway - Error de autenticación con servicio externo
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "Error de autenticación con servicio de IA",
+                        "tipo": "authentication_error",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": "Problema con las credenciales del servicio de IA",
+                        "sugerencia": "Contacte al administrador del sistema.",
+                        "retry_sugerido": False
+                    }
+                )
+            else:
+                # Bad Gateway - Otros errores del servicio externo
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "Error en análisis de factura",
+                        "tipo": "bad_gateway",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": str(e),
+                        "archivos_procesados": archivos_info,
+                        "modo_procesamiento": "analisis_factura_multimodal",
+                        "sugerencia": "Error en el servicio de IA. Verifique los archivos e intente nuevamente.",
+                        "retry_sugerido": True
+                    }
+                )
 
         finally:
             # PASO 5 (NUEVO v3.0): Cleanup automático de Files API
@@ -1164,7 +1279,7 @@ class ProcesadorGemini:
             str: Respuesta de Gemini
 
         Raises:
-            ValueError: Si hay error en la llamada a Gemini
+            HTTPException: 504 para timeout, 429 para quota excedida, 502 para otros errores
         """
         try:
             # Seleccionar configuración según el caso
@@ -1174,9 +1289,9 @@ class ProcesadorGemini:
             if usar_modelo_consorcio:
                 timeout_segundos = 120.0  # 2 minutos para consorcios grandes
             elif "impuestos_especiales" in prompt.lower() or "estampilla" in prompt.lower():
-                timeout_segundos = 90.0   # 90s para análisis de impuestos especiales
+                timeout_segundos = 120.0   # 90s para análisis de impuestos especiales
             else:
-                timeout_segundos = 60.0   # 60s para análisis estándar
+                timeout_segundos = 120.0   # 60s para análisis estándar
 
             logger.info(f"Llamando a Gemini (nuevo SDK) con timeout de {timeout_segundos}s")
 
@@ -1211,12 +1326,65 @@ class ProcesadorGemini:
             return texto_respuesta
 
         except asyncio.TimeoutError:
+            # Gateway Timeout - El servicio de IA no respondió a tiempo
             error_msg = f"IA tardó más de {timeout_segundos}s en responder"
             logger.error(f"Timeout llamando a Gemini ({timeout_segundos}s)")
-            raise ValueError(error_msg)
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "error": "Timeout comunicándose con servicio de IA",
+                    "tipo": "gateway_timeout",
+                    "servicio_externo": "Google Gemini API",
+                    "timeout_configurado": timeout_segundos,
+                    "mensaje": error_msg,
+                    "sugerencia": "El servicio de IA no respondió a tiempo. Intente nuevamente en unos momentos.",
+                    "retry_sugerido": True
+                }
+            )
         except Exception as e:
+            error_str = str(e).lower()
             logger.error(f"Error llamando a IA: {e}")
-            raise ValueError(f"Error de IA: {str(e)}")
+
+            # Manejo específico según tipo de error de Gemini
+            if "quota" in error_str or "rate limit" in error_str or "429" in error_str:
+                # Too Many Requests - Límite de rate/quota excedido
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "Límite de uso del servicio de IA excedido",
+                        "tipo": "quota_exceeded",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": str(e),
+                        "sugerencia": "Se ha excedido la cuota de la API. Intente nuevamente más tarde.",
+                        "retry_sugerido": True
+                    }
+                )
+            elif "authentication" in error_str or "unauthorized" in error_str or "api key" in error_str:
+                # Bad Gateway - Error de autenticación con servicio externo
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "Error de autenticación con servicio de IA",
+                        "tipo": "authentication_error",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": "Problema con las credenciales del servicio de IA",
+                        "sugerencia": "Contacte al administrador del sistema.",
+                        "retry_sugerido": False
+                    }
+                )
+            else:
+                # Bad Gateway - Otros errores del servicio externo
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "Error comunicándose con servicio de IA",
+                        "tipo": "bad_gateway",
+                        "servicio_externo": "Google Gemini API",
+                        "mensaje": str(e),
+                        "sugerencia": "Error en el servicio de IA. Intente nuevamente.",
+                        "retry_sugerido": True
+                    }
+                )
 
     def _evaluar_tipo_recurso(self, resultado: Dict[str, Any]) -> bool:
         """
