@@ -3,7 +3,7 @@ Módulo de extracción híbrida de archivos.
 Combina procesamiento multimodal (directo a Gemini) con preprocesamiento local.
 """
 import logging
-from dataclasses import dataclass, astuple
+from dataclasses import dataclass
 from typing import List, Dict
 from fastapi import UploadFile
 from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
@@ -23,7 +23,7 @@ class ResultadoExtraccion:
 
     def __iter__(self):
         """Permite desempaquetar como tupla: directos, preprocesados = resultado"""
-        return iter(astuple(self))
+        return iter((self.archivos_directos, self.textos_preprocesados))
 
 
 class ExtractorHibrido:
