@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # ===============================
 
 # Importar clases desde módulos
-
+from app.validacion_archivos import ValidadorArchivos
 from Clasificador.clasificador_obra_uni import ClasificadorObraUni
 from Clasificador.clasificador_iva import ClasificadorIva   
 from Clasificador.clasificador_estampillas_g import ClasificadorEstampillasGenerales
@@ -61,6 +61,7 @@ from Liquidador.liquidador_ica import LiquidadorICA
 from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
 from Liquidador.liquidador_timbre import LiquidadorTimbre
 from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
+from app.extraccion_hibrida import ExtractorHibrido
 
 # Importar módulos de base de datos (SOLID: Clean Architecture Module)
 from database import (
@@ -89,6 +90,8 @@ from config import (
     guardar_archivo_json,  # FUNCIÓN DE UTILIDAD PARA GUARDAR JSON
 
 )
+
+from app.validacion_negocios import validar_negocio
 
 # Dependencias para preprocesamiento Excel
 import pandas as pd
@@ -220,189 +223,33 @@ async def procesar_facturas_integrado(
         # PASO 1: VALIDACIÓN Y CONFIGURACIÓN
         # =================================
 
-        # Consultar información del negocio usando BusinessService (SOLID: SRP)
+        # Consultar información del negocio usando BusinessService 
         resultado_negocio = business_service.obtener_datos_negocio(codigo_del_negocio)
-        datos_negocio = resultado_negocio.get('data') if resultado_negocio.get('success') else None
-
-        # Extraer NIT administrativo de la base de datos
-        if not datos_negocio or 'nit' not in datos_negocio:
-            # Código no parametrizado: retornar respuesta estructurada en lugar de error
-            logger.warning(f"Código de negocio {codigo_del_negocio} no parametrizado en base de datos")
-            respuesta_mock = crear_respuesta_negocio_no_parametrizado(codigo_del_negocio)
-
-            return JSONResponse(
-                status_code=200,  # 200 OK - respuesta válida con estructura estándar
-                content=respuesta_mock
-            )
-
-        nit_administrativo = str(datos_negocio['nit'])
-        logger.info(f" NIT administrativo obtenido de DB: {nit_administrativo}")
-
-        # Validar NIT administrativo obtenido de DB
-        es_valido, nombre_entidad, impuestos_aplicables = validar_nit_administrativo(nit_administrativo)
-        if not es_valido:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "NIT administrativo no válido",
-                    "nit_recibido": nit_administrativo,
-                    "mensaje": "El NIT no está configurado en el sistema",
-                    "nits_disponibles": list(obtener_nits_disponibles().keys())
-                }
-            )
         
-        logger.info(f" NIT válido: {nombre_entidad}")
-        logger.info(f"Impuestos configurados: {impuestos_aplicables}")
-
-        # Detectar automáticamente qué impuestos aplican usando código de negocio y NIT administrativo
-        # NUEVO v3.1: Se pasa business_service para validar tipo de recurso (Públicos/Privados)
-        nombre_negocio = datos_negocio.get('negocio', 'Desconocido')
-        deteccion_impuestos = detectar_impuestos_aplicables_por_codigo(
-            codigo_del_negocio,
-            nombre_negocio,
-            nit_administrativo,  # Validación doble: NIT + código de negocio
-            business_service  # DIP: Inyección de dependencia para validar tipo de recurso
-        )
-        aplica_retencion = "RETENCION_FUENTE" in impuestos_aplicables
-        aplica_estampilla = deteccion_impuestos["aplica_estampilla_universidad"]
-        aplica_obra_publica = deteccion_impuestos["aplica_contribucion_obra_publica"]
-        aplica_iva = nit_aplica_iva_reteiva(nit_administrativo)  # VALIDACIÓN IVA
-        aplica_ica = nit_aplica_ICA(nit_administrativo)  # VALIDACIÓN ICA
-        aplica_tasa_prodeporte = nit_aplica_tasa_prodeporte(nit_administrativo)  # VALIDACIÓN TASA PRODEPORTE
-        aplica_timbre = nit_aplica_timbre(nit_administrativo)  # VALIDACIÓN TIMBRE
-
-        logger.info(f" Código de negocio: {codigo_del_negocio} - {nombre_negocio}")
-        logger.info(f" Aplica estampilla: {aplica_estampilla}, Aplica obra pública: {aplica_obra_publica}, Aplica ICA: {aplica_ica}, Aplica Timbre: {aplica_timbre}")
-
-        # Determinar estrategia de procesamiento
-        impuestos_a_procesar = []
-        if aplica_retencion:
-            impuestos_a_procesar.append("RETENCION_FUENTE")
-        if aplica_estampilla:
-            impuestos_a_procesar.append("ESTAMPILLA_UNIVERSIDAD")
-        if aplica_obra_publica:
-            impuestos_a_procesar.append("CONTRIBUCION_OBRA_PUBLICA")
-        if aplica_iva:
-            impuestos_a_procesar.append("IVA_RETEIVA")
-        if aplica_ica:
-            impuestos_a_procesar.append("RETENCION_ICA")
-        if aplica_timbre:
-            impuestos_a_procesar.append("IMPUESTO_TIMBRE")
-
-        logger.info(" Estrategia: PROCESAMIENTO PARALELO (todos los NITs aplican múltiples impuestos)")
-        logger.info(f" Impuestos a procesar: {impuestos_a_procesar}")
+        #validacion de de impuestos a procesar dada la naturaleza del proovedor 
+        
+        resultado_validacion = validar_negocio(resultado_negocio=resultado_negocio,codigo_del_negocio=codigo_del_negocio, business_service=business_service)
+        
+        if isinstance(resultado_validacion,JSONResponse):
+            return resultado_validacion
+        
+        (impuestos_a_procesar, aplica_retencion, aplica_estampilla, aplica_obra_publica, aplica_iva, aplica_ica, aplica_timbre, aplica_tasa_prodeporte, nombre_negocio, nit_administrativo, deteccion_impuestos,nombre_entidad) = resultado_validacion
         
         # =================================
         # PASO 2: FILTRADO Y VALIDACIÓN DE ARCHIVOS
         # =================================
-        
-        # Extensiones soportadas por el sistema
-        EXTENSIONES_SOPORTADAS = {
-            'pdf', 'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp',  # Procesamiento directo
-            'xlsx', 'xls', 'docx', 'doc', 'msg', 'eml', 'xml'  # Preprocesamiento local
-        }
-        
-        # Filtrar archivos con extensiones soportadas
-        archivos_validos = []
-        archivos_ignorados = []
-        
-        for archivo in archivos:
-            try:
-                nombre_archivo = archivo.filename
-                extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
                 
-                if extension in EXTENSIONES_SOPORTADAS:
-                    archivos_validos.append(archivo)
-                else:
-                    archivos_ignorados.append(nombre_archivo)
-                    logger.warning(f" Archivo ignorado (extensión no soportada): {nombre_archivo} (.{extension})")
-            except Exception as e:
-                logger.warning(f" Error clasificando archivo {archivo.filename}: {e}")
-                archivos_ignorados.append(archivo.filename)
+        validador_archivos = ValidadorArchivos()
         
-        # Validar que al menos haya un archivo válido
-        if not archivos_validos:
-            logger.error(" Ningún archivo con extensión soportada fue recibido")
-            logger.error(f" Archivos recibidos: {[a.filename for a in archivos]}")
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "NO_VALID_FILES",
-                    "mensaje": "Ninguno de los archivos recibidos tiene una extensión soportada",
-                    "extensiones_soportadas": list(EXTENSIONES_SOPORTADAS),
-                    "total_archivos_recibidos": len(archivos)
-                }
-            )
-        
-        logger.info(f" Archivos recibidos: {len(archivos)} | Válidos: {len(archivos_validos)} | Ignorados: {len(archivos_ignorados)}")
-        if archivos_ignorados:
-            logger.info(f" Archivos ignorados: {archivos_ignorados}")
-        
+        archivos_validos, archivos_ignorados = validador_archivos.validar(archivos)
+   
         # =================================
         # PASO 3: EXTRACCIÓN HÍBRIDA DE TEXTO
         # =================================
         
-        logger.info(" Iniciando procesamiento híbrido multimodal: separando archivos por estrategia...")
+        extractor_hibrido = ExtractorHibrido()
         
-        # SEPARAR ARCHIVOS POR ESTRATEGIA DE PROCESAMIENTO
-        archivos_directos = []      # PDFs e imágenes → Gemini directo (multimodal)
-        archivos_preprocesamiento = []  # Excel, Email, Word → Procesamiento local
-        
-        for archivo in archivos_validos:
-            try:
-                nombre_archivo = archivo.filename
-                extension = nombre_archivo.split('.')[-1].lower() if '.' in nombre_archivo else ''
-                
-                # Definir qué archivos van directo a Gemini (multimodal)
-                if extension == 'pdf' or extension in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
-                    archivos_directos.append(archivo)
-                    logger.info(f" Archivo directo (multimodal): {nombre_archivo}")
-                else:
-                    # Excel, Email, Word y otros van a procesamiento local
-                    archivos_preprocesamiento.append(archivo)
-                    logger.info(f" Archivo para preprocesamiento: {nombre_archivo}")
-            except Exception as e:
-                logger.warning(f" Error clasificando archivo: {e}")
-                # En caso de error, enviar a preprocesamiento (más seguro)
-                logger.warning(f"Enviando a preprocesamiento por seguridad: {archivo.filename}")
-                archivos_preprocesamiento.append(archivo)
-        
-        logger.info(" Estrategia híbrida multimodal definida:")
-        logger.info(f" Archivos directos (multimodal): {len(archivos_directos)}")
-        logger.info(f" Archivos preprocesamiento local: {len(archivos_preprocesamiento)}")
-        
-        # PROCESAR SOLO ARCHIVOS QUE NECESITAN PREPROCESAMIENTO LOCAL
-        if archivos_preprocesamiento:
-            logger.info(f" Iniciando extracción local para {len(archivos_preprocesamiento)} archivos...")
-            extractor = ProcesadorArchivos()
-            textos_archivos_original = await extractor.procesar_multiples_archivos(archivos_preprocesamiento)
-        else:
-            logger.info(" No hay archivos para procesamiento local - Solo archivos directos multimodales")
-            textos_archivos_original = {}
-        
-        # Preprocesamiento específico para Excel (solo archivos locales)
-        textos_preprocesados = {}
-        for nombre_archivo, contenido_original in textos_archivos_original.items():
-            # Si es Excel, aplicar preprocesamiento
-            if nombre_archivo.lower().endswith(('.xlsx', '.xls')):
-                try:
-                    # Obtener contenido binario original del archivo
-                    archivo_obj = next((arch for arch in archivos_preprocesamiento if arch.filename == nombre_archivo), None)
-                    if archivo_obj:
-                        await archivo_obj.seek(0)  # Resetear puntero
-                        contenido_binario = await archivo_obj.read()
-                        texto_preprocesado = preprocesar_excel_limpio(contenido_binario, nombre_archivo)
-                        textos_preprocesados[nombre_archivo] = texto_preprocesado
-                        logger.info(f" Excel preprocesado: {nombre_archivo}")
-                    else:
-                        textos_preprocesados[nombre_archivo] = contenido_original
-                except Exception as e:
-                    logger.warning(f" Error preprocesando {nombre_archivo}: {e}")
-                    textos_preprocesados[nombre_archivo] = contenido_original
-            else:
-                textos_preprocesados[nombre_archivo] = contenido_original
-        
-        logger.info(f" Extracción local completada: {len(textos_preprocesados)} textos extraídos")
+        archivos_directos, textos_preprocesados = await extractor_hibrido.extraer(archivos_validos)
         
         # =================================
         # PASO 4: CLASIFICACIÓN HÍBRIDA CON MULTIMODALIDAD

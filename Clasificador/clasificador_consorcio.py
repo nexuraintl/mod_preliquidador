@@ -28,7 +28,7 @@ from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 from pathlib import Path
 
 # Utilidades compartidas (NUEVO v3.0)
-from .utils_archivos import obtener_nombre_archivo
+from utils.utils_archivos import obtener_nombre_archivo
 
 # FastAPI
 from fastapi import UploadFile
