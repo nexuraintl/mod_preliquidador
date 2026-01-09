@@ -1,5 +1,170 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.1.0 - REFACTOR SOLID: Preparación de Tareas de Análisis] - 2026-01-09
+
+### 🎯 OBJETIVO
+
+Refactorizar el bloque PASO 4.1 de `main.py` (líneas 277-409) en un módulo independiente `app/preparacion_tareas_analisis.py` siguiendo principios SOLID y el patrón arquitectónico de `app/clasificacion_documentos.py`.
+
+### 🏗️ ARQUITECTURA SOLID APLICADA
+
+**Separación en 4 Clases con Responsabilidades Únicas**:
+
+#### 1. InstanciadorClasificadores
+- **SRP**: Solo instancia clasificadores según flags booleanos
+- **DIP**: Recibe dependencias por constructor (ProcesadorGemini, DatabaseManager)
+- Gestiona 5 clasificadores: retefuente, obra_uni, iva, tasa_prodeporte, estampillas_generales
+
+#### 2. PreparadorCacheArchivos
+- **SRP**: Solo prepara cache de Files API de Google Gemini
+- Evita re-upload de archivos en workers paralelos
+- Retorna Dict con referencias de FileUploadResult
+
+#### 3. PreparadorTareasAnalisis
+- **SRP**: Solo crea tareas async para análisis paralelo
+- **OCP**: Fácil agregar nuevos impuestos sin modificar código existente
+- Maneja 7 tipos de tareas: retefuente, impuestos_especiales, iva, estampillas_generales, tasa_prodeporte, ica, timbre
+- Wrappers async con error handling para ICA y Timbre
+
+#### 4. CoordinadorPreparacionTareas
+- **Facade Pattern**: Coordina las 3 clases especializadas
+- Flujo: instanciación → cache → creación de tareas → resultado estructurado
+
+### 🆕 AÑADIDO
+
+#### Dataclasses con Type Safety
+
+**TareaAnalisis**:
+```python
+@dataclass
+class TareaAnalisis:
+    """Representa una tarea de analisis para ejecutar en paralelo."""
+    nombre: str
+    coroutine: Coroutine
+```
+
+**ResultadoPreparacionTareas**:
+```python
+@dataclass
+class ResultadoPreparacionTareas:
+    """Encapsula resultado completo de preparacion de tareas."""
+    tareas_analisis: List[TareaAnalisis]
+    cache_archivos: Dict[str, Any]
+    total_tareas: int
+    impuestos_preparados: List[str]
+
+    def __iter__(self):
+        """Permite desempaquetado: tareas, cache = resultado"""
+```
+
+#### Función Fachada (API Pública)
+
+```python
+async def preparar_tareas_analisis(
+    clasificador: ProcesadorGemini,
+    estructura_contable: int,
+    db_manager: DatabaseManager,
+    documentos_clasificados: Dict[str, Dict],
+    archivos_directos: List[UploadFile],
+    # ... 11 parámetros más de configuración
+) -> ResultadoPreparacionTareas
+```
+
+#### Tests Completos
+
+**Archivo**: `tests/test_preparacion_tareas_analisis.py` (850+ líneas)
+
+**Cobertura**:
+- 26 tests unitarios y de integración
+- 76% de cobertura del módulo
+- Tests para:
+  - 2 dataclasses
+  - InstanciadorClasificadores (5 tests)
+  - PreparadorCacheArchivos (2 tests)
+  - PreparadorTareasAnalisis (11 tests, incluyendo wrappers ICA/Timbre)
+  - CoordinadorPreparacionTareas (2 tests de integración)
+  - Función fachada (1 test)
+
+**Resultado**: ✅ 26/26 tests pasando
+
+### 🔧 CAMBIADO
+
+#### Refactor en main.py
+
+**Antes (líneas 277-409)**: 132 líneas de código con:
+- Instanciación manual de 7 clasificadores
+- Lógica condicional compleja para cada impuesto
+- Funciones async inline para ICA y Timbre
+- Cache de archivos inline
+- Lista de tuplas `tareas_analisis`
+
+**Después (líneas 277-317)**: 40 líneas de código con:
+```python
+# REFACTOR SOLID: Modulo de preparacion de tareas
+from app.preparacion_tareas_analisis import preparar_tareas_analisis
+
+resultado_preparacion = await preparar_tareas_analisis(
+    clasificador=clasificador,
+    estructura_contable=estructura_contable,
+    db_manager=db_manager,
+    # ... parámetros de configuración
+)
+
+# Extraer tareas y cache (compatible con código existente)
+tareas_analisis = [
+    (tarea.nombre, tarea.coroutine)
+    for tarea in resultado_preparacion.tareas_analisis
+]
+cache_archivos = resultado_preparacion.cache_archivos
+```
+
+**Reducción**: 132 líneas → 40 líneas (**70% de reducción**)
+
+#### Limpieza de Imports en main.py
+
+**Removidos** (ya no necesarios):
+- `ClasificadorObraUni`
+- `ClasificadorIva`
+- `ClasificadorEstampillasGenerales`
+- `ClasificadorTasaProdeporte`
+- `ClasificadorRetefuente`
+- `ClasificadorICA`
+
+**Mantenidos**:
+- `ProcesadorGemini` (necesario para instanciar)
+- `ClasificadorTimbre` (usado en liquidación para segunda llamada a Gemini)
+
+### 📊 BENEFICIOS DEL REFACTOR
+
+1. **Reducción de Complejidad**: 70% menos líneas en main.py
+2. **Testabilidad**: 4 clases independientes con responsabilidades claras
+3. **Mantenibilidad**: Fácil agregar nuevos impuestos
+4. **Extensibilidad (OCP)**: Nuevas tareas sin modificar código existente
+5. **Separación de Responsabilidades (SRP)**: Cada clase hace UNA cosa
+6. **Reutilizabilidad**: Módulo independiente reutilizable
+7. **Type Safety**: Dataclasses con typing completo
+8. **Documentación**: Docstrings PEP 257 en todas las clases y métodos
+
+### 🔍 PRINCIPIOS SOLID VERIFICADOS
+
+- ✅ **SRP**: 4 clases con responsabilidad única cada una
+- ✅ **OCP**: Extensible sin modificar (agregar nuevos impuestos)
+- ✅ **LSP**: No aplica (no hay herencia)
+- ✅ **ISP**: Interfaces claras y específicas
+- ✅ **DIP**: Todas las dependencias inyectadas
+
+### 📁 ARCHIVOS CREADOS/MODIFICADOS
+
+**Creados**:
+1. `app/preparacion_tareas_analisis.py` (~850 líneas con docstrings)
+2. `tests/test_preparacion_tareas_analisis.py` (~850 líneas)
+
+**Modificados**:
+1. `main.py` (líneas 277-409 → líneas 277-317, imports limpiados)
+2. `CHANGELOG.md` (esta entrada)
+
+---
+
 ## [3.0.0 - MAJOR: Integración Google Files API + Migración SDK] - 2026-01-03
 
 ### 🎯 OBJETIVO

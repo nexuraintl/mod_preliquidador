@@ -48,12 +48,7 @@ logger = logging.getLogger(__name__)
 
 # Importar clases desde módulos
 from app.validacion_archivos import ValidadorArchivos
-from Clasificador.clasificador_obra_uni import ClasificadorObraUni
-from Clasificador.clasificador_iva import ClasificadorIva   
-from Clasificador.clasificador_estampillas_g import ClasificadorEstampillasGenerales
-from Clasificador.clasificador_tp import ClasificadorTasaProdeporte
-from Clasificador import ProcesadorGemini, ClasificadorRetefuente
-from Clasificador.clasificador_ica import ClasificadorICA
+from Clasificador import ProcesadorGemini
 from Clasificador.clasificador_timbre import ClasificadorTimbre
 from Liquidador import LiquidadorRetencion
 from Liquidador.liquidador_consorcios import LiquidadorConsorcios, convertir_resultado_a_dict as convertir_consorcio_a_dict
@@ -92,6 +87,9 @@ from config import (
 )
 
 from app.validacion_negocios import validar_negocio
+
+from app.clasificacion_documentos import clasificar_archivos
+
 
 # Dependencias para preprocesamiento Excel
 import pandas as pd
@@ -258,194 +256,60 @@ async def procesar_facturas_integrado(
         # Clasificar documentos usando enfoque híbrido multimodal
         clasificador = ProcesadorGemini(estructura_contable=estructura_contable, db_manager=db_manager)
 
-        # Instanciar clasificadores especializados
-        clasificador_retefuente = ClasificadorRetefuente(
-            procesador_gemini=clasificador,
-            estructura_contable=estructura_contable,
-            db_manager=db_manager
-        )
-        
-        clasificador_tasa_prodeporte = ClasificadorTasaProdeporte(procesador_gemini=clasificador )
-        
-        clasificador_estampillas_generales = ClasificadorEstampillasGenerales(procesador_gemini=clasificador )
-        
-        clasificador_iva = ClasificadorIva(procesador_gemini=clasificador )
-        
-        clasificador_obra_uni = ClasificadorObraUni(procesador_gemini=clasificador )
-
-        logger.info(" Iniciando clasificación híbrida multimodal:")
-        logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
-        logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
-
-        clasificacion, es_consorcio, es_recurso_extranjero, es_facturacion_extranjera = await clasificador.clasificar_documentos(
+       
+        resultado_clasificacion = await clasificar_archivos(
+            clasificador=clasificador,
             archivos_directos=archivos_directos,
             textos_preprocesados=textos_preprocesados,
-            proveedor=proveedor
+            provedor=proveedor,
+            nit_administrativo=nit_administrativo,
+            nombre_entidad=nombre_entidad,
+            impuestos_a_procesar=impuestos_a_procesar
         )
-        
-        logger.info(f" Documentos clasificados: {len(clasificacion)}")
-        logger.info(f" Es consorcio: {es_consorcio}")
-        logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
-        
-        # Estructurar documentos clasificados (híbrido: directos + preprocesados)
-        documentos_clasificados = {}
-        for nombre_archivo, categoria in clasificacion.items():
-            # Para archivos directos, el texto no está disponible (se procesó directamente por Gemini)
-            if nombre_archivo in textos_preprocesados:
-                documentos_clasificados[nombre_archivo] = {
-                    "categoria": categoria,
-                    "texto": textos_preprocesados[nombre_archivo]
-                }
-            else:
-                # Archivo directo (PDF/imagen) - procesado nativamente por Gemini
-                documentos_clasificados[nombre_archivo] = {
-                    "categoria": categoria,
-                    "texto": "[ARCHIVO_DIRECTO_MULTIMODAL]",
-                    "procesamiento": "directo_gemini"
-                }
-        
-        # Guardar clasificación con información híbrida
-        clasificacion_data = {
-            "timestamp": datetime.now().isoformat(),
-            "nit_administrativo": nit_administrativo,
-            "nombre_entidad": nombre_entidad,
-            "clasificacion": clasificacion,
-            "es_consorcio": es_consorcio,
-            "es_facturacion_extranjera": es_facturacion_extranjera,
-            "es_recurso_extranjero": es_recurso_extranjero,
-            "impuestos_aplicables": impuestos_a_procesar,
-            "procesamiento_hibrido": {
-                "multimodalidad_activa": True,
-                "archivos_directos": len(archivos_directos),
-                "archivos_preprocesados": len(textos_preprocesados),
-                "total_archivos": len(archivos_directos) + len(textos_preprocesados),
-                "nombres_archivos_directos": [archivo.filename for archivo in archivos_directos],
-                "nombres_archivos_preprocesados": list(textos_preprocesados.keys()),
-                "version_multimodal": "2.8.0"
-            }
-        }
-        guardar_archivo_json(clasificacion_data, "clasificacion_documentos")
-        logger.info(f" Clasificación completada: {len(clasificacion)} documentos")
-        logger.info(f" Consorcio detectado: {es_consorcio}")
-        logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
-        
-        
-        # =================================
-        # PASO 4: PROCESAMIENTO PARALELO (TODOS LOS IMPUESTOS)
-        # =================================
 
-        logger.info(f" Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
+        documentos_clasificados, es_consorcio, es_recurso_extranjero, es_facturacion_extranjera, clasificacion = resultado_clasificacion
+
+        # =================================
+        # PASO 4.1: PROCESAMIENTO PARALELO (TODOS LOS IMPUESTOS)
+        # =================================
 
         # Log resumido de documentos (sin mostrar contenido completo)
         docs_resumen = {nombre: {"categoria": info["categoria"], "chars": len(info["texto"])}
                        for nombre, info in documentos_clasificados.items()}
         logger.info(f"Documentos a analizar: {docs_resumen}")
-        # Crear tareas paralelas para análisis con Gemini
-        tareas_analisis = []
-        logger.info(" Preparando cache para solucionar concurrencia en workers paralelos")
-        cache_archivos = await clasificador.preparar_archivos_para_workers_paralelos(archivos_directos)
 
-        # Tarea 1: Análisis de Retefuente (si aplica y no es recurso extranjero)
-        if aplica_retencion and not es_recurso_extranjero:
-            if es_consorcio:
-                tarea_retefuente = clasificador.analizar_consorcio(
-                    documentos_clasificados,
-                    es_facturacion_extranjera,
-                    None,
-                    cache_archivos,
-                    proveedor=proveedor
-                )
-            else:
-                #  MULTIMODALIDAD: Pasar archivos directos para análisis híbrido
-                # SOLID v3.1: Usar clasificador especializado de retefuente
-                tarea_retefuente = clasificador_retefuente.analizar_factura(
-                    documentos_clasificados,
-                    es_facturacion_extranjera,
-                    None,
-                    cache_archivos,
-                    proveedor=proveedor
-                )
-            tareas_analisis.append(("retefuente", tarea_retefuente))
-        elif aplica_retencion and es_recurso_extranjero:
-            logger.info(" Retefuente: No se procesará - Recurso de fuente extranjera detectado")
-        
-        # Tarea 2: Análisis de Impuestos Especiales (si aplican)
-        if aplica_estampilla or aplica_obra_publica:
-            tarea_impuestos_especiales = clasificador_obra_uni.analizar_estampilla(documentos_clasificados, None, cache_archivos)
-            tareas_analisis.append(("impuestos_especiales", tarea_impuestos_especiales))
-        
-        # Tarea 3: Análisis de IVA (si aplica y no es recurso extranjero) - NUEVA TAREA
-        if aplica_iva and not es_recurso_extranjero:
-            tarea_iva = clasificador_iva.analizar_iva(documentos_clasificados, None, cache_archivos)
-            tareas_analisis.append(("iva_reteiva", tarea_iva))
-        elif aplica_iva and es_recurso_extranjero:
-            logger.info(" IVA/ReteIVA: No se procesará - Recurso de fuente extranjera detectado")
-        
-        # Tarea 4: Análisis de Estampillas Generales -  NUEVA FUNCIONALIDAD
-        # Las estampillas generales se ejecutan SIEMPRE en paralelo para todos los NITs
-        tarea_estampillas_generales = clasificador_estampillas_generales.analizar_estampillas_generales(documentos_clasificados, None, cache_archivos)
-        tareas_analisis.append(("estampillas_generales", tarea_estampillas_generales))
+        # REFACTOR SOLID: Modulo de preparacion de tareas
+        from app.preparacion_tareas_analisis import preparar_tareas_analisis
 
-        # Tarea 5: Análisis de Tasa Prodeporte - NUEVA FUNCIONALIDAD
-        if aplica_tasa_prodeporte:
-            tarea_tasa_prodeporte = clasificador_tasa_prodeporte.analizar_tasa_prodeporte(documentos_clasificados, None, cache_archivos, observaciones_tp)
-            tareas_analisis.append(("tasa_prodeporte", tarea_tasa_prodeporte))
-            logger.info(f"✓ Tasa Prodeporte: Análisis activado para NIT {nit_administrativo}")
+        # Preparar todas las tareas de analisis en paralelo
+        resultado_preparacion = await preparar_tareas_analisis(
+            clasificador=clasificador,
+            estructura_contable=estructura_contable,
+            db_manager=db_manager,
+            documentos_clasificados=documentos_clasificados,
+            archivos_directos=archivos_directos,
+            aplica_retencion=aplica_retencion,
+            aplica_estampilla=aplica_estampilla,
+            aplica_obra_publica=aplica_obra_publica,
+            aplica_iva=aplica_iva,
+            aplica_ica=aplica_ica,
+            aplica_timbre=aplica_timbre,
+            aplica_tasa_prodeporte=aplica_tasa_prodeporte,
+            es_consorcio=es_consorcio,
+            es_recurso_extranjero=es_recurso_extranjero,
+            es_facturacion_extranjera=es_facturacion_extranjera,
+            proveedor=proveedor,
+            nit_administrativo=nit_administrativo,
+            observaciones_tp=observaciones_tp,
+            impuestos_a_procesar=impuestos_a_procesar
+        )
 
-        # Tarea 6: Análisis de ICA - NUEVA FUNCIONALIDAD (MULTIMODAL)
-        if aplica_ica:
-            # ICA requiere procesamiento especial con ClasificadorICA
-            async def analizar_ica_async():
-                try:
-                    clasificador_ica = ClasificadorICA(
-                        database_manager=db_manager,
-                        procesador_gemini=clasificador  # Procesador completo para multimodal
-                    )
-                    return await clasificador_ica.analizar_ica(
-                        nit_administrativo=nit_administrativo,
-                        textos_documentos=documentos_clasificados,
-                        estructura_contable=estructura_contable,
-                        cache_archivos=cache_archivos  # Cache para procesamiento híbrido
-                    )
-                except Exception as e:
-                    logger.error(f"Error en análisis ICA: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    return {
-                        "aplica": False,
-                        "estado": "preliquidacion_sin_finalizar",
-                        "observaciones": [f"Error en análisis ICA: {str(e)}"]
-                    }
-
-            tarea_ica = analizar_ica_async()
-            tareas_analisis.append(("ica", tarea_ica))
-            logger.info(f"✓ ICA: Análisis activado para NIT {nit_administrativo}")
-
-        # Tarea 7: Análisis de Timbre - NUEVA FUNCIONALIDAD
-        if aplica_timbre:
-            # Timbre requiere procesamiento especial con ClasificadorTimbre
-            async def analizar_timbre_async():
-                try:
-                    clasificador_timbre = ClasificadorTimbre(
-                        procesador_gemini=clasificador  # Procesador completo para reutilizar funciones
-                    )
-                    # Primera llamada: analizar observaciones
-                    return await clasificador_timbre.analizar_observaciones_timbre(
-                        observaciones=observaciones_tp or ""
-                    )
-                except Exception as e:
-                    logger.error(f"Error en análisis Timbre (observaciones): {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    return {
-                        "aplica_timbre": False,
-                        "base_gravable_obs": 0.0,
-                        "observaciones_analisis": f"Error en análisis Timbre: {str(e)}"
-                    }
-
-            tarea_timbre = analizar_timbre_async()
-            tareas_analisis.append(("timbre", tarea_timbre))
-            logger.info(f"✓ Timbre: Análisis activado para NIT {nit_administrativo}")
+        # Extraer tareas y cache (compatible con codigo existente)
+        tareas_analisis = [
+            (tarea.nombre, tarea.coroutine)
+            for tarea in resultado_preparacion.tareas_analisis
+        ]
+        cache_archivos = resultado_preparacion.cache_archivos
 
         # Ejecutar todas las tareas en paralelo
         logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
@@ -1072,15 +936,12 @@ async def procesar_facturas_integrado(
         
         # Agregar metadatos finales
         resultado_final.update({
-            "timestamp_procesamiento": datetime.now().isoformat(),
             "nit_administrativo": nit_administrativo,
             "nombre_entidad": nombre_entidad,
             "es_consorcio": es_consorcio,
             "es_facturacion_extranjera": es_facturacion_extranjera,
             "documentos_procesados": len(archivos),
             "documentos_clasificados": list(clasificacion.keys()),
-            "version_sistema": "2.4.0",
-            "modulos_utilizados": ["Extraccion", "Clasificador", "Liquidador"]
         })
         
         # Guardar resultado final completo
