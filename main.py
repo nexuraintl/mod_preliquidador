@@ -93,6 +93,9 @@ from config import (
 
 from app.validacion_negocios import validar_negocio
 
+from app.clasificacion_documentos import clasificar_archivos
+
+
 # Dependencias para preprocesamiento Excel
 import pandas as pd
 import io
@@ -258,7 +261,25 @@ async def procesar_facturas_integrado(
         # Clasificar documentos usando enfoque híbrido multimodal
         clasificador = ProcesadorGemini(estructura_contable=estructura_contable, db_manager=db_manager)
 
-        # Instanciar clasificadores especializados
+       
+        resultado_clasificacion = await clasificar_archivos(
+            clasificador=clasificador,
+            archivos_directos=archivos_directos,
+            textos_preprocesados=textos_preprocesados,
+            provedor=proveedor,
+            nit_administrativo=nit_administrativo,
+            nombre_entidad=nombre_entidad,
+            impuestos_a_procesar=impuestos_a_procesar
+        )
+
+        documentos_clasificados, es_consorcio, es_recurso_extranjero, es_facturacion_extranjera, clasificacion = resultado_clasificacion
+
+        # =================================
+        # PASO 4.1: PROCESAMIENTO PARALELO (TODOS LOS IMPUESTOS)
+        # =================================
+        
+        
+         # Instanciar clasificadores especializados
         clasificador_retefuente = ClasificadorRetefuente(
             procesador_gemini=clasificador,
             estructura_contable=estructura_contable,
@@ -272,67 +293,6 @@ async def procesar_facturas_integrado(
         clasificador_iva = ClasificadorIva(procesador_gemini=clasificador )
         
         clasificador_obra_uni = ClasificadorObraUni(procesador_gemini=clasificador )
-
-        logger.info(" Iniciando clasificación híbrida multimodal:")
-        logger.info(f" Archivos directos (PDFs/imágenes): {len(archivos_directos)}")
-        logger.info(f"Textos preprocesados (Excel/Email/Word): {len(textos_preprocesados)}")
-
-        clasificacion, es_consorcio, es_recurso_extranjero, es_facturacion_extranjera = await clasificador.clasificar_documentos(
-            archivos_directos=archivos_directos,
-            textos_preprocesados=textos_preprocesados,
-            proveedor=proveedor
-        )
-        
-        logger.info(f" Documentos clasificados: {len(clasificacion)}")
-        logger.info(f" Es consorcio: {es_consorcio}")
-        logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
-        
-        # Estructurar documentos clasificados (híbrido: directos + preprocesados)
-        documentos_clasificados = {}
-        for nombre_archivo, categoria in clasificacion.items():
-            # Para archivos directos, el texto no está disponible (se procesó directamente por Gemini)
-            if nombre_archivo in textos_preprocesados:
-                documentos_clasificados[nombre_archivo] = {
-                    "categoria": categoria,
-                    "texto": textos_preprocesados[nombre_archivo]
-                }
-            else:
-                # Archivo directo (PDF/imagen) - procesado nativamente por Gemini
-                documentos_clasificados[nombre_archivo] = {
-                    "categoria": categoria,
-                    "texto": "[ARCHIVO_DIRECTO_MULTIMODAL]",
-                    "procesamiento": "directo_gemini"
-                }
-        
-        # Guardar clasificación con información híbrida
-        clasificacion_data = {
-            "timestamp": datetime.now().isoformat(),
-            "nit_administrativo": nit_administrativo,
-            "nombre_entidad": nombre_entidad,
-            "clasificacion": clasificacion,
-            "es_consorcio": es_consorcio,
-            "es_facturacion_extranjera": es_facturacion_extranjera,
-            "es_recurso_extranjero": es_recurso_extranjero,
-            "impuestos_aplicables": impuestos_a_procesar,
-            "procesamiento_hibrido": {
-                "multimodalidad_activa": True,
-                "archivos_directos": len(archivos_directos),
-                "archivos_preprocesados": len(textos_preprocesados),
-                "total_archivos": len(archivos_directos) + len(textos_preprocesados),
-                "nombres_archivos_directos": [archivo.filename for archivo in archivos_directos],
-                "nombres_archivos_preprocesados": list(textos_preprocesados.keys()),
-                "version_multimodal": "2.8.0"
-            }
-        }
-        guardar_archivo_json(clasificacion_data, "clasificacion_documentos")
-        logger.info(f" Clasificación completada: {len(clasificacion)} documentos")
-        logger.info(f" Consorcio detectado: {es_consorcio}")
-        logger.info(f" Facturación extranjera: {es_facturacion_extranjera}")
-        
-        
-        # =================================
-        # PASO 4: PROCESAMIENTO PARALELO (TODOS LOS IMPUESTOS)
-        # =================================
 
         logger.info(f" Iniciando procesamiento paralelo: {' + '.join(impuestos_a_procesar)}")
 
@@ -1072,15 +1032,12 @@ async def procesar_facturas_integrado(
         
         # Agregar metadatos finales
         resultado_final.update({
-            "timestamp_procesamiento": datetime.now().isoformat(),
             "nit_administrativo": nit_administrativo,
             "nombre_entidad": nombre_entidad,
             "es_consorcio": es_consorcio,
             "es_facturacion_extranjera": es_facturacion_extranjera,
             "documentos_procesados": len(archivos),
             "documentos_clasificados": list(clasificacion.keys()),
-            "version_sistema": "2.4.0",
-            "modulos_utilizados": ["Extraccion", "Clasificador", "Liquidador"]
         })
         
         # Guardar resultado final completo
