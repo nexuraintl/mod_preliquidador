@@ -22,7 +22,6 @@ Autor: Miguel Angel Jaramillo Durango
 
 import os
 import json
-import asyncio
 import traceback
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -89,6 +88,8 @@ from config import (
 from app.validacion_negocios import validar_negocio
 
 from app.clasificacion_documentos import clasificar_archivos
+
+from app.ejecucion_tareas_paralelo import ejecutar_tareas_paralelo
 
 
 # Dependencias para preprocesamiento Excel
@@ -304,90 +305,49 @@ async def procesar_facturas_integrado(
             impuestos_a_procesar=impuestos_a_procesar
         )
 
-        # Extraer tareas y cache (compatible con codigo existente)
-        tareas_analisis = [
-            (tarea.nombre, tarea.coroutine)
-            for tarea in resultado_preparacion.tareas_analisis
-        ]
+        # Extraer cache (compatible con codigo existente)
         cache_archivos = resultado_preparacion.cache_archivos
 
-        # Ejecutar todas las tareas en paralelo
-        logger.info(f" Ejecutando {len(tareas_analisis)} análisis paralelos con Gemini...")
-        
-        # Esperar todos los resultados
-        resultados_analisis = {}
+        # =================================
+        # PASO 4.2: EJECUTAR TAREAS (TODOS LOS IMPUESTOS)
+        # =================================
+
+        logger.info(f" Ejecutando {len(resultado_preparacion.tareas_analisis)} análisis paralelos con Gemini...")
+
         try:
-
-            # 🔧 OPTIMIZACIÓN: Procesamiento con semáforo de 4 workers
-            semaforo = asyncio.Semaphore(4)  # Máximo 4 llamados simultáneos a Gemini
-
-            async def ejecutar_tarea_con_worker(nombre_impuesto: str, tarea_async, worker_id: int):
-                """
-                Ejecuta una tarea de análisis con control de concurrencia.
-                
-                Args:
-                    nombre_impuesto: Nombre del impuesto (retefuente, impuestos_especiales, etc.)
-                    tarea_async: Tarea asíncrona a ejecutar
-                    worker_id: ID del worker (1 o 2)
-                    
-                Returns:
-                    tuple: (nombre_impuesto, resultado_o_excepcion, tiempo_ejecucion)
-                """
-                async with semaforo:
-                    inicio_worker = datetime.now()
-                    logger.info(f" Worker {worker_id}: Iniciando análisis de {nombre_impuesto}")
-                    
-                    try:
-                        resultado = await tarea_async
-                        tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
-                        logger.info(f" Worker {worker_id}: {nombre_impuesto} completado en {tiempo_ejecucion:.2f}s")
-                        return (nombre_impuesto, resultado, tiempo_ejecucion)
-                        
-                    except Exception as e:
-                        tiempo_ejecucion = (datetime.now() - inicio_worker).total_seconds()
-                        logger.error(f" Worker {worker_id}: Error en {nombre_impuesto} tras {tiempo_ejecucion:.2f}s: {str(e)}")
-                        return (nombre_impuesto, e, tiempo_ejecucion)
-            
-            # Crear tareas con workers
-            inicio_total = datetime.now()
-            tareas_con_workers = [
-                ejecutar_tarea_con_worker(nombre_impuesto, tarea, i + 1) 
-                for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis)
-            ]
-            
-            logger.info(f" Ejecutando {len(tareas_con_workers)} tareas con máximo 2 workers simultáneos...")
-            
-            # Esperar todos los resultados con workers limitados
-            resultados_con_workers = await asyncio.gather(*tareas_con_workers, return_exceptions=True)
-            
-            # Mapear resultados a sus nombres
-            for i, (nombre_impuesto, tarea) in enumerate(tareas_analisis):
-                resultado_worker = resultados_con_workers[i]
-                if isinstance(resultado_worker, Exception):
-                    logger.error(f" Error crítico en worker: {resultado_worker}")
-                    resultados_analisis[nombre_impuesto] = {"error": str(resultado_worker)}
-                    continue
-                
-                # Extraer información del worker: (nombre_impuesto, resultado, tiempo)
-                _, resultado, tiempo_ejecucion = resultado_worker
-                
-                if isinstance(resultado, Exception):
-                    logger.error(f" Error en análisis de {nombre_impuesto}: {resultado}")
-                    resultados_analisis[nombre_impuesto] = {"error": str(resultado)}
-                else:
-                    resultados_analisis[nombre_impuesto] = resultado.dict() if hasattr(resultado, 'dict') else resultado
-                    logger.info(f"Análisis de {nombre_impuesto} completado con éxito")
-        except Exception as e:
-            logger.error(f" Error ejecutando análisis paralelo: {e}")
-            raise HTTPException(status_code=500, detail=
-                f"Error ejecutando análisis paralelo : {str(e)}"
+            # Ejecutar todas las tareas en paralelo con control de concurrencia
+            resultado_ejecucion = await ejecutar_tareas_paralelo(
+                tareas_analisis=resultado_preparacion.tareas_analisis,
+                max_workers=4
             )
-           
-        # Guardar análisis paralelo
+
+            # Extraer resultados del dataclass
+            resultados_analisis = resultado_ejecucion.resultados_analisis
+
+            # Logging de metricas
+            logger.info(
+                f" Ejecucion completada: {resultado_ejecucion.tareas_exitosas}/{resultado_ejecucion.total_tareas} exitosas "
+                f"en {resultado_ejecucion.tiempo_total:.2f}s"
+            )
+
+        except Exception as e:
+            logger.error(f" Error ejecutando analisis paralelo: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error ejecutando analisis paralelo: {str(e)}"
+            )
+
+        # Guardar analisis paralelo con metricas adicionales
         analisis_paralelo_data = {
             "timestamp": datetime.now().isoformat(),
-            "impuestos_analizados": list(resultados_analisis.keys()),
-            "resultados_analisis": resultados_analisis
+            "impuestos_analizados": resultado_ejecucion.impuestos_procesados,
+            "resultados_analisis": resultado_ejecucion.resultados_analisis,
+            "metricas": {
+                "total_tareas": resultado_ejecucion.total_tareas,
+                "exitosas": resultado_ejecucion.tareas_exitosas,
+                "fallidas": resultado_ejecucion.tareas_fallidas,
+                "tiempo_total_segundos": resultado_ejecucion.tiempo_total
+            }
         }
         guardar_archivo_json(analisis_paralelo_data, "analisis_paralelo")
         

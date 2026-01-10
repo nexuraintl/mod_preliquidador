@@ -1,5 +1,134 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.2.0 - REFACTOR SOLID: Ejecución Paralela de Tareas] - 2026-01-10
+
+### 🎯 OBJETIVO
+
+Refactorizar el bloque PASO 4.2 de `main.py` (líneas 314-398) en un módulo independiente `app/ejecucion_tareas_paralelo.py` siguiendo principios SOLID y el patrón arquitectónico de `app/preparacion_tareas_analisis.py`.
+
+### 🏗️ ARQUITECTURA SOLID APLICADA
+
+**Separación en 4 Clases con Responsabilidades Únicas**:
+
+#### 1. EjecutorTareaIndividual
+- Solo ejecuta tareas individuales con medición de tiempo
+- Captura y registra errores con traceback completo
+- Logging de inicio/fin de cada tarea
+- Retorna ResultadoEjecucion encapsulado
+
+#### 2. ControladorConcurrencia
+- Solo gestiona semáforo asyncio para control de workers
+- Limita concurrencia a max_workers simultáneos (default: 4)
+- Proporciona contexto de ejecución controlada
+
+#### 3. ProcesadorResultados
+- Solo procesa y agrega resultados de ejecuciones
+- Maneja conversión de Pydantic models a dict
+- Calcula métricas: exitosas, fallidas, tiempos
+
+#### 4. CoordinadorEjecucionParalela
+- **Facade Pattern**: Coordina las 3 clases especializadas
+- Flujo: control concurrencia → ejecución → procesamiento → resultado estructurado
+
+### 🆕 AÑADIDO
+
+#### Dataclasses con Type Safety
+
+**ResultadoEjecucion**:
+```python
+@dataclass
+class ResultadoEjecucion:
+    """Encapsula resultado de ejecucion de una tarea individual."""
+    nombre_impuesto: str
+    resultado: Any
+    tiempo_ejecucion: float
+    exitoso: bool
+    error: Optional[str] = None
+```
+
+**ResultadoEjecucionParalela**:
+```python
+@dataclass
+class ResultadoEjecucionParalela:
+    """Encapsula resultado completo de ejecucion paralela."""
+    resultados_analisis: Dict[str, Any]
+    total_tareas: int
+    tareas_exitosas: int
+    tareas_fallidas: int
+    tiempo_total: float
+    impuestos_procesados: List[str]
+```
+
+#### Módulo Completo
+- Archivo: `app/ejecucion_tareas_paralelo.py` (~500 líneas)
+- Documentación PEP 257 completa en todas las clases y métodos
+- Función fachada `ejecutar_tareas_paralelo()` como API pública
+
+#### Tests Unitarios Completos
+- Archivo: `tests/test_ejecucion_tareas_paralelo.py` (~400 líneas)
+- 15+ casos de prueba cubriendo:
+  - Dataclasses
+  - EjecutorTareaIndividual (exitosos, errores, timing)
+  - ControladorConcurrencia (límite de workers)
+  - ProcesadorResultados (dict, Pydantic, excepciones)
+  - CoordinadorEjecucionParalela (integración)
+  - Función fachada
+
+### 🔧 CAMBIADO
+
+#### Refactorización main.py
+- **ANTES**: 85 líneas (314-398) con función anidada y lógica mezclada
+- **DESPUÉS**: 25 líneas con llamada limpia al módulo
+- **Reducción**: 71% menos código en main.py
+- **Eliminado**: Import de `asyncio` (ya no necesario en main.py)
+
+**Simplificación del flujo**:
+```python
+# ANTES: Función anidada con semáforo, logging, timing mezclados
+async def ejecutar_tarea_con_worker(...):
+    async with semaforo:
+        # ... lógica mezclada
+
+# DESPUÉS: Llamada limpia a módulo SOLID
+resultado_ejecucion = await ejecutar_tareas_paralelo(
+    tareas_analisis=resultado_preparacion.tareas_analisis,
+    max_workers=4
+)
+```
+
+### ✅ MEJORADO
+
+#### Separación de Responsabilidades
+- Ejecución de tareas separada de control de concurrencia
+- Procesamiento de resultados independiente
+- Logging estructurado y consistente
+
+#### Manejo de Errores
+- Errores encapsulados en ResultadoEjecucion
+- Traceback completo registrado en logs
+- Tareas continúan ejecutándose aunque otras fallen
+
+#### Métricas Mejoradas
+- Archivo JSON guardado incluye nuevas métricas:
+  - `total_tareas`: Número total ejecutadas
+  - `exitosas`: Tareas completadas exitosamente
+  - `fallidas`: Tareas que fallaron
+  - `tiempo_total_segundos`: Suma de tiempos individuales
+
+#### Testabilidad
+- 100% del código testeable con unittest
+- Inyección de dependencias facilita mocks
+- Tests aislados e independientes
+
+### 📊 IMPACTO
+
+- **Complejidad reducida**: main.py más limpio y fácil de mantener
+- **Extensibilidad**: Fácil agregar nuevos tipos de ejecución
+- **Mantenibilidad**: Cambios futuros aislados en módulo específico
+- **Confiabilidad**: Tests unitarios garantizan funcionamiento correcto
+
+---
+
 ## [3.1.0 - REFACTOR SOLID: Preparación de Tareas de Análisis] - 2026-01-09
 
 ### 🎯 OBJETIVO

@@ -1580,6 +1580,122 @@ if conceptos_sin_base:
 13. [❓ FAQ](#-faq)
 14. [🤝 Contribución](#-contribución)
 
+## ⚡ **MÓDULO EJECUCIÓN PARALELA - ARQUITECTURA SOLID v3.2.0**
+
+> **🆕 NUEVO v3.2.0**: Módulo de ejecución paralela de tareas implementando principios SOLID y Facade Pattern
+
+### **🎯 Propósito**
+
+Módulo responsable de ejecutar tareas de análisis de impuestos en paralelo con control de concurrencia, medición de tiempo y manejo robusto de errores.
+
+### **📁 Ubicación**
+
+`app/ejecucion_tareas_paralelo.py`
+
+### **🏗️ Arquitectura SOLID Aplicada**
+
+#### **4 Clases con Responsabilidad Única**
+
+| Clase | Responsabilidad (SRP) | Tipo |
+|-------|----------------------|------|
+| **EjecutorTareaIndividual** | Solo ejecuta tareas individuales con timing | Worker |
+| **ControladorConcurrencia** | Solo gestiona semáforo y límite de workers | Controlador |
+| **ProcesadorResultados** | Solo procesa y agrega resultados | Procesador |
+| **CoordinadorEjecucionParalela** | Coordina las 3 clases (Facade) | Coordinador |
+
+#### **Dataclasses Type-Safe**
+
+```python
+@dataclass
+class ResultadoEjecucion:
+    """Resultado de ejecución de una tarea individual."""
+    nombre_impuesto: str
+    resultado: Any
+    tiempo_ejecucion: float
+    exitoso: bool
+    error: Optional[str] = None
+
+@dataclass
+class ResultadoEjecucionParalela:
+    """Resultado agregado de ejecución paralela."""
+    resultados_analisis: Dict[str, Any]
+    total_tareas: int
+    tareas_exitosas: int
+    tareas_fallidas: int
+    tiempo_total: float
+    impuestos_procesados: List[str]
+```
+
+### **🔧 API Pública**
+
+```python
+from app.ejecucion_tareas_paralelo import ejecutar_tareas_paralelo
+
+# Ejecutar tareas en paralelo con control de concurrencia
+resultado = await ejecutar_tareas_paralelo(
+    tareas_analisis=tareas,  # Lista de TareaAnalisis
+    max_workers=4            # Máximo 4 workers simultáneos
+)
+
+# Acceder a resultados y métricas
+print(f"Completadas: {resultado.tareas_exitosas}/{resultado.total_tareas}")
+print(f"Tiempo total: {resultado.tiempo_total:.2f}s")
+print(f"Resultados: {resultado.resultados_analisis}")
+```
+
+### **✅ Características**
+
+- ✅ **Control de concurrencia**: Semáforo configurable (default: 4 workers)
+- ✅ **Medición de tiempo**: Individual y total
+- ✅ **Manejo robusto de errores**: Tareas continúan aunque otras fallen
+- ✅ **Logging estructurado**: Info de inicio/fin + errors con traceback
+- ✅ **Type-safe**: Dataclasses con typing completo
+- ✅ **Testeable 100%**: Inyección de dependencias facilita mocking
+
+### **📊 Métricas Generadas**
+
+El módulo calcula automáticamente:
+- Número total de tareas ejecutadas
+- Tareas exitosas vs fallidas
+- Tiempo de ejecución individual por tarea
+- Tiempo total de ejecución paralela
+
+### **🧪 Tests Unitarios**
+
+`tests/test_ejecucion_tareas_paralelo.py` incluye:
+- Tests de dataclasses
+- Tests de ejecución exitosa y con errores
+- Tests de control de concurrencia
+- Tests de procesamiento de resultados (dict, Pydantic, excepciones)
+- Tests de integración del coordinador
+
+### **💡 Ejemplo de Uso en main.py**
+
+```python
+# ANTES (85 líneas con función anidada)
+async def ejecutar_tarea_con_worker(...):
+    async with semaforo:
+        # ... lógica mezclada
+
+# DESPUÉS (25 líneas con módulo SOLID)
+resultado_ejecucion = await ejecutar_tareas_paralelo(
+    tareas_analisis=resultado_preparacion.tareas_analisis,
+    max_workers=4
+)
+
+# Reducción: 71% menos código en main.py
+```
+
+### **🎓 Principios Aplicados**
+
+- **SRP**: Cada clase tiene una responsabilidad única
+- **DIP**: Inyección de dependencias (logger, max_workers)
+- **OCP**: Extensible sin modificar código existente
+- **Facade Pattern**: CoordinadorEjecucionParalela simplifica API
+- **Separation of Concerns**: Ejecución ≠ Concurrencia ≠ Procesamiento
+
+---
+
 ## 🗄️ **MÓDULO DATABASE - ARQUITECTURA SOLID v3.1.0**
 
 > **🆕 NUEVO**: Módulo de base de datos implementando Clean Architecture y principios SOLID
