@@ -50,7 +50,6 @@ from app.validacion_archivos import ValidadorArchivos
 from Clasificador import ProcesadorGemini
 from Clasificador.clasificador_timbre import ClasificadorTimbre
 from Liquidador import LiquidadorRetencion
-from Liquidador.liquidador_consorcios import LiquidadorConsorcios, convertir_resultado_a_dict as convertir_consorcio_a_dict
 from Liquidador.liquidador_ica import LiquidadorICA
 from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
 from Liquidador.liquidador_timbre import LiquidadorTimbre
@@ -79,7 +78,6 @@ from config import (
     nit_aplica_tasa_prodeporte,  #  NUEVA IMPORTACIÓN TASA PRODEPORTE
     nit_aplica_timbre,  #  NUEVA IMPORTACIÓN TIMBRE
     detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
-    crear_resultado_recurso_extranjero_retefuente,  #  HELPER RECURSO EXTRANJERO
     crear_resultado_recurso_extranjero_iva,  #  HELPER RECURSO EXTRANJERO
     guardar_archivo_json,  # FUNCIÓN DE UTILIDAD PARA GUARDAR JSON
 
@@ -90,6 +88,8 @@ from app.validacion_negocios import validar_negocio
 from app.clasificacion_documentos import clasificar_archivos
 
 from app.ejecucion_tareas_paralelo import ejecutar_tareas_paralelo
+
+from app.validar_retefuente import validar_retencion_en_la_fuente
 
 
 # Dependencias para preprocesamiento Excel
@@ -367,125 +367,22 @@ async def procesar_facturas_integrado(
         }
         
         # Liquidar Retefuente
-        if "retefuente" in resultados_analisis and aplica_retencion:
-            try:
-                if es_consorcio:
-                    # Usar nuevo liquidador de consorcios con validaciones manuales
-                    liquidador_consorcio = LiquidadorConsorcios(estructura_contable=estructura_contable, db_manager=db_manager)
-                    analisis_consorcio_gemini = resultados_analisis["retefuente"]  # Solo extracción de Gemini
+        resultado_retefuente = await validar_retencion_en_la_fuente(
+            resultados_analisis=resultados_analisis,
+            aplica_retencion=aplica_retencion,
+            es_consorcio=es_consorcio,
+            es_recurso_extranjero=es_recurso_extranjero,
+            es_facturacion_extranjera=es_facturacion_extranjera,
+            estructura_contable=estructura_contable,
+            db_manager=db_manager,
+            nit_administrativo=nit_administrativo,
+            tipoMoneda=tipoMoneda,
+            archivos_directos=archivos_directos,
+            cache_archivos=cache_archivos
+        )
 
-                    # Liquidar con validaciones manuales de Python (con caché de archivos)
-                    resultado_liquidacion_consorcio = await liquidador_consorcio.liquidar_consorcio(
-                        analisis_consorcio_gemini, CONCEPTOS_RETEFUENTE, archivos_directos, cache_archivos
-                    )
-
-                    # Convertir resultado a formato de respuesta y extraer la parte retefuente
-                    resultado_dict_completo = convertir_consorcio_a_dict(resultado_liquidacion_consorcio)
-                    resultado_retefuente = resultado_dict_completo["retefuente"]  # Extraer solo la parte de retefuente
-                else:
-                    analisis_factura = resultados_analisis["retefuente"]
-                    
-                    #  USAR FUNCIÓN SEGURA PARA PROCESAMIENTO PARALELO
-                    logger.info(" Ejecutando liquidación segura en procesamiento paralelo...")
-                    
-                    # Crear estructura compatible
-                    analisis_retefuente_data = {
-                        "timestamp": datetime.now().isoformat(),
-                        "tipo_analisis": "retefuente_paralelo",
-                        "nit_administrativo": nit_administrativo,
-                        "es_facturacion_exterior": es_facturacion_extranjera,  # Pasar desde clasificación
-                        "analisis": analisis_factura.dict() if hasattr(analisis_factura, 'dict') else analisis_factura
-                    }
-                    
-                    # Guardar análisis para debugging
-                    guardar_archivo_json(analisis_retefuente_data, "analisis_retefuente_paralelo")
-
-                    # Liquidar con método seguro de la clase
-                    liquidador_retencion = LiquidadorRetencion(estructura_contable=estructura_contable, db_manager=db_manager)
-                    resultado_retefuente_dict = liquidador_retencion.liquidar_retefuente_seguro(
-                        analisis_retefuente_data, nit_administrativo, tipoMoneda=tipoMoneda
-                    )
-                    
-                    # Verificar solo si hay error técnico (excepción de liquidador)
-                    if "error" in resultado_retefuente_dict:
-                        # Error técnico - excepción durante liquidación
-                        error_msg = resultado_retefuente_dict.get('error')
-                        logger.error(f"Error técnico en liquidación: {error_msg}")
-
-                        resultado_retefuente = type('ResultadoLiquidacion', (object,), {
-                            'aplica': False,
-                            'valor_retencion': 0.0,
-                            'valor_factura_sin_iva': 0.0,
-                            'conceptos_aplicados': [],
-                            'valor_base_retencion': 0.0,
-                            'fecha_calculo': datetime.now().isoformat(),
-                            'mensajes_error': [error_msg],
-                            'resumen_conceptos': 'Error técnico',
-                            'estado': 'preliquidacion_sin_finalizar'
-                        })()
-                    else:
-                        # Caso normal - confiar en liquidador.py
-                        resultado_retefuente = type('ResultadoLiquidacion', (object,), {
-                            'aplica': resultado_retefuente_dict.get("aplica", False),
-                            'valor_retencion': resultado_retefuente_dict.get('valor_retencion', 0.0),
-                            'valor_factura_sin_iva': resultado_retefuente_dict.get('valor_factura_sin_iva', 0.0),
-                            'conceptos_aplicados': resultado_retefuente_dict.get("conceptos_aplicados", []),
-                            'valor_base_retencion': resultado_retefuente_dict.get("base_gravable", 0.0),
-                            'fecha_calculo': resultado_retefuente_dict.get("fecha_calculo", datetime.now().isoformat()),
-                            'mensajes_error': resultado_retefuente_dict.get("observaciones", []),
-                            'resumen_conceptos': resultado_retefuente_dict.get("resumen_conceptos", "N/A"),
-                            'estado': resultado_retefuente_dict.get("estado", "preliquidado")
-                        })()
-
-                        # Log apropiado según resultado
-                        if resultado_retefuente.valor_retencion > 0:
-                            logger.info(f"Retefuente liquidada: ${resultado_retefuente.valor_retencion:,.2f}")
-                        else:
-                            logger.info(f"Retefuente procesada - Estado: {resultado_retefuente.estado}")
-                
-                #  ESTRUCTURA FINAL CONSOLIDADA
-                if hasattr(resultado_retefuente, 'valor_retencion'):
-
-                    resultado_final["impuestos"]["retefuente"] = {
-                    "aplica": resultado_retefuente_dict.get("aplica", False),
-                    "estado": resultado_retefuente_dict.get("estado", "preliquidacion_sin_finalizar"),
-                    "valor_factura_sin_iva": resultado_retefuente_dict.get("valor_factura_sin_iva", 0.0),
-                    "valor_retencion": resultado_retefuente_dict.get("valor_retencion", 0.0),
-                    "valor_base": resultado_retefuente_dict.get("base_gravable", 0.0),
-                    "conceptos_aplicados": resultado_retefuente_dict.get("conceptos_aplicados", []),
-                    "observaciones": resultado_retefuente_dict.get("observaciones", []),
-                    }
-
-                    # Agregar pais_proveedor si es facturación extranjera
-                    if es_facturacion_extranjera and "pais_proveedor" in resultado_retefuente_dict:
-                        resultado_final["impuestos"]["retefuente"]["pais_proveedor"] = resultado_retefuente_dict.get("pais_proveedor", "")
-                        logger.info(f" País proveedor: {resultado_retefuente_dict.get('pais_proveedor')}")
-
-                    logger.info(f" Retefuente liquidada: ${resultado_retefuente_dict.get('valor_retencion', 0.0):,.2f}")
-
-                else:
-                    # Es un diccionario (resultado de consorcio)
-                    resultado_final["impuestos"]["retefuente"] = resultado_retefuente
-                    logger.info(f" Retefuente liquidada: ${resultado_retefuente.get('valor_retencion', 0):,.2f}")
-            except Exception as e:
-                logger.error(f" Error liquidando retefuente: {e}")
-                resultado_final["impuestos"]["retefuente"] = {"error": str(e), "aplica": False}
-
-        elif aplica_retencion and es_recurso_extranjero:
-            # Recurso extranjero: crear estructura vacía sin procesamiento
-            logger.info(" Retefuente: Aplicando estructura de recurso extranjero")
-            resultado_retefuente = crear_resultado_recurso_extranjero_retefuente()
-
-            resultado_final["impuestos"]["retefuente"] = {
-                "aplica": resultado_retefuente.aplica,
-                "estado": resultado_retefuente.estado,
-                "valor_factura_sin_iva": resultado_retefuente.valor_factura_sin_iva,
-                "valor_retencion": resultado_retefuente.valor_retencion,
-                "valor_base": resultado_retefuente.valor_base_retencion,
-                "conceptos_aplicados": resultado_retefuente.conceptos_aplicados,
-                "observaciones": resultado_retefuente.mensajes_error,
-            }
-            logger.info(" Retefuente: No aplica (Recurso de fuente extranjera)")
+        if resultado_retefuente:
+            resultado_final["impuestos"]["retefuente"] = resultado_retefuente
 
         # Liquidar Impuestos Especiales (Estampilla Pro Universidad Nacional + Obra Pública)
         if "impuestos_especiales" in resultados_analisis and (aplica_estampilla or aplica_obra_publica):
