@@ -78,7 +78,6 @@ from config import (
     nit_aplica_tasa_prodeporte,  #  NUEVA IMPORTACIÓN TASA PRODEPORTE
     nit_aplica_timbre,  #  NUEVA IMPORTACIÓN TIMBRE
     detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
-    crear_resultado_recurso_extranjero_iva,  #  HELPER RECURSO EXTRANJERO
     guardar_archivo_json,  # FUNCIÓN DE UTILIDAD PARA GUARDAR JSON
 
 )
@@ -92,6 +91,10 @@ from app.ejecucion_tareas_paralelo import ejecutar_tareas_paralelo
 from app.validar_retefuente import validar_retencion_en_la_fuente
 
 from app.validar_impuestos_esp import validar_impuestos_especiales
+
+from app.validar_iva_reteiva import validar_iva_reteiva
+
+from app.validar_estampillas_generales import validar_estampillas_generales
 
 
 # Dependencias para preprocesamiento Excel
@@ -402,83 +405,26 @@ async def procesar_facturas_integrado(
             if "contribucion_obra_publica" in resultado_especiales:
                 resultado_final["impuestos"]["contribucion_obra_publica"] = resultado_especiales["contribucion_obra_publica"]
         
-        # Liquidar IVA y ReteIVA - ARQUITECTURA SOLID v2.0
-        if "iva_reteiva" in resultados_analisis and aplica_iva:
-            try:
-                from Liquidador.liquidador_iva import LiquidadorIVA
-                liquidador_iva = LiquidadorIVA()
+        # Liquidar IVA y ReteIVA
+        resultado_iva_reteiva = await validar_iva_reteiva(
+            resultados_analisis=resultados_analisis,
+            aplica_iva=aplica_iva,
+            es_recurso_extranjero=es_recurso_extranjero,
+            es_facturacion_extranjera=es_facturacion_extranjera,
+            nit_administrativo=nit_administrativo,
+            tipoMoneda=tipoMoneda
+        )
 
-                # Análisis de Gemini (nueva estructura PROMPT_ANALISIS_IVA)
-                analisis_iva_gemini = resultados_analisis["iva_reteiva"]
+        if resultado_iva_reteiva:
+            resultado_final["impuestos"]["iva_reteiva"] = resultado_iva_reteiva
 
-                # Clasificación inicial (para obtener es_facturacion_extranjera)
-                clasificacion_inicial = {
-                    "es_facturacion_extranjera": es_facturacion_extranjera
-                }
+        # Liquidar Estampillas Generales
+        resultado_estampillas_generales = await validar_estampillas_generales(
+            resultados_analisis=resultados_analisis
+        )
 
-                # Liquidar con nueva arquitectura SOLID (requiere 3 parámetros + tipoMoneda)
-                resultado_iva_dict = liquidador_iva.liquidar_iva_completo(
-                    analisis_gemini=analisis_iva_gemini,
-                    clasificacion_inicial=clasificacion_inicial,
-                    nit_administrativo=nit_administrativo,
-                    tipoMoneda=tipoMoneda
-                )
-
-                # El método ahora retorna directamente un diccionario con estructura {"iva_reteiva": {...}}
-                resultado_final["impuestos"]["iva_reteiva"] = resultado_iva_dict.get("iva_reteiva", {})
-
-                # Logs actualizados para usar diccionario
-                valor_iva = resultado_iva_dict.get("iva_reteiva", {}).get("valor_iva_identificado", 0.0)
-                valor_reteiva = resultado_iva_dict.get("iva_reteiva", {}).get("valor_reteiva", 0.0)
-                logger.info(f" IVA identificado: ${valor_iva:,.2f}")
-                logger.info(f" ReteIVA liquidada: ${valor_reteiva:,.2f}")
-
-            except Exception as e:
-                logger.error(f" Error liquidando IVA/ReteIVA: {e}")
-                resultado_final["impuestos"]["iva_reteiva"] = {"error": str(e), "aplica": False}
-
-        elif aplica_iva and es_recurso_extranjero:
-            # Recurso extranjero: crear estructura vacía sin procesamiento
-            logger.info(" IVA/ReteIVA: Aplicando estructura de recurso extranjero")
-            resultado_iva = crear_resultado_recurso_extranjero_iva()
-
-            resultado_final["impuestos"]["iva_reteiva"] = resultado_iva.get("iva_reteiva", {})
-            logger.info(" IVA/ReteIVA: No aplica (Recurso de fuente extranjera)")
-
-        # Liquidar Estampillas Generales - NUEVA LIQUIDACIÓN
-        if "estampillas_generales" in resultados_analisis:
-            try:
-                from Liquidador.liquidador_estampillas_generales import (
-                    validar_formato_estampillas_generales, 
-                    presentar_resultado_estampillas_generales
-                )
-                
-                analisis_estampillas = resultados_analisis["estampillas_generales"]
-                
-                # Validar formato de respuesta de Gemini
-                validacion = validar_formato_estampillas_generales(analisis_estampillas)
-                
-                if validacion["formato_valido"]:
-                    logger.info(" Formato de estampillas generales válido")
-                    respuesta_validada = validacion["respuesta_validada"]
-                else:
-                    logger.warning(f" Formato de estampillas con errores: {len(validacion['errores'])} errores")
-                    logger.warning(f"Errores: {validacion['errores']}")
-                    respuesta_validada = validacion["respuesta_validada"]  # Usar respuesta corregida
-                
-                # Presentar resultado final
-                resultado_estampillas = presentar_resultado_estampillas_generales(respuesta_validada)
-
-                #  ASIGNAR A NUEVA ESTRUCTURA: resultado_final["impuestos"]["estampillas_generales"]
-                resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas.get("estampillas_generales", {})
-
-            except Exception as e:
-                logger.error(f" Error liquidando estampillas generales: {e}")
-                resultado_final["impuestos"]["estampillas_generales"] = {
-                    "procesamiento_exitoso": False,
-                    "error": str(e),
-                    "observaciones_generales": ["Error procesando estampillas generales"]
-                }
+        if resultado_estampillas_generales:
+            resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas_generales
 
         # Liquidar ICA - NUEVA FUNCIONALIDAD
         if "ica" in resultados_analisis and aplica_ica:
