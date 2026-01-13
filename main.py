@@ -91,6 +91,8 @@ from app.ejecucion_tareas_paralelo import ejecutar_tareas_paralelo
 
 from app.validar_retefuente import validar_retencion_en_la_fuente
 
+from app.validar_impuestos_esp import validar_impuestos_especiales
+
 
 # Dependencias para preprocesamiento Excel
 import pandas as pd
@@ -383,31 +385,22 @@ async def procesar_facturas_integrado(
 
         if resultado_retefuente:
             resultado_final["impuestos"]["retefuente"] = resultado_retefuente
-
+            
         # Liquidar Impuestos Especiales (Estampilla Pro Universidad Nacional + Obra Pública)
-        if "impuestos_especiales" in resultados_analisis and (aplica_estampilla or aplica_obra_publica):
-            try:
-                from Liquidador.liquidador_estampilla import LiquidadorEstampilla
-                liquidador_estampilla = LiquidadorEstampilla()
+        resultado_especiales = await validar_impuestos_especiales(
+            resultados_analisis=resultados_analisis,
+            aplica_estampilla=aplica_estampilla,
+            aplica_obra_publica=aplica_obra_publica,
+            codigo_del_negocio=codigo_del_negocio,
+            nombre_negocio=nombre_negocio
+        )
 
-                analisis_especiales = resultados_analisis["impuestos_especiales"]
-                resultado_estampilla = liquidador_estampilla.liquidar_integrado(analisis_especiales, codigo_del_negocio, nombre_negocio)
-                
-                #  ASIGNAR A NUEVA ESTRUCTURA: Separar resultados por impuesto
-                if aplica_estampilla and "estampilla_universidad" in resultado_estampilla:
-                    resultado_final["impuestos"]["estampilla_universidad"] = resultado_estampilla["estampilla_universidad"]
-                    logger.info(f" Estampilla liquidada: ${resultado_estampilla['estampilla_universidad'].get('valor_estampilla', 0):,.2f}")
-                
-                if aplica_obra_publica and "contribucion_obra_publica" in resultado_estampilla:
-                    resultado_final["impuestos"]["contribucion_obra_publica"] = resultado_estampilla["contribucion_obra_publica"]
-                    logger.info(f" Obra pública liquidada: ${resultado_estampilla['contribucion_obra_publica'].get('valor_contribucion', 0):,.2f}")
-                    
-            except Exception as e:
-                logger.error(f" Error liquidando impuestos especiales: {e}")
-                if aplica_estampilla:
-                    resultado_final["impuestos"]["estampilla_universidad"] = {"error": str(e), "aplica": False}
-                if aplica_obra_publica:
-                    resultado_final["impuestos"]["contribucion_obra_publica"] = {"error": str(e), "aplica": False}
+        if resultado_especiales:
+            if "estampilla_universidad" in resultado_especiales:
+                resultado_final["impuestos"]["estampilla_universidad"] = resultado_especiales["estampilla_universidad"]
+
+            if "contribucion_obra_publica" in resultado_especiales:
+                resultado_final["impuestos"]["contribucion_obra_publica"] = resultado_especiales["contribucion_obra_publica"]
         
         # Liquidar IVA y ReteIVA - ARQUITECTURA SOLID v2.0
         if "iva_reteiva" in resultados_analisis and aplica_iva:
