@@ -50,7 +50,6 @@ from app.validacion_archivos import ValidadorArchivos
 from Clasificador import ProcesadorGemini
 from Clasificador.clasificador_timbre import ClasificadorTimbre
 from Liquidador import LiquidadorRetencion
-from Liquidador.liquidador_ica import LiquidadorICA
 from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
 from Liquidador.liquidador_timbre import LiquidadorTimbre
 from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
@@ -95,6 +94,8 @@ from app.validar_impuestos_esp import validar_impuestos_especiales
 from app.validar_iva_reteiva import validar_iva_reteiva
 
 from app.validar_estampillas_generales import validar_estampillas_generales
+
+from app.validar_ica import validar_ica
 
 
 # Dependencias para preprocesamiento Excel
@@ -426,39 +427,17 @@ async def procesar_facturas_integrado(
         if resultado_estampillas_generales:
             resultado_final["impuestos"]["estampillas_generales"] = resultado_estampillas_generales
 
-        # Liquidar ICA - NUEVA FUNCIONALIDAD
-        if "ica" in resultados_analisis and aplica_ica:
-            try:
-                logger.info(" Liquidando ICA...")
+        # Liquidar ICA
+        resultado_ica = await validar_ica(
+            resultados_analisis=resultados_analisis,
+            aplica_ica=aplica_ica,
+            estructura_contable=estructura_contable,
+            db_manager=db_manager,
+            tipoMoneda=tipoMoneda
+        )
 
-                # Obtener análisis de ICA (ya validado por ClasificadorICA)
-                analisis_ica = resultados_analisis["ica"]
-
-                # Crear liquidador ICA
-                liquidador_ica = LiquidadorICA(database_manager=db_manager)
-
-                # Liquidar ICA con tipoMoneda
-                resultado_ica = liquidador_ica.liquidar_ica(analisis_ica, estructura_contable, tipoMoneda=tipoMoneda)
-
-                # Agregar resultado al resultado final
-                resultado_final["impuestos"]["ica"] = resultado_ica
-
-                # Logs informativos
-                estado_ica = resultado_ica.get("estado", "Desconocido")
-                valor_ica = resultado_ica.get("valor_total_ica", 0.0)
-                logger.info(f" ICA - Estado: {estado_ica}")
-                logger.info(f" ICA - Valor total: ${valor_ica:,.2f}")
-
-            except Exception as e:
-                logger.error(f" Error liquidando ICA: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                resultado_final["impuestos"]["ica"] = {
-                    "aplica": False,
-                    "estado": "preliquidacion_sin_finalizar",
-                    "error": str(e),
-                    "observaciones": [f"Error en liquidación ICA: {str(e)}"]
-                }
+        if resultado_ica:
+            resultado_final["impuestos"]["ica"] = resultado_ica
 
         # Liquidar Sobretasa Bomberil - NUEVA FUNCIONALIDAD (Solo si ICA fue procesado)
         if "ica" in resultado_final["impuestos"]:
