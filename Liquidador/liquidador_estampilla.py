@@ -765,7 +765,7 @@ class LiquidadorEstampilla:
     # VALIDACIONES MANUALES PYTHON (NUEVO v3.0)
     # ===============================
 
-    def _validar_objeto_contrato_identificado(self, clasificacion: dict) -> Tuple[bool, str, str]:
+    def _validar_objeto_contrato_identificado(self, clasificacion: dict, mensaje_estampilla_u : bool = False) -> Tuple[bool, str, str]:
         """
         Valida que el objeto del contrato fue identificado y clasificado por Gemini.
 
@@ -789,10 +789,14 @@ class LiquidadorEstampilla:
         if tipo_contrato in tipos_validos:
             return True, tipo_contrato, ""
 
-        # Si es NO_IDENTIFICADO o cualquier otro valor no válido
-        if tipo_contrato == "NO_IDENTIFICADO":
-            return False, tipo_contrato, "El objeto del contrato no fue identificado en los documentos"
-
+        # Si es NO_IDENTIFICADO o cualquier otro valor no válido para obra publica 
+        if tipo_contrato == "NO_IDENTIFICADO" and mensaje_estampilla_u == False:
+            return False, tipo_contrato, "No se pudo identificar el objeto contractual para la contribución de obra pública. Adjuntar contrato"
+        
+        # Si es NO_IDENTIFICADO en estampilla pro universidad nacional 
+        if tipo_contrato == "NO_IDENTIFICADO" and mensaje_estampilla_u == True:
+            return False, tipo_contrato, "Objeto contractual no identificado. Adjuntar contrato o informe de supervisión."
+        
         # Si es NO_APLICA (objeto identificado pero no elegible)
         if tipo_contrato == "NO_APLICA":
             return False, tipo_contrato, "El objeto del contrato no aplica para impuestos especiales"
@@ -894,9 +898,11 @@ class LiquidadorEstampilla:
         try:
             extraccion = analisis_gemini.get("extraccion", {})
             clasificacion = analisis_gemini.get("clasificacion", {})
+            
+            mensaje_estampilla_u = False
 
             # VALIDACIÓN 1: Objeto identificado y clasificado
-            objeto_valido, tipo_contrato, error_objeto = self._validar_objeto_contrato_identificado(clasificacion)
+            objeto_valido, tipo_contrato, error_objeto = self._validar_objeto_contrato_identificado(clasificacion, mensaje_estampilla_u)
 
             if not objeto_valido:
                 # Distinguir entre NO_APLICA y NO_IDENTIFICADO
@@ -999,9 +1005,11 @@ class LiquidadorEstampilla:
         try:
             extraccion = analisis_gemini.get("extraccion", {})
             clasificacion = analisis_gemini.get("clasificacion", {})
+            
+            mensaje_estampilla_u = True
 
             # VALIDACIÓN 1: Objeto identificado y clasificado
-            objeto_valido, tipo_contrato, error_objeto = self._validar_objeto_contrato_identificado(clasificacion)
+            objeto_valido, tipo_contrato, error_objeto = self._validar_objeto_contrato_identificado(clasificacion,mensaje_estampilla_u)
 
             if not objeto_valido:
                 # Distinguir entre NO_APLICA y NO_IDENTIFICADO
