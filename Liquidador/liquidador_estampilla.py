@@ -840,7 +840,7 @@ class LiquidadorEstampilla:
         contrato_total = valores.get("contrato_total", 0)
 
         if contrato_total <= 0:
-            return False, 0, "Valor total del contrato no identificado o es cero"
+            return False, 0, "No se encontró valor total del contrato/adiciones para cálculo de estampilla Pro - universidad Nacional. Adjuntar contrato u otros soportes."
 
         return True, contrato_total, ""
 
