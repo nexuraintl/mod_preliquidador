@@ -255,7 +255,7 @@ class LiquidadorTasaProdeporte:
             rubro_valido, mensaje_error = validar_rubro_presupuestal(rubro_str)
 
             if not rubro_valido:
-                resultado.estado = "no_aplica_impuesto"
+                resultado.estado = "preliquidacion sin finalizar"
                 resultado.observaciones = mensaje_error
                 logger.info(f"Tasa Prodeporte: {mensaje_error}")
                 return resultado

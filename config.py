@@ -1419,7 +1419,7 @@ def validar_rubro_presupuestal(rubro: str) -> tuple[bool, str]:
 
     # Validar que exista en el diccionario
     if not rubro_existe_en_presupuesto(rubro_str):
-        return False, f"Rubro Presupuestal {rubro_str} no esta almacenado en la Base de datos"
+        return False, f"No se identifico el porcentaje a aplicar, porfavor verificar informacion o actualizar parametrizacion. Rubro Presupuestal {rubro_str} no esta almacenado en la Base de datos"
 
     return True, ""
 

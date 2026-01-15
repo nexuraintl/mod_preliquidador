@@ -97,7 +97,7 @@ class LiquidadorTimbre:
         if not id_contrato or id_contrato.strip() == "":
             return self._crear_resultado_sin_finalizar(
                 tipo_cuantia="",
-                observaciones="No se pudo extraer el numero del contrato de los documentos anexos"
+                observaciones="No se pudo identificar el ID del contrato en los documentos adjuntos. Porfavor revisar adjuntos"
             )
 
         logger.info(f"ID contrato identificado: {id_contrato}")
@@ -110,7 +110,7 @@ class LiquidadorTimbre:
             logger.warning(f"Contrato {id_contrato}: valor_total_contrato no disponible o es 0 - No se puede validar límite de 6000 UVT")
             return self._crear_resultado_sin_finalizar(
                 tipo_cuantia="",
-                observaciones=f"No se pudo determinar el valor total del contrato {id_contrato} para validar el límite mínimo de 6000 UVT requerido",
+                observaciones=f"No se pudo identificar el valor de la cuantía del contrato {id_contrato} para validar el límite mínimo de 6000 UVT requerido",
                 id_contrato=id_contrato
             )
 
@@ -495,7 +495,7 @@ class LiquidadorTimbre:
                 logger.warning(f"No se encontró cuantía en BD para contrato {id_contrato}")
                 return self._crear_resultado_sin_finalizar(
                     tipo_cuantia="",
-                    observaciones=f"No se encontro cuantia en BD para el contrato {id_contrato}",
+                    observaciones=f"No se pudo identificar el ID del contrato en el sistema ya que no se encontro tipo de cuantia en base de datos para el contrato {id_contrato}",
                     id_contrato=id_contrato
                 )
 
