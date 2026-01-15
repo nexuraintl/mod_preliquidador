@@ -369,8 +369,10 @@ PROCESO OBLIGATORIO:
    - MAPEA EL CONJUNTO de actividades facturadas con LAS ACTIVIDAD MAS PRECISA DE LA BASE DE DATOS POR UBICACION
    - PUEDE HABER múltiples actividades relacionadas SOLO si son de DIFERENTES ubicaciones
    - Para la MISMA ubicación, SOLO PUEDE HABER UNA actividad relacionada
+   
 
 3. IMPORTANTE:
+   - Si no encuentras actividades facturadas claras marca -> actividades facturadas : []
    - Si encuentras múltiples actividades relacionadas, DEBEN ser de DIFERENTES ubicaciones (codigo_ubicacion diferente)
    - NUNCA dos actividades relacionadas con el mismo codigo_ubicacion
    - Si NO encuentras ninguna relación, dejar actividades_relacionadas con: nombre_act_rel = "", codigo_actividad = 0, codigo_ubicacion = 0
@@ -452,6 +454,20 @@ EJEMPLO 3 - Múltiples actividades, una ubicación, autorretenedor de ica :
 EJEMPLO 4 - NO se pudo relacionar, no autorenedor de ica :
 {{
   "actividades_facturadas": ["Servicios varios no especificados", "Otros servicios"],
+  "actividades_relacionadas": [
+    {{
+      "nombre_act_rel": "",
+      "codigo_actividad": 0,
+      "codigo_ubicacion": 0
+    }}
+  ],
+  "valor_factura_sin_iva": 1000000.0,
+  "autorretenedor_ica": false
+}}
+
+EJEMPLO 5 - NO se pudo identificar la actividad facturada, no autorenedor de ica :
+{{
+  "actividades_facturadas": [],
   "actividades_relacionadas": [
     {{
       "nombre_act_rel": "",
