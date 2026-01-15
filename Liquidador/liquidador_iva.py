@@ -312,7 +312,7 @@ class ValidadorIVA:
 
             if datos.categoria == "no_clasificado":
                 observaciones.append(
-                    "Inconsistencia: Responsable de IVA sin valor IVA y categoría no clasificada"
+                    "Se identifico inconsistencia, el proveedor es responsable de IVA, la factura no muestra IVA y el concepto facturado no esta exento de iva, verificar soportes"
                 )
                 return {
                     "es_valido": False,
@@ -343,8 +343,7 @@ class ValidadorIVA:
                 return {"es_valido": True, "estado": "no_aplica_impuesto"}
             else:
                 observaciones.append(
-                    f"Inconsistencia: No tiene responsabilidad de IVA pero se está "
-                    f"aplicando IVA (${valor_iva:,.2f})"
+                    "El tercero reporta -No responsable de IVA- pero la factura incluye IVA. Verificar datos."
                 )
                 return {
                     "es_valido": False,

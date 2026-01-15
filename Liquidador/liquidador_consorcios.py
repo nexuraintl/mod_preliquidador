@@ -765,7 +765,7 @@ class LiquidadorConsorcios:
             return False, mensaje
 
         if not analisis.get('consorciados'):
-            mensaje = 'No se encontraron consorciados en los documentos analizados'
+            mensaje = 'Información incompleta para uno o más consorciados. Adjuntar porcentajes de participación o soportes.'
             logger.error(mensaje)
             return False, mensaje
 

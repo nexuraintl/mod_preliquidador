@@ -204,7 +204,7 @@ class ClasificadorICA:
             if not ubicaciones_identificadas:
                 resultado_base["estado"] = "preliquidacion_sin_finalizar"
                 resultado_base["observaciones"].append(
-                    "No se pudieron identificar ubicaciones de la actividad"
+                    "No se pudo identificar el municipio de la actividad gravada"
                 )
                 logger.error("Gemini no identificó ubicaciones")
                 return resultado_base
@@ -255,7 +255,7 @@ class ClasificadorICA:
             if not datos_actividades:
                 resultado_base["estado"] = "preliquidacion_sin_finalizar"
                 resultado_base["observaciones"].append(
-                    "No se pudieron identificar actividades en la documentación"
+                    "No se pudo identificar la actividad económica facturada"
                 )
                 logger.warning("Gemini no retornó datos de actividades")
                 return resultado_base
@@ -484,7 +484,7 @@ class ClasificadorICA:
 
         # VALIDACIÓN 0: Debe haber al menos una ubicación
         if not ubicaciones_identificadas or len(ubicaciones_identificadas) == 0:
-            errores.append("No se identificaron ubicaciones en los documentos")
+            errores.append("No se pudo identificar el municipio de la actividad gravada.")
             return {"valido": False, "errores": errores, "advertencias": advertencias}
 
         # Caso: Una sola ubicación
@@ -494,7 +494,7 @@ class ClasificadorICA:
             # VALIDACIÓN 1.1: Nombre ubicación vacío
             if not ubicacion.get("nombre_ubicacion") or ubicacion["nombre_ubicacion"].strip() == "":
                 errores.append(
-                    "No se identificó la ubicación de la actividad en los documentos adjuntos"
+                    "No se pudo identificar el municipio de la actividad gravada."
                 )
                 return {"valido": False, "errores": errores, "advertencias": advertencias}
 
@@ -793,7 +793,7 @@ class ClasificadorICA:
 
         # VALIDACIÓN 1: actividades_facturadas no vacía
         if not actividades_facturadas or len(actividades_facturadas) == 0:
-            errores.append("No se pudo identificar las actividades facturadas en la documentación")
+            errores.append("No se pudo identificar las actividades economicas facturadas ")
             logger.warning("Validación 1 fallida: actividades_facturadas vacía")
             return {"valido": False, "errores": errores, "advertencias": advertencias}
 

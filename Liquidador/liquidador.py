@@ -122,7 +122,7 @@ class LiquidadorRetencion:
         
         # Agregar advertencias por conceptos no identificados
         if conceptos_no_identificados:
-            mensajes_error.append(f"Se encontraron {len(conceptos_no_identificados)} concepto(s) no identificado(s) que no serán liquidados")
+            mensajes_error.append("El concepto facturado no se identifica en los soportes adjuntos. Validar soportes.")
             logger.warning(f"Conceptos no identificados: {len(conceptos_no_identificados)}")
         
         # Verificar si hay al menos un concepto identificado
