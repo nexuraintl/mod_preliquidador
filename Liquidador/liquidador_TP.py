@@ -13,20 +13,15 @@ Arquitectura: Separacion IA-Validacion
 
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from pydantic import BaseModel
 import unicodedata
 
+if TYPE_CHECKING:
+    from database.database import DatabaseInterface
+
 # Configuracion de logging
 logger = logging.getLogger(__name__)
-
-# Importar configuracion
-from config import (
-    RUBRO_PRESUPUESTAL,
-    rubro_existe_en_presupuesto,
-    obtener_datos_rubro,
-    validar_rubro_presupuestal
-)
 
 # ===============================
 # MODELOS DE DATOS PYDANTIC
@@ -79,9 +74,27 @@ class LiquidadorTasaProdeporte:
     Toda la logica de negocio esta en Python, no en Gemini
     """
 
-    def __init__(self):
-        logger.info("LiquidadorTasaProdeporte inicializado")
-        logger.info(f"Rubros presupuestales configurados: {len(RUBRO_PRESUPUESTAL)}")
+    def __init__(self, db_interface: 'DatabaseInterface'):
+        """
+        Inicializa liquidador con inyeccion de dependencias.
+
+        DIP: Depende de abstraccion DatabaseInterface, no de implementacion.
+        OCP: Permite cambiar implementacion de BD sin modificar liquidador.
+
+        Args:
+            db_interface: Instancia de DatabaseInterface (Supabase/Nexura)
+
+        Raises:
+            ValueError: Si db_interface es None
+        """
+        if db_interface is None:
+            raise ValueError(
+                "LiquidadorTasaProdeporte requiere db_interface. "
+                "Pase una instancia de DatabaseInterface."
+            )
+
+        self.db = db_interface
+        logger.info("LiquidadorTasaProdeporte inicializado con DatabaseInterface")
 
     def normalizar_texto(self, texto: str) -> str:
         """
@@ -249,24 +262,34 @@ class LiquidadorTasaProdeporte:
                 return resultado
             
             logger.info(f"Rubro presupuestal valido: {rubro_str} incia con 28 ")
-            
-            
-            # VALIDACION 7: Rubro existe en diccionario
-            rubro_valido, mensaje_error = validar_rubro_presupuestal(rubro_str)
 
-            if not rubro_valido:
-                resultado.estado = "preliquidacion sin finalizar"
-                resultado.observaciones = mensaje_error
-                logger.info(f"Tasa Prodeporte: {mensaje_error}")
+
+            # VALIDACION 7+8 COMBINADAS: Consultar rubro en Base de Datos
+            logger.info(f"Consultando rubro presupuestal {rubro_str} en Base de Datos...")
+
+            respuesta_bd = self.db.obtener_datos_rubro_tasa_prodeporte(rubro_str)
+
+            if not respuesta_bd['success']:
+                # Rubro no encontrado o error de BD
+                resultado.estado = "preliquidacion_sin_finalizar"
+                resultado.observaciones = respuesta_bd['message']
+                logger.warning(
+                    f"Tasa Prodeporte: Rubro {rubro_str} no encontrado. "
+                    f"Razon: {respuesta_bd['message']}"
+                )
                 return resultado
 
-            # VALIDACION 8: Extraer datos del rubro
-            datos_rubro = obtener_datos_rubro(rubro_str)
-            tarifa = datos_rubro["tarifa"]
-            centro_costo_esperado = datos_rubro["centro_costo"]
-            municipio_dict = datos_rubro["municipio_departamento"]
+            # Extraer datos validados de la BD
+            datos_rubro = respuesta_bd['data']
+            tarifa = datos_rubro['tarifa']
+            centro_costo_esperado = datos_rubro['centro_costo']
+            municipio_dict = datos_rubro['municipio_departamento']
 
-            logger.info(f"Rubro {rubro_str} - Tarifa: {tarifa*100}%, Municipio: {municipio_dict}")
+            logger.info(
+                f"Rubro {rubro_str} encontrado -> "
+                f"Tarifa: {tarifa*100}%, Centro: {centro_costo_esperado}, "
+                f"Municipio: '{municipio_dict}'"
+            )
 
             # VALIDACION 9: Validar centro de costos (advertencia si no coincide)
             advertencias = []
