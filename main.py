@@ -479,7 +479,8 @@ async def procesar_facturas_integrado(
                 from Liquidador.liquidador_TP import LiquidadorTasaProdeporte
                 from Liquidador.liquidador_TP import ParametrosTasaProdeporte
 
-                liquidador_tp = LiquidadorTasaProdeporte()
+                # Inyeccion de dependencias: pasar db_manager al liquidador (DIP)
+                liquidador_tp = LiquidadorTasaProdeporte(db_interface=db_manager)
 
                 # Análisis de Gemini (extracción de datos)
                 analisis_tp_gemini = resultados_analisis["tasa_prodeporte"]

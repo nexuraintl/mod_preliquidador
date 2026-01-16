@@ -1331,112 +1331,25 @@ CONFIG_RETEIVA = {
 # TARIFA: Tarifa aplicable (decimal)
 # CENTRO_COSTO: Centro de costo asociado
 # MUNICIPIO_DEPARTAMENTO: Ubicacion geografica
-RUBRO_PRESUPUESTAL = {
-    "280101010185": {
-        "tarifa": 0.025,
-        "centro_costo": 11758,
-        "municipio_departamento": "Risaralda"
-    },
-    "280101010210": {
-        "tarifa": 0.015,
-        "centro_costo": 11783,
-        "municipio_departamento": "El Jardin"
-    },
-    "280101010214": {
-        "tarifa": 0.025,
-        "centro_costo": 11787,
-        "municipio_departamento": "Miranda - Cauca"
-    },
-    "280101010216": {
-        "tarifa": 0.025,
-        "centro_costo": 11789,
-        "municipio_departamento": "Arboletes - Antioquia"
-    },
-    "280101010218": {
-        "tarifa": 0.02,
-        "centro_costo": 11791,
-        "municipio_departamento": "Popayan"
-    },
-    "280101010221": {
-        "tarifa": 0.025,
-        "centro_costo": 11794,
-        "municipio_departamento": "Togui - Boyaca"
-    }
-}
-
 # ===============================
-# FUNCIONES TASA PRODEPORTE
+# TASA PRODEPORTE - MIGRADO A DATABASE.PY
 # ===============================
-
-def rubro_existe_en_presupuesto(rubro: str) -> bool:
-    """
-    Verifica si un rubro presupuestal existe en el diccionario.
-
-    SRP: Solo valida existencia del rubro
-
-    Args:
-        rubro: Codigo del rubro presupuestal
-
-    Returns:
-        bool: True si el rubro existe
-    """
-    return str(rubro) in RUBRO_PRESUPUESTAL
-
-def obtener_datos_rubro(rubro: str) -> Dict[str, Any]:
-    """
-    Obtiene los datos asociados a un rubro presupuestal.
-
-    SRP: Solo retorna datos del rubro
-
-    Args:
-        rubro: Codigo del rubro presupuestal
-
-    Returns:
-        Dict con tarifa, centro_costo y municipio_departamento o None si no existe
-    """
-    rubro_str = str(rubro)
-    if rubro_existe_en_presupuesto(rubro_str):
-        return RUBRO_PRESUPUESTAL[rubro_str]
-    return None
-
-def validar_rubro_presupuestal(rubro: str) -> tuple[bool, str]:
-    """
-    Valida que un rubro presupuestal cumpla con el formato requerido.
-
-    SRP: Solo valida formato y existencia del rubro
-
-    Args:
-        rubro: Codigo del rubro presupuestal
-
-    Returns:
-        tuple: (es_valido, mensaje_error)
-    """
-    rubro_str = str(rubro)
-
-    # Validar que inicie con 28
-    if not rubro_str.startswith("28"):
-        return False, f"Codigo del rubro presupuestal no inicia con 28: {rubro_str}"
-
-    # Validar que exista en el diccionario
-    if not rubro_existe_en_presupuesto(rubro_str):
-        return False, f"No se identifico el porcentaje a aplicar, porfavor verificar informacion o actualizar parametrizacion. Rubro Presupuestal {rubro_str} no esta almacenado en la Base de datos"
-
-    return True, ""
-
-def obtener_configuracion_tasa_prodeporte() -> Dict[str, Any]:
-    """
-    Obtiene toda la configuracion de Tasa Prodeporte para uso en prompts.
-
-    SRP: Solo retorna configuracion consolidada
-
-    Returns:
-        Dict con configuracion completa de Tasa Prodeporte
-    """
-    return {
-        "rubros_validos": RUBRO_PRESUPUESTAL,
-        "total_rubros": len(RUBRO_PRESUPUESTAL),
-        "prefijo_requerido": "28"
-    }
+#
+# NOTA: Configuracion de rubros presupuestales migrada a base de datos desde v3.0
+#
+# ANTES (v2.x):
+#   - Diccionario RUBRO_PRESUPUESTAL hardcodeado (6 rubros)
+#   - Funciones: rubro_existe_en_presupuesto(), obtener_datos_rubro(), validar_rubro_presupuestal()
+#
+# AHORA (v3.0+):
+#   - Datos dinamicos desde Nexura API
+#   - Metodo: db.obtener_datos_rubro_tasa_prodeporte(codigo_rubro)
+#   - Ubicacion: database/database.py (lineas 86-110 DatabaseInterface, 764-789 SupabaseDatabase, 2398-2630 NexuraAPIDatabase)
+#   - Parsing automatico: "Si aplica 1,5%" -> 0.015
+#
+# Ver: CHANGELOG.md seccion "v3.0.0 - Migracion Tasa Prodeporte a Base de Datos"
+#
+# ===============================
 
 # NITs que aplican Tasa Prodeporte
 NITS_TASA_PRODEPORTE = {

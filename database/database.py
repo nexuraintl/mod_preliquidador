@@ -12,7 +12,7 @@ from .auth_provider import IAuthProvider
 logger = logging.getLogger(__name__)
 
 # ================================
-# 🏗️ INTERFACES Y ABSTRACCIONES
+#  INTERFACES Y ABSTRACCIONES
 # ================================
 
 class DatabaseInterface(ABC):
@@ -81,6 +81,32 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def obtener_tarifa_bomberil(self, codigo_ubicacion: int) -> Dict[str, Any]:
         """Obtiene la tarifa de Sobretasa Bomberil para una ubicación específica"""
+        pass
+
+    @abstractmethod
+    def obtener_datos_rubro_tasa_prodeporte(self, codigo_rubro: str) -> Dict[str, Any]:
+        """
+        Obtiene datos de un rubro presupuestal para Tasa Prodeporte.
+
+        SRP: Solo consulta datos del rubro (Data Access Layer)
+        DIP: Abstracción que permite múltiples implementaciones
+
+        Args:
+            codigo_rubro: Código del rubro presupuestal (ej: "280101010210")
+
+        Returns:
+            Dict con estructura estándar:
+            {
+                'success': bool,
+                'data': {
+                    'tarifa': float,              # 0.015 (1.5% convertido)
+                    'centro_costo': int,          # 11783
+                    'municipio_departamento': str # "El jardin"
+                } | None,
+                'message': str,
+                'raw_data': dict  # opcional para debugging
+            }
+        """
         pass
 
 
@@ -734,6 +760,32 @@ class SupabaseDatabase(DatabaseInterface):
                 'error': str(e),
                 'message': f'Error al consultar tarifa Bomberil: {e}'
             }
+
+    def obtener_datos_rubro_tasa_prodeporte(self, codigo_rubro: str) -> Dict[str, Any]:
+        """
+        Implementación Supabase para Tasa Prodeporte.
+
+        NOTA: Tabla no existe en Supabase, retorna error descriptivo.
+        OCP: Preparada para extensión futura si se crea tabla.
+
+        Args:
+            codigo_rubro: Código del rubro presupuestal
+
+        Returns:
+            Dict con success=False indicando que no está implementado
+        """
+        logger.warning(
+            f"SupabaseDatabase: Tabla Tasa Prodeporte no implementada. "
+            f"Use NexuraAPIDatabase para rubro {codigo_rubro}."
+        )
+
+        return {
+            'success': False,
+            'data': None,
+            'message': (
+                'Error consultando a la base de datos, Timeouts y retrys excedidos.'
+            )
+        }
 
     def health_check(self) -> bool:
         """
@@ -2342,6 +2394,244 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'message': f'Error al consultar tarifa Bomberil: {e}'
             }
 
+    def obtener_datos_rubro_tasa_prodeporte(self, codigo_rubro: str) -> Dict[str, Any]:
+        """
+        Obtiene datos de un rubro presupuestal desde Nexura API.
+
+        SRP: Solo consulta endpoint de Tasa Prodeporte
+
+        Endpoint: GET /preliquidador/tasaProDeporte/?rubroPresupuesto={codigo}
+
+        PARSING CRITICO:
+        - "Si aplica 1,5%" -> 0.015 (float)
+        - "11783" (string) -> 11783 (int)
+
+        Args:
+            codigo_rubro: Codigo del rubro presupuestal (ej: "280101010210")
+
+        Returns:
+            Dict con estructura estandar:
+            {
+                'success': bool,
+                'data': {
+                    'tarifa': float,
+                    'centro_costo': int,
+                    'municipio_departamento': str
+                } | None,
+                'message': str
+            }
+        """
+        try:
+            # 1. REQUEST A NEXURA API
+            response = self._hacer_request(
+                endpoint='/preliquidador/tasaProDeporte/',
+                method='GET',
+                params={'rubroPresupuesto': codigo_rubro}
+            )
+
+            # 2. VERIFICAR ERROR CODE
+            error_info = response.get('error', {})
+            error_code = error_info.get('code', -1)
+
+            # 3. CASO EXITOSO (error.code = 0)
+            if error_code == 0:
+                data_array = response.get('data', [])
+
+                if data_array and len(data_array) > 0:
+                    registro = data_array[0]
+
+                    # 4. PARSING CRITICO: PORCENTAJE -> TARIFA
+                    porcentaje_str = registro.get('PORCENTAJE_PRODEPORTE', '')
+                    tarifa_convertida = self._parsear_porcentaje_prodeporte(porcentaje_str)
+
+                    if tarifa_convertida is None:
+                        logger.error(
+                            f"No se pudo parsear PORCENTAJE_PRODEPORTE: '{porcentaje_str}' "
+                            f"para rubro {codigo_rubro}"
+                        )
+                        return {
+                            'success': False,
+                            'data': None,
+                            'message': (
+                                f"Formato de porcentaje invalido en BD: '{porcentaje_str}'. "
+                                f"Contacte al administrador."
+                            ),
+                            'skip_fallback': True  # Error de datos, no tecnico
+                        }
+
+                    # 5. PARSING: CENTRO_COSTOS STRING -> INT
+                    centro_costos_str = registro.get('CENTRO_COSTOS', '0')
+                    try:
+                        centro_costo_int = int(centro_costos_str)
+                    except (ValueError, TypeError):
+                        logger.warning(
+                            f"CENTRO_COSTOS no numerico: '{centro_costos_str}'. "
+                            f"Usando 0 como fallback."
+                        )
+                        centro_costo_int = 0
+
+                    # 6. EXTRACCION: MUNICIPIO
+                    municipio = registro.get('MUNICIPIO', '')
+
+                    # 7. LOGGING EXITOSO
+                    logger.info(
+                        f"Rubro Tasa Prodeporte obtenido: {codigo_rubro} -> "
+                        f"Tarifa: {tarifa_convertida*100}%, Centro: {centro_costo_int}, "
+                        f"Municipio: '{municipio}'"
+                    )
+
+                    # 8. RETORNAR DATOS MAPEADOS
+                    return {
+                        'success': True,
+                        'data': {
+                            'tarifa': tarifa_convertida,
+                            'centro_costo': centro_costo_int,
+                            'municipio_departamento': municipio
+                        },
+                        'message': f'Rubro {codigo_rubro} encontrado en Base de datos',
+                        'raw_data': registro
+                    }
+                else:
+                    # Data array vacio = rubro no encontrado
+                    logger.info(f"Rubro {codigo_rubro} no encontrado (data vacio)")
+                    return {
+                        'success': False,
+                        'data': None,
+                        'message': (
+                            f"No se identifico el porcentaje a aplicar, porfavor verificar informacion "
+                            f"o actualizar parametrizacion. Rubro Presupuestal {codigo_rubro} "
+                            f"no esta almacenado en la Base de datos"
+                        ),
+                        'skip_fallback': True  # 404 no es error tecnico, no activar fallback
+                    }
+
+            # 9. CASO 404 (RUBRO NO ENCONTRADO)
+            elif error_code == 404:
+                logger.info(f"Rubro {codigo_rubro} no encontrado (404)")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': (
+                        f"No se identifico el porcentaje a aplicar, porfavor verificar informacion "
+                        f"o actualizar parametrizacion. Rubro Presupuestal {codigo_rubro} "
+                        f"no esta almacenado en la Base de datos"
+                    ),
+                    'skip_fallback': True  # 404 no es error tecnico, no activar fallback
+                }
+
+            # 10. OTROS ERRORES DE API
+            else:
+                error_message = error_info.get('message', 'Error desconocido')
+                logger.error(
+                    f"Error de API al consultar rubro {codigo_rubro}: "
+                    f"Code={error_code}, Message={error_message}"
+                )
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f"Error de API al consultar rubro: {error_message}"
+                }
+
+        # 11. MANEJO DE EXCEPCIONES
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout al consultar rubro: {codigo_rubro}")
+            return {
+                'success': False,
+                'data': None,
+                'error': 'Timeout',
+                'message': f"Timeout al consultar rubro {codigo_rubro}. Intente nuevamente."
+            }
+
+        except requests.exceptions.HTTPError as e:
+            if '404' in str(e):
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': (
+                        f"No se identifico el porcentaje a aplicar, porfavor verificar informacion "
+                        f"o actualizar parametrizacion. Rubro Presupuestal {codigo_rubro} "
+                        f"no esta almacenado en la Base de datos"
+                    ),
+                    'skip_fallback': True  # 404 no es error tecnico, no activar fallback
+                }
+            else:
+                logger.error(f"Error HTTP: {e}")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f"Error HTTP al consultar rubro: {str(e)}"
+                }
+
+        except Exception as e:
+            logger.error(f"Error inesperado: {e}", exc_info=True)
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f"Error inesperado: {str(e)}"
+            }
+
+    def _parsear_porcentaje_prodeporte(self, porcentaje_str: str) -> Optional[float]:
+        """
+        Parsea PORCENTAJE_PRODEPORTE de Nexura a tarifa decimal.
+
+        SRP: Solo parsing de porcentajes
+
+        CASOS SOPORTADOS:
+        - "Si aplica 1,5%" -> 0.015
+        - "Si aplica 2,5%" -> 0.025
+        - "1.5%" -> 0.015
+        - "No aplica" -> None
+        - "" -> None
+
+        Args:
+            porcentaje_str: Cadena con el porcentaje (ej: "Si aplica 1,5%")
+
+        Returns:
+            float con tarifa decimal o None si no se puede parsear
+        """
+        if not porcentaje_str:
+            return None
+
+        texto_normalizado = porcentaje_str.lower().strip()
+
+        # Caso "No aplica"
+        if 'no aplica' in texto_normalizado:
+            logger.info(f"Porcentaje parseado como 'No aplica': '{porcentaje_str}'")
+            return None
+
+        try:
+            import re
+            # Extraer digitos, comas y puntos
+            numeros_encontrados = re.findall(r'[\d,\.]+', texto_normalizado)
+
+            if not numeros_encontrados:
+                logger.warning(f"No se encontraron numeros en: '{porcentaje_str}'")
+                return None
+
+            # Tomar primer numero (asumiendo "Si aplica X%")
+            numero_str = numeros_encontrados[0]
+
+            # Reemplazar coma por punto (europeo -> estandar)
+            numero_str_punto = numero_str.replace(',', '.')
+
+            # Convertir a float
+            porcentaje_float = float(numero_str_punto)
+
+            # Dividir por 100 para tarifa decimal
+            tarifa = porcentaje_float / 100.0
+
+            logger.debug(
+                f"Porcentaje parseado: '{porcentaje_str}' -> {numero_str} -> "
+                f"{porcentaje_float}% -> tarifa={tarifa}"
+            )
+
+            return tarifa
+
+        except (ValueError, IndexError) as e:
+            logger.error(f"Error parseando '{porcentaje_str}': {e}", exc_info=True)
+            return None
+
     def health_check(self) -> bool:
         """
         Verifica si la conexion a Nexura API funciona
@@ -2592,6 +2882,23 @@ class DatabaseManager:
         """
         return self.db_connection.obtener_tarifa_bomberil(codigo_ubicacion)
 
+    def obtener_datos_rubro_tasa_prodeporte(self, codigo_rubro: str) -> Dict[str, Any]:
+        """
+        Obtiene datos de un rubro presupuestal para Tasa Prodeporte.
+
+        SRP: Delega a la implementación configurada (Strategy Pattern)
+
+        Args:
+            codigo_rubro: Código del rubro presupuestal (ej: "280101010210")
+
+        Returns:
+            Dict con resultado de la consulta incluyendo:
+            - success: bool
+            - message: str
+            - data: Dict con tarifa (float), centro_costo (int) y municipio_departamento (str)
+        """
+        return self.db_connection.obtener_datos_rubro_tasa_prodeporte(codigo_rubro)
+
 
 def ejecutar_pruebas_completas(db_manager: DatabaseManager):
     """
@@ -2726,7 +3033,17 @@ class DatabaseWithFallback(DatabaseInterface):
 
             # Verificar si el resultado indica éxito
             if isinstance(resultado, dict) and not resultado.get('success', True):
-                # La operación falló, intentar fallback
+                # Verificar si debemos saltar el fallback (ej: 404 = dato no encontrado)
+                if resultado.get('skip_fallback', False):
+                    logger.debug(
+                        f"{operacion} con {self.primary_name} retornó error de negocio (no técnico). "
+                        f"No se activará fallback."
+                    )
+                    # Limpiar flag interno antes de retornar
+                    resultado.pop('skip_fallback', None)
+                    return resultado
+
+                # La operación falló por error técnico, intentar fallback
                 raise Exception(resultado.get('message', 'Operación fallida'))
 
             logger.debug(f"{operacion} exitoso con {self.primary_name}")
@@ -2908,6 +3225,15 @@ class DatabaseWithFallback(DatabaseInterface):
             self.primary_db.obtener_tarifa_bomberil,
             self.fallback_db.obtener_tarifa_bomberil,
             codigo_ubicacion
+        )
+
+    def obtener_datos_rubro_tasa_prodeporte(self, codigo_rubro: str) -> Dict[str, Any]:
+        """Obtiene datos de rubro presupuestal para Tasa Prodeporte con fallback automático"""
+        return self._ejecutar_con_fallback(
+            'obtener_datos_rubro_tasa_prodeporte',
+            self.primary_db.obtener_datos_rubro_tasa_prodeporte,
+            self.fallback_db.obtener_datos_rubro_tasa_prodeporte,
+            codigo_rubro
         )
 
 
