@@ -50,7 +50,6 @@ from app.validacion_archivos import ValidadorArchivos
 from Clasificador import ProcesadorGemini
 from Clasificador.clasificador_timbre import ClasificadorTimbre
 from Liquidador import LiquidadorRetencion
-from Liquidador.liquidador_sobretasa_b import LiquidadorSobretasaBomberil
 from Liquidador.liquidador_timbre import LiquidadorTimbre
 from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
 from app.extraccion_hibrida import ExtractorHibrido
@@ -96,6 +95,8 @@ from app.validar_iva_reteiva import validar_iva_reteiva
 from app.validar_estampillas_generales import validar_estampillas_generales
 
 from app.validar_ica import validar_ica
+
+from app.validar_bomberil import validar_sobretasa_bomberil
 
 
 # Dependencias para preprocesamiento Excel
@@ -439,39 +440,14 @@ async def procesar_facturas_integrado(
         if resultado_ica:
             resultado_final["impuestos"]["ica"] = resultado_ica
 
-        # Liquidar Sobretasa Bomberil - NUEVA FUNCIONALIDAD (Solo si ICA fue procesado)
-        if "ica" in resultado_final["impuestos"]:
-            try:
-                logger.info(" Liquidando Sobretasa Bomberil...")
+        # Liquidar Sobretasa Bomberil (REFACTORIZADO - Depende de ICA)
+        resultado_sobretasa = await validar_sobretasa_bomberil(
+            resultado_final=resultado_final,
+            db_manager=db_manager
+        )
 
-                # Obtener resultado de ICA
-                resultado_ica = resultado_final["impuestos"]["ica"]
-
-                # Crear liquidador Sobretasa Bomberil
-                liquidador_sobretasa = LiquidadorSobretasaBomberil(database_manager=db_manager)
-
-                # Liquidar Sobretasa Bomberil
-                resultado_sobretasa = liquidador_sobretasa.liquidar_sobretasa_bomberil(resultado_ica)
-
-                # Agregar resultado al resultado final
-                resultado_final["impuestos"]["sobretasa_bomberil"] = resultado_sobretasa
-
-                # Logs informativos
-                estado_sobretasa = resultado_sobretasa.get("estado", "Desconocido")
-                valor_sobretasa = resultado_sobretasa.get("valor_total_sobretasa", 0.0)
-                logger.info(f" Sobretasa Bomberil - Estado: {estado_sobretasa}")
-                logger.info(f" Sobretasa Bomberil - Valor total: ${valor_sobretasa:,.2f}")
-
-            except Exception as e:
-                logger.error(f" Error liquidando Sobretasa Bomberil: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                resultado_final["impuestos"]["sobretasa_bomberil"] = {
-                    "aplica": False,
-                    "estado": "preliquidacion_sin_finalizar",
-                    "error": str(e),
-                    "observaciones": f"Error en liquidación Sobretasa Bomberil: {str(e)}"
-                }
+        if resultado_sobretasa:
+            resultado_final["impuestos"]["sobretasa_bomberil"] = resultado_sobretasa
 
         # Liquidar Tasa Prodeporte - NUEVA FUNCIONALIDAD
         if "tasa_prodeporte" in resultados_analisis:
