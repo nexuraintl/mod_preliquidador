@@ -98,6 +98,8 @@ from app.validar_ica import validar_ica
 
 from app.validar_bomberil import validar_sobretasa_bomberil
 
+from app.validar_tasa_prodeporte import validar_tasa_prodeporte
+
 
 # Dependencias para preprocesamiento Excel
 import pandas as pd
@@ -449,47 +451,20 @@ async def procesar_facturas_integrado(
         if resultado_sobretasa:
             resultado_final["impuestos"]["sobretasa_bomberil"] = resultado_sobretasa
 
-        # Liquidar Tasa Prodeporte - NUEVA FUNCIONALIDAD
-        if "tasa_prodeporte" in resultados_analisis:
-            try:
-                from Liquidador.liquidador_TP import LiquidadorTasaProdeporte
-                from Liquidador.liquidador_TP import ParametrosTasaProdeporte
+        # Liquidar Tasa Prodeporte (REFACTORIZADO)
+        resultado_tasa_prodeporte = await validar_tasa_prodeporte(
+            resultados_analisis=resultados_analisis,
+            db_manager=db_manager,
+            observaciones_tp=observaciones_tp,
+            genera_presupuesto=genera_presupuesto,
+            rubro=rubro,
+            centro_costos=centro_costos,
+            numero_contrato=numero_contrato,
+            valor_contrato_municipio=valor_contrato_municipio
+        )
 
-                # Inyeccion de dependencias: pasar db_manager al liquidador (DIP)
-                liquidador_tp = LiquidadorTasaProdeporte(db_interface=db_manager)
-
-                # Análisis de Gemini (extracción de datos)
-                analisis_tp_gemini = resultados_analisis["tasa_prodeporte"]
-
-                # Crear parámetros con los datos del endpoint
-                parametros_tp = ParametrosTasaProdeporte(
-                    observaciones=observaciones_tp,
-                    genera_presupuesto=genera_presupuesto,
-                    rubro=rubro,
-                    centro_costos=centro_costos,
-                    numero_contrato=numero_contrato,
-                    valor_contrato_municipio=valor_contrato_municipio
-                )
-
-                # Liquidar con arquitectura SOLID (separación IA-Validación)
-                resultado_tp = liquidador_tp.liquidar(parametros_tp, analisis_tp_gemini)
-
-                # Convertir Pydantic a dict
-                resultado_final["impuestos"]["tasa_prodeporte"] = resultado_tp.dict()
-
-                # Log según resultado
-                if resultado_tp.aplica:
-                    logger.info(f" Tasa Prodeporte liquidada: ${resultado_tp.valor_imp:,.2f} (Tarifa: {resultado_tp.tarifa*100}%)")
-                else:
-                    logger.info(f" Tasa Prodeporte: {resultado_tp.estado}")
-
-            except Exception as e:
-                logger.error(f" Error liquidando Tasa Prodeporte: {e}")
-                resultado_final["impuestos"]["tasa_prodeporte"] = {
-                    "error": str(e),
-                    "aplica": False,
-                    "estado": "preliquidacion_sin_finalizar"
-                }
+        if resultado_tasa_prodeporte:
+            resultado_final["impuestos"]["tasa_prodeporte"] = resultado_tasa_prodeporte
 
         # Liquidar Timbre - NUEVA FUNCIONALIDAD
         if "timbre" in resultados_analisis and aplica_timbre:
