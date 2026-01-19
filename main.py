@@ -48,9 +48,7 @@ logger = logging.getLogger(__name__)
 # Importar clases desde módulos
 from app.validacion_archivos import ValidadorArchivos
 from Clasificador import ProcesadorGemini
-from Clasificador.clasificador_timbre import ClasificadorTimbre
 from Liquidador import LiquidadorRetencion
-from Liquidador.liquidador_timbre import LiquidadorTimbre
 from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
 from app.extraccion_hibrida import ExtractorHibrido
 
@@ -99,6 +97,8 @@ from app.validar_ica import validar_ica
 from app.validar_bomberil import validar_sobretasa_bomberil
 
 from app.validar_tasa_prodeporte import validar_tasa_prodeporte
+
+from app.validar_timbre import validar_timbre
 
 
 # Dependencias para preprocesamiento Excel
@@ -466,68 +466,22 @@ async def procesar_facturas_integrado(
         if resultado_tasa_prodeporte:
             resultado_final["impuestos"]["tasa_prodeporte"] = resultado_tasa_prodeporte
 
-        # Liquidar Timbre - NUEVA FUNCIONALIDAD
-        if "timbre" in resultados_analisis and aplica_timbre:
-            try:
-                logger.info(" Liquidando Impuesto al Timbre...")
+        # Liquidar Timbre (REFACTORIZADO)
+        resultado_timbre = await validar_timbre(
+            resultados_analisis=resultados_analisis,
+            aplica_timbre=aplica_timbre,
+            db_manager=db_manager,
+            clasificador_gemini=clasificador,
+            nit_administrativo=nit_administrativo,
+            codigo_del_negocio=codigo_del_negocio,
+            proveedor=proveedor,
+            documentos_clasificados=documentos_clasificados,
+            archivos_directos=archivos_directos,
+            cache_archivos=cache_archivos
+        )
 
-                # Obtener análisis de observaciones de timbre
-                analisis_observaciones_timbre = resultados_analisis["timbre"]
-                aplica_timbre_obs = analisis_observaciones_timbre.get("aplica_timbre", False)
-
-                # Si no aplica según observaciones, registrar como no aplica
-                if not aplica_timbre_obs:
-                    resultado_final["impuestos"]["timbre"] = {
-                        "aplica": False,
-                        "estado": "no_aplica_impuesto",
-                        "valor": 0.0,
-                        "tarifa": 0.0,
-                        "tipo_cuantia": "",
-                        "base_gravable": 0.0,
-                        "ID_contrato": "",
-                        "observaciones": "No se identifico aplicacion del impuesto al timbre en observaciones"
-                    }
-                    logger.info(" Timbre: No aplica según observaciones de PGD")
-                else:
-                    # Segunda llamada a Gemini: extraer datos del contrato
-                    logger.info(" Timbre aplica - Extrayendo datos del contrato...")
-
-                    clasificador_timbre = ClasificadorTimbre(procesador_gemini=clasificador)
-                    datos_contrato = await clasificador_timbre.extraer_datos_contrato(
-                        documentos_clasificados=documentos_clasificados,
-                        archivos_directos=archivos_directos,
-                        cache_archivos=cache_archivos
-                    )
-
-                    # Crear liquidador y liquidar (el liquidador se encarga de consultar BD)
-                    liquidador_timbre = LiquidadorTimbre(db_manager=db_manager)
-                    resultado_timbre = liquidador_timbre.liquidar_timbre(
-                        nit_administrativo=nit_administrativo,
-                        codigo_negocio=str(codigo_del_negocio),
-                        nit_proveedor=proveedor,
-                        analisis_observaciones=analisis_observaciones_timbre,
-                        datos_contrato=datos_contrato
-                    )
-
-                    # Convertir Pydantic a dict
-                    resultado_final["impuestos"]["timbre"] = resultado_timbre.dict()
-
-                    # Log según resultado
-                    if resultado_timbre.aplica:
-                        logger.info(f" Timbre liquidado: ${resultado_timbre.valor:,.2f} (Tarifa: {resultado_timbre.tarifa*100}%)")
-                    else:
-                        logger.info(f" Timbre: {resultado_timbre.estado}")
-
-            except Exception as e:
-                logger.error(f" Error liquidando Timbre: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                resultado_final["impuestos"]["timbre"] = {
-                    "aplica": False,
-                    "estado": "preliquidacion_sin_finalizar",
-                    "error": str(e),
-                    "observaciones": f"Error en liquidación Timbre: {str(e)}"
-                }
+        if resultado_timbre:
+            resultado_final["impuestos"]["timbre"] = resultado_timbre
 
         # =================================
         # COMPLETAR IMPUESTOS QUE NO APLICAN
