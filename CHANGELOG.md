@@ -1,5 +1,163 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.3.1 - REFACTOR: Impuestos No Aplicados] - 2026-01-19
+
+### 🎯 OBJETIVO
+
+Refactorizar la logica de agregacion de impuestos no aplicados en main.py, extrayendo 93 lineas de codigo repetitivo a una nueva clase ValidadorNoAplicacion que sigue principios SOLID (SRP, DIP).
+
+### 🏗️ ARQUITECTURA
+
+**SRP (Single Responsibility Principle)**:
+- Nueva clase `ValidadorNoAplicacion`: Unica responsabilidad de agregar impuestos no aplicados
+- Metodos privados especializados por tipo de impuesto
+- Separacion clara entre orquestacion (main.py) y logica de negocio (ValidadorNoAplicacion)
+
+**DIP (Dependency Inversion Principle)**:
+- Inyeccion de dependencias en constructor: `ValidadorNoAplicacion(logger=logger)`
+- Testeable mediante mocking del logger
+
+**OCP (Open/Closed Principle)**:
+- Extensible para nuevos impuestos sin modificar codigo existente
+- Patron consistente para agregar nuevos validadores
+
+### 🆕 AÑADIDO
+
+#### Nuevo Modulo: app/impuestos_no_aplicados.py
+
+**Clase ValidadorNoAplicacion**:
+- `agregar_impuestos_no_aplicados()`: Metodo orquestador principal
+- `_agregar_estampilla_no_aplicada()`: Maneja estructura de estampilla universidad
+- `_agregar_obra_publica_no_aplicada()`: Maneja estructura de contribucion obra publica
+- `_agregar_iva_no_aplicado()`: Maneja estructura de IVA/ReteIVA
+- `_agregar_tasa_prodeporte_no_aplicada()`: Maneja estructura de tasa prodeporte
+- `_agregar_timbre_no_aplicado()`: Maneja estructura de timbre
+- `_construir_mensajes_error()`: Metodo auxiliar para mensajes sin duplicados
+- `_debe_agregar_impuesto()`: Metodo auxiliar de verificacion
+
+**Funcion Wrapper**:
+```python
+def agregar_impuestos_no_aplicados(
+    resultado_final, deteccion_impuestos, aplica_estampilla,
+    aplica_obra_publica, aplica_iva, aplica_tasa_prodeporte,
+    aplica_timbre, nit_administrativo, nombre_negocio
+) -> None
+```
+- Punto de entrada publico para mantener compatibilidad con main.py
+- Instancia ValidadorNoAplicacion y delega la operacion
+
+### 🔧 CAMBIADO
+
+#### main.py (lineas 490-583 → 492-502)
+
+**Antes**: 93 lineas de codigo repetitivo con logica inline
+**Despues**: 11 lineas - llamada limpia a funcion wrapper
+
+```python
+agregar_impuestos_no_aplicados(
+    resultado_final=resultado_final,
+    deteccion_impuestos=deteccion_impuestos,
+    aplica_estampilla=aplica_estampilla,
+    aplica_obra_publica=aplica_obra_publica,
+    aplica_iva=aplica_iva,
+    aplica_tasa_prodeporte=aplica_tasa_prodeporte,
+    aplica_timbre=aplica_timbre,
+    nit_administrativo=nit_administrativo,
+    nombre_negocio=nombre_negocio
+)
+```
+
+**Import agregado** (linea 103):
+```python
+from app.impuestos_no_aplicados import agregar_impuestos_no_aplicados
+```
+
+### ✅ BENEFICIOS
+
+1. **Mantenibilidad**: Codigo mas limpio y organizado en main.py
+2. **Testabilidad**: Clase independiente que puede testearse de forma aislada
+3. **Reusabilidad**: Logica encapsulada reutilizable en otros contextos
+4. **Legibilidad**: Metodos pequenos con responsabilidades claras y documentadas
+5. **Reduccion de lineas**: 93 lineas → 11 lineas en main.py (reduccion del 88%)
+
+### 📋 PATRON SEGUIDO
+
+Sigue el mismo patron arquitectonico de `app/validar_timbre.py`:
+- Clase con responsabilidad unica
+- Metodos privados con docstrings
+- Inyeccion de dependencias en constructor
+- Funcion wrapper para compatibilidad
+- Sin mencion de principios SOLID en documentacion (clean docs)
+
+### 🧪 TESTS COMPLETOS (31 tests - 100% coverage)
+
+**tests/test_impuestos_no_aplicados.py** - Suite completa de tests:
+
+**Tests del Constructor** (1 test):
+- Inyeccion de dependencias con logger
+
+**Tests de _debe_agregar_impuesto** (4 tests):
+- No aplica y no existe (debe agregar) ✅
+- Aplica=True (no debe agregar) ✅
+- Ya existe en resultado_final (no debe agregar) ✅
+- No aplica pero existen otros impuestos (debe agregar) ✅
+
+**Tests de _construir_mensajes_error** (4 tests):
+- Con validacion_recurso.observaciones (usa observaciones) ✅
+- Sin validacion_recurso (usa razon_default) ✅
+- validacion_recurso existe pero observaciones es None (usa razon_default) ✅
+- Observaciones string vacio (usa razon_default) ✅
+
+**Tests de _agregar_estampilla_no_aplicada** (5 tests):
+- Estructura completa con todos los campos ✅
+- Sin razon_no_aplica_estampilla (usa default) ✅
+- Sin estado_especial (usa "no_aplica_impuesto") ✅
+- aplica=True (no agrega) ✅
+- Ya existe (no sobrescribe) ✅
+
+**Tests de _agregar_obra_publica_no_aplicada** (2 tests):
+- Estructura completa ✅
+- aplica=True (no agrega) ✅
+
+**Tests de _agregar_iva_no_aplicado** (2 tests):
+- Estructura completa ✅
+- aplica=True (no agrega) ✅
+
+**Tests de _agregar_tasa_prodeporte_no_aplicada** (2 tests):
+- Estructura completa con fecha_calculo ✅
+- aplica=True (no agrega) ✅
+
+**Tests de _agregar_timbre_no_aplicado** (2 tests):
+- Estructura completa ✅
+- aplica=True (no agrega) ✅
+
+**Tests del Metodo Principal** (5 tests):
+- Todos los impuestos aplican (no agrega nada) ✅
+- Solo un impuesto no aplica (agrega uno) ✅
+- Multiples impuestos no aplican (agrega varios) ✅
+- Todos los impuestos no aplican (agrega 5) ✅
+- Modificacion in-place de resultado_final ✅
+
+**Tests de Funcion Wrapper** (2 tests):
+- Crea instancia de ValidadorNoAplicacion ✅
+- Modificacion in-place ✅
+
+**Tests de Logging** (2 tests):
+- Logging para estampilla ✅
+- Logging para multiples impuestos (5 llamadas) ✅
+
+**Resultado**: 31 passed in 3.39s - Coverage: 100% (54/54 statements)
+
+### 🧪 VERIFICACION
+
+**Funcionalidad preservada**:
+- Estructura JSON identica para cada impuesto no aplicado
+- Mensajes de error construidos segun validacion_recurso
+- Logs con formato consistente
+- Comportamiento exacto al codigo original
+
+---
+
 ## [3.3.0 - MIGRATION: Tasa Prodeporte a Base de Datos] - 2026-01-16
 
 ### 🎯 OBJETIVO
