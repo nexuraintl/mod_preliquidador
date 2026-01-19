@@ -100,6 +100,8 @@ from app.validar_tasa_prodeporte import validar_tasa_prodeporte
 
 from app.validar_timbre import validar_timbre
 
+from app.impuestos_no_aplicados import agregar_impuestos_no_aplicados
+
 
 # Dependencias para preprocesamiento Excel
 import pandas as pd
@@ -487,129 +489,17 @@ async def procesar_facturas_integrado(
         # COMPLETAR IMPUESTOS QUE NO APLICAN
         # =================================
 
-        # Agregar respuesta para impuestos que no aplican según código de negocio
-        if not aplica_estampilla and "estampilla_universidad" not in resultado_final["impuestos"]:
-            razon_estampilla = deteccion_impuestos.get("razon_no_aplica_estampilla") or f"El negocio {nombre_negocio} no aplica este impuesto"
-            estado_estampilla = deteccion_impuestos.get("estado_especial") or "no_aplica_impuesto"
-
-            # Construir mensajes_error sin duplicados
-            # Si hay observaciones, usar solo esas; si no, usar la razón
-            if deteccion_impuestos.get("validacion_recurso") and deteccion_impuestos["validacion_recurso"].get("observaciones"):
-                mensajes_error_estampilla = [deteccion_impuestos["validacion_recurso"]["observaciones"]]
-            else:
-                mensajes_error_estampilla = [razon_estampilla]
-
-            resultado_final["impuestos"]["estampilla_universidad"] = {
-                "aplica": False,
-                "estado": estado_estampilla,
-                "valor_estampilla": 0.0,
-                "tarifa_aplicada": 0.0,
-                "valor_factura_sin_iva": 0.0,
-                "rango_uvt": "",
-                "valor_contrato_pesos": 0.0,
-                "valor_contrato_uvt": 0.0,
-                "mensajes_error": mensajes_error_estampilla,
-                "razon": razon_estampilla,
-            }
-            logger.info(f" Estampilla Universidad: {estado_estampilla} - {razon_estampilla}")
-
-        if not aplica_obra_publica and "contribucion_obra_publica" not in resultado_final["impuestos"]:
-            razon_obra_publica = deteccion_impuestos.get("razon_no_aplica_obra_publica") or f"El negocio {nombre_negocio} no aplica este impuesto"
-            estado_obra_publica = deteccion_impuestos.get("estado_especial") or "no_aplica_impuesto"
-
-            # Construir mensajes_error sin duplicados
-            # Si hay observaciones, usar solo esas; si no, usar la razón
-            if deteccion_impuestos.get("validacion_recurso") and deteccion_impuestos["validacion_recurso"].get("observaciones"):
-                mensajes_error_obra_publica = [deteccion_impuestos["validacion_recurso"]["observaciones"]]
-            else:
-                mensajes_error_obra_publica = [razon_obra_publica]
-
-            resultado_final["impuestos"]["contribucion_obra_publica"] = {
-                "aplica": False,
-                "estado": estado_obra_publica,
-                "tarifa_aplicada": 0.0,
-                "valor_contribucion": 0.0,
-                "valor_factura_sin_iva": 0.0,
-                "mensajes_error": mensajes_error_obra_publica,
-                "razon": razon_obra_publica,
-            }
-            logger.info(f" Contribución Obra Pública: {estado_obra_publica} - {razon_obra_publica}")
-
-        if not aplica_iva and "iva_reteiva" not in resultado_final["impuestos"]:
-            resultado_final["impuestos"]["iva_reteiva"] = {
-                "aplica": False,
-                "valor_iva_identificado": 0,
-                "valor_subtotal_sin_iva": 0,
-                "valor_reteiva": 0,
-                "porcentaje_iva": 0,
-                "tarifa_reteiva": 0,
-                "es_fuente_nacional": False,
-                "estado_liquidacion": "no_aplica_impuesto",
-                "observaciones": [f"El NIT {nit_administrativo} no está configurado para IVA/ReteIVA"],
-                "calculo_exitoso": False
-            }
-            logger.info(f" IVA/ReteIVA: No aplica para NIT {nit_administrativo}")
-
-        if not aplica_tasa_prodeporte and "tasa_prodeporte" not in resultado_final["impuestos"]:
-            resultado_final["impuestos"]["tasa_prodeporte"] = {
-                "estado": "no_aplica_impuesto",
-                "aplica": False,
-                "valor_imp": 0.0,
-                "tarifa": 0.0,
-                "valor_convenio_sin_iva": 0.0,
-                "porcentaje_convenio": 0.0,
-                "valor_contrato_municipio": 0.0,
-                "factura_sin_iva": 0.0,
-                "factura_con_iva": 0.0,
-                "municipio_dept": "",
-                "numero_contrato": "",
-                "observaciones": f"Tasa Prodeporte solo aplica para PATRIMONIO AUTONOMO FONTUR (NIT 900649119). NIT actual: {nit_administrativo}",
-                "fecha_calculo": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            logger.info(f" Tasa Prodeporte: No aplica para NIT {nit_administrativo} (solo FONTUR 900649119)")
-
-        if not aplica_timbre and "timbre" not in resultado_final["impuestos"]:
-            resultado_final["impuestos"]["timbre"] = {
-                "aplica": False,
-                "estado": "no_aplica_impuesto",
-                "valor": 0.0,
-                "tarifa": 0.0,
-                "tipo_cuantia": "",
-                "base_gravable": 0.0,
-                "ID_contrato": "",
-                "observaciones": f"Nit {nit_administrativo} no aplica impuesto al timbre"
-            }
-            logger.info(f" Timbre: No aplica para NIT {nit_administrativo}")
-
-        #  CALCULAR RESUMEN TOTAL CON NUEVAS RUTAS
-        valor_total_impuestos = 0.0
-        
-        # Usar nuevas rutas: resultado_final["impuestos"][nombre_impuesto]
-        if "retefuente" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["retefuente"], dict):
-            valor_total_impuestos += resultado_final["impuestos"]["retefuente"].get("valor_retencion", 0)
-        
-        if "estampilla_universidad" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["estampilla_universidad"], dict):
-            valor_total_impuestos += resultado_final["impuestos"]["estampilla_universidad"].get("valor_estampilla", 0)
-        
-        if "contribucion_obra_publica" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["contribucion_obra_publica"], dict):
-            valor_total_impuestos += resultado_final["impuestos"]["contribucion_obra_publica"].get("valor_contribucion", 0)
-        
-        if "iva_reteiva" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["iva_reteiva"], dict):
-            valor_total_impuestos += resultado_final["impuestos"]["iva_reteiva"].get("valor_reteiva", 0)
-
-        if "tasa_prodeporte" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["tasa_prodeporte"], dict):
-            valor_total_impuestos += resultado_final["impuestos"]["tasa_prodeporte"].get("valor_imp", 0)
-
-        if "timbre" in resultado_final["impuestos"] and isinstance(resultado_final["impuestos"]["timbre"], dict):
-            valor_total_impuestos += resultado_final["impuestos"]["timbre"].get("valor", 0)
-
-        resultado_final["resumen_total"] = {
-            "valor_total_impuestos": valor_total_impuestos,
-            "impuestos_liquidados": [imp for imp in impuestos_a_procesar if imp.lower().replace("_", "") in [k.lower().replace("_", "") for k in resultado_final["impuestos"].keys()]],
-            "procesamiento_exitoso": True
-        }
-        
-        logger.info(f" Total impuestos calculados: ${valor_total_impuestos:,.2f}")
+        agregar_impuestos_no_aplicados(
+            resultado_final=resultado_final,
+            deteccion_impuestos=deteccion_impuestos, 
+            aplica_estampilla=aplica_estampilla,
+            aplica_obra_publica=aplica_obra_publica,
+            aplica_iva=aplica_iva,
+            aplica_tasa_prodeporte=aplica_tasa_prodeporte,
+            aplica_timbre=aplica_timbre,
+            nit_administrativo=nit_administrativo,
+            nombre_negocio=nombre_negocio
+        )
 
         # =================================
         # PASO 6: CONSOLIDACIÓN Y GUARDADO FINAL
@@ -629,10 +519,9 @@ async def procesar_facturas_integrado(
         guardar_archivo_json(resultado_final, "resultado_final")
         
         # Log final de éxito
-        logger.info(f" Procesamiento completado exitosamente")
+        logger.info("Procesamiento completado exitosamente")
         logger.info(f"Impuestos procesados: {resultado_final.get('impuestos_procesados', [])}")
-        if 'resumen_total' in resultado_final:
-            logger.info(f" Total impuestos: ${resultado_final['resumen_total']['valor_total_impuestos']:,.2f}")
+
         
         return JSONResponse(
             status_code=200,
