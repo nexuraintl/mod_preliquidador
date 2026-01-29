@@ -1,5 +1,114 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.11.1 - ARQUITECTURA: Desactivación de Fallback Supabase] - 2026-01-29
+
+### 🎯 OBJETIVO
+
+Desactivar el sistema de fallback automático Nexura → Supabase en producción, manteniendo todo el código de Supabase intacto para uso futuro. Sistema ahora usa exclusivamente Nexura API en producción.
+
+### 🏗️ ARQUITECTURA
+
+**Principios SOLID Preservados:**
+- **SRP:** setup.py solo configura infraestructura (sin lógica de negocio)
+- **OCP:** DatabaseWithFallback y SupabaseDatabase permanecen sin modificar (cerrado para modificación)
+- **DIP:** DatabaseManager sigue recibiendo abstracción DatabaseInterface
+- **Reversibilidad:** Reactivar fallback solo requiere descomentar código
+
+**Clean Architecture:**
+- Infrastructure Layer (setup.py): Solo modificar configuración
+- Data Access Layer (database.py): SIN CAMBIOS (todo preservado)
+- Business Logic Layer (database_service.py): SIN CAMBIOS
+
+### 🔧 CAMBIADO
+
+#### `database/setup.py`
+
+**Función `crear_database_por_tipo()` (líneas 90-152):**
+- **ANTES:** Creaba `DatabaseWithFallback` envolviendo Nexura + Supabase
+- **DESPUÉS:** Retorna `NexuraAPIDatabase` directamente (sin wrapper)
+- **CÓDIGO PRESERVADO:** Lógica de fallback comentada (líneas 127-150) para reactivación fácil
+
+**Logging actualizado:**
+```python
+logger.info("⚠️  FALLBACK A SUPABASE DESACTIVADO - Sistema usando solo Nexura API")
+logger.info("ℹ️  Para reactivar: Descomentar database/setup.py líneas 127-150")
+```
+
+**Timeout ajustado:**
+- Cambiado de 5s a 30s (más apropiado sin fallback)
+- Configurable vía `NEXURA_API_TIMEOUT`
+
+**Docstrings actualizados:**
+- `crear_database_por_tipo()`: Nota sobre fallback desactivado
+- `inicializar_database_manager()`: Sección "NOTA v3.11.1+"
+
+### 📚 DOCUMENTACIÓN
+
+**Actualizado:** `CHANGELOG.md` - Esta entrada
+**Actualizado:** `README.md` - Sección de variables de entorno
+
+### ✅ CÓDIGO PRESERVADO (SIN ELIMINAR)
+
+**`database/database.py` - SIN CAMBIOS:**
+- ✅ `class SupabaseDatabase(DatabaseInterface)` - Intacta (líneas 117-950)
+- ✅ `class DatabaseWithFallback(DatabaseInterface)` - Intacta (líneas 2967-3150)
+- ✅ Todos los métodos de Supabase operativos
+
+**Imports preservados:**
+- ✅ `from .database import DatabaseWithFallback` - Mantiene import en línea 31
+
+**Reactivación:**
+- Solo descomentar líneas 127-150 en `setup.py`
+- Configurar variables `SUPABASE_URL` y `SUPABASE_KEY`
+- Deploy nueva revisión (< 5 minutos)
+
+### 🎯 CASOS DE USO
+
+**Producción Normal:**
+- Solo Nexura API
+- Errores HTTP claros si Nexura cae
+- Sin degradación automática
+
+**Desarrollo/Testing:**
+- `DATABASE_TYPE=supabase` sigue funcionando
+- `DATABASE_TYPE=nexura` usa Nexura exclusivo
+- Fallback reactivable en < 5 minutos
+
+**Emergencia (Nexura caída):**
+1. Descomentar fallback en `setup.py`
+2. Configurar SUPABASE vars en Cloud Run
+3. Deploy (< 5 minutos)
+
+### 📋 BENEFICIOS
+
+1. **Simplicidad:** Un solo sistema de datos en producción
+2. **Mantenibilidad:** Código de fallback preservado para futuro
+3. **Reversibilidad:** Reactivar fallback en < 5 minutos
+4. **Clean Code:** Menos componentes en flujo de producción
+5. **Logging claro:** Sistema indica explícitamente su configuración
+
+### 🔄 MIGRACIÓN
+
+**De v3.11.0 a v3.11.1:**
+1. Actualizar código (git pull)
+2. NO cambiar variables de entorno (NEXURA vars ya configuradas)
+3. Deploy nueva revisión
+4. Verificar logs: "FALLBACK A SUPABASE DESACTIVADO"
+
+**Rollback a v3.11.0:**
+1. Descomentar líneas 127-150 en `setup.py`
+2. O hacer `git revert` del commit
+3. Deploy nueva revisión
+4. Fallback se reactiva automáticamente
+
+---
+
+**Versión:** 3.11.1
+**Arquitectura:** Clean + SOLID (OCP + DIP preservados)
+**Reversibilidad:** 100% (código fallback preservado)
+
+---
+
 ## [3.3.1 - REFACTOR: Impuestos No Aplicados] - 2026-01-19
 
 ### 🎯 OBJETIVO

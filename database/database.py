@@ -1284,7 +1284,7 @@ class NexuraAPIDatabase(DatabaseInterface):
                 return {
                     'success': False,
                     'data': None,
-                    'message': f'El código de negocio {codigo_negocio} no está parametrizado en la base de datos'
+                    'message': f'404 El código de negocio {codigo_negocio} no está parametrizado en la base de datos'
                 }
             else:
                 logger.error(f"Error HTTP en obtener_tipo_recurso: {e}")

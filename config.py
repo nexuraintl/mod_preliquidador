@@ -956,7 +956,7 @@ def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio
                     "nombre_entidad_obra_publica": None,
                     "validacion_nit": validacion_nit,
                     "validacion_recurso": validacion_recurso,  # Incluir resultado completo
-                    "estado_especial": "preliquidacion_sin_finalizar",
+                    "estado_especial": validacion_recurso.get("estado","preliquidacion_sin_finalizar"),
                     "razon_no_aplica_estampilla": validacion_recurso.get("observaciones"),
                     "razon_no_aplica_obra_publica": validacion_recurso.get("observaciones")
                 }
