@@ -606,21 +606,23 @@ db = NexuraAPIDatabase(
 #### **Variables de Entorno (.env)**
 ```bash
 # === SELECTOR DE DATABASE ===
-DATABASE_TYPE=nexura  # 'supabase' o 'nexura'
+DATABASE_TYPE=nexura  # 'supabase' o 'nexura' (desde v3.11.1+ fallback desactivado)
 
-# === SUPABASE (Original) ===
-SUPABASE_URL="https://gfcseujjfnaoicdenymt.supabase.co"
-SUPABASE_KEY="eyJhbGciOiJIUzI1NiIs..."
-
-# === NEXURA API (v3.2.0) ===
+# === NEXURA API (Recomendado - Producción) ===
 NEXURA_API_BASE_URL="https://preproduccion-fiducoldex.nexura.com/api"
 
 # Autenticación
 NEXURA_AUTH_TYPE=none         # 'none', 'jwt', 'api_key'
 NEXURA_JWT_TOKEN=             # Token JWT (configurar cuando disponible)
 NEXURA_API_KEY=               # API Key (si se usa)
-NEXURA_API_TIMEOUT=30         # Timeout en segundos
+NEXURA_API_TIMEOUT=30         # Timeout en segundos (aumentado desde v3.11.1)
+
+# === SUPABASE (Opcional - desarrollo/testing) ===
+SUPABASE_URL="https://gfcseujjfnaoicdenymt.supabase.co"
+SUPABASE_KEY="eyJhbGciOiJIUzI1NiIs..."
 ```
+
+**Nota v3.11.1+:** Fallback a Supabase desactivado por defecto. Para reactivar, ver `database/setup.py` líneas 127-150.
 
 #### **Uso en Código**
 ```python

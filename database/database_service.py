@@ -202,7 +202,7 @@ class BusinessDataService(IBusinessDataService):
         REGLAS DE NEGOCIO:
         - "Públicos" → aplica_impuestos=True, continua flujo normal
         - "Privados" → aplica_impuestos=False, estado="No aplica el impuesto"
-        - No parametrizado → estado="Preliquidacion sin finalizar"
+        - No parametrizado → estado="no_aplica_impuesto"
         - Error consulta → estado="Preliquidacion sin finalizar" con observaciones
 
         Args:
@@ -230,7 +230,7 @@ class BusinessDataService(IBusinessDataService):
                 "success": False,
                 "tipo_recurso": None,
                 "aplica_impuestos": False,
-                "estado": "Preliquidacion sin finalizar",
+                "estado": "preliquidacion_sin_finalizar",
                 "razon": None,
                 "observaciones": "Error al conectar con la base de datos: DatabaseManager no disponible",
                 "error": warning_msg
@@ -245,13 +245,13 @@ class BusinessDataService(IBusinessDataService):
                 error_msg = resultado_consulta.get('message', 'Error desconocido')
 
                 # Distinguir entre no parametrizado y error técnico
-                if 'No existe parametrización' in error_msg:
+                if 'No existe parametrización' or '404' in error_msg:
                     logger.warning(f" Código {codigo_negocio} no parametrizado en tabla RECURSOS")
                     return {
                         "success": False,
                         "tipo_recurso": None,
                         "aplica_impuestos": False,
-                        "estado": "Preliquidacion sin finalizar",
+                        "estado": "no_aplica_impuesto",
                         "razon": None,
                         "observaciones": f"No se pudo determinar el tipo de recurso administrado por el negocio ya que el codigo de negocio {codigo_negocio} no esta parametrizado en BD",
                         "error": None
@@ -263,7 +263,7 @@ class BusinessDataService(IBusinessDataService):
                         "success": False,
                         "tipo_recurso": None,
                         "aplica_impuestos": False,
-                        "estado": "Preliquidacion sin finalizar",
+                        "estado": "preliquidacion_sin_finalizar",
                         "razon": None,
                         "observaciones": f"Error al consultar tipo de recurso en la base de datos: {error_msg}",
                         "error": resultado_consulta.get('error')
@@ -280,7 +280,7 @@ class BusinessDataService(IBusinessDataService):
                     "success": False,
                     "tipo_recurso": None,
                     "aplica_impuestos": False,
-                    "estado": "Preliquidacion sin finalizar",
+                    "estado": "preliquidacion_sin_finalizar",
                     "razon": None,
                     "observaciones": f"El tipo de recurso no está definido para el codigo de negocio {codigo_negocio} en BD",
                     "error": None
@@ -306,7 +306,7 @@ class BusinessDataService(IBusinessDataService):
                     "success": True,
                     "tipo_recurso": "Privados",
                     "aplica_impuestos": False,
-                    "estado": "No aplica el impuesto",
+                    "estado": "no_aplica_impuesto",
                     "razon": "El negocio administra recursos privados",
                     "observaciones": None,
                     "error": None
@@ -319,7 +319,7 @@ class BusinessDataService(IBusinessDataService):
                     "success": False,
                     "tipo_recurso": tipo_recurso,
                     "aplica_impuestos": False,
-                    "estado": "Preliquidacion sin finalizar",
+                    "estado": "preliquidacion_sin_finalizar",
                     "razon": None,
                     "observaciones": f"Tipo de recurso '{tipo_recurso}' no reconocido para el codigo de negocio {codigo_negocio}",
                     "error": None
@@ -331,7 +331,7 @@ class BusinessDataService(IBusinessDataService):
                 "success": False,
                 "tipo_recurso": None,
                 "aplica_impuestos": False,
-                "estado": "Preliquidacion sin finalizar",
+                "estado": "preliquidacion_sin_finalizar",
                 "razon": None,
                 "observaciones": f"Error técnico al consultar tipo de recurso: {str(e)}",
                 "error": str(e)
