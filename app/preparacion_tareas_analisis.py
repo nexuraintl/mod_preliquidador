@@ -256,7 +256,8 @@ class InstanciadorClasificadores:
         # IVA/ReteIVA (condicional)
         if aplica_iva:
             clasificadores["iva"] = ClasificadorIva(
-                procesador_gemini=self.clasificador
+                procesador_gemini=self.clasificador,
+                database_manager=self.db_manager
             )
 
         # Tasa Prodeporte (condicional)

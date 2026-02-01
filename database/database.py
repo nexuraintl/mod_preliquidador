@@ -109,6 +109,29 @@ class DatabaseInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    def obtener_configuracion_iva_db(self) -> Dict[str, Any]:
+        """
+        Obtiene la configuracion de IVA desde la base de datos.
+
+        SRP: Solo consulta datos de configuracion IVA (Data Access Layer)
+        DIP: Abstraccion que permite multiples implementaciones
+
+        Returns:
+            Dict con estructura estandar:
+            {
+                'success': bool,
+                'data': {
+                    'bienes_no_causan_iva': Dict[str, str],
+                    'bienes_exentos_iva': Dict[str, str],
+                    'servicios_excluidos_iva': Dict[str, str]
+                } | None,
+                'message': str,
+                'raw_data': dict  # opcional para debugging
+            }
+        """
+        pass
+
 
 # ================================
 #  IMPLEMENTACIÓN SUPABASE
@@ -777,6 +800,29 @@ class SupabaseDatabase(DatabaseInterface):
         logger.warning(
             f"SupabaseDatabase: Tabla Tasa Prodeporte no implementada. "
             f"Use NexuraAPIDatabase para rubro {codigo_rubro}."
+        )
+
+        return {
+            'success': False,
+            'data': None,
+            'message': (
+                'Error consultando a la base de datos, Timeouts y retrys excedidos.'
+            )
+        }
+
+    def obtener_configuracion_iva_db(self) -> Dict[str, Any]:
+        """
+        Implementacion Supabase para configuracion IVA.
+
+        NOTA: Tabla no existe en Supabase, retorna error descriptivo.
+        OCP: Preparada para extension futura si se crea tabla.
+
+        Returns:
+            Dict con success=False indicando que no esta implementado
+        """
+        logger.warning(
+            "SupabaseDatabase: Tabla configuracion IVA no implementada. "
+            "Use NexuraAPIDatabase para obtener configuracion IVA."
         )
 
         return {
@@ -2632,6 +2678,162 @@ class NexuraAPIDatabase(DatabaseInterface):
             logger.error(f"Error parseando '{porcentaje_str}': {e}", exc_info=True)
             return None
 
+    def obtener_configuracion_iva_db(self) -> Dict[str, Any]:
+        """
+        Obtiene la configuracion de IVA desde Nexura API.
+
+        SRP: Solo consulta endpoint de configuracion IVA (Data Access Layer)
+
+        Endpoint: GET /preliquidador/impuestoValorAgregado/
+        Sin parametros requeridos
+
+        Mapeo de campos esperados:
+        - bienes_no_causan_iva: Dict[str, str]
+        - bienes_exentos_iva: Dict[str, str]
+        - servicios_excluidos_iva: Dict[str, str]
+
+        Returns:
+            Dict con estructura estandar:
+            {
+                'success': bool,
+                'data': {
+                    'bienes_no_causan_iva': Dict[str, str],
+                    'bienes_exentos_iva': Dict[str, str],
+                    'servicios_excluidos_iva': Dict[str, str]
+                } | None,
+                'message': str,
+                'raw_data': dict  # opcional para debugging
+            }
+        """
+        logger.info("Consultando configuracion IVA desde Nexura API: /preliquidador/impuestoValorAgregado/")
+
+        try:
+            # 1. REQUEST A NEXURA API
+            response = self._hacer_request(
+                endpoint='/preliquidador/impuestoValorAgregado/',
+                method='GET'
+            )
+
+            logger.debug(f"Respuesta API configuracion IVA recibida: status code verificado")
+
+            # 2. VERIFICAR ERROR CODE
+            error_info = response.get('error', {})
+            error_code = error_info.get('code', -1)
+
+            # 3. CASO EXITOSO (error.code = 0)
+            if error_code == 0:
+                data_obj = response.get('data', {})
+
+                # La API retorna un objeto (no array) con los campos directamente
+                if data_obj and isinstance(data_obj, dict):
+                    # 4. MAPEO DE CAMPOS
+                    # La API retorna arrays con los nombres en MAYUSCULAS
+                    bienes_no_causan_array = data_obj.get('BIENES_NO_CAUSAN_IVA', [])
+                    bienes_exentos_array = data_obj.get('BIENES_EXENTOS_IVA', [])
+                    servicios_excluidos_array = data_obj.get('SERVICIOS_EXCLUIDOS_IVA', [])
+
+                    # Verificar que al menos uno de los campos tiene datos
+                    if not bienes_no_causan_array and not bienes_exentos_array and not servicios_excluidos_array:
+                        logger.warning("API retorno configuracion IVA pero todos los campos estan vacios")
+                        return {
+                            'success': False,
+                            'data': None,
+                            'message': 'Configuracion IVA encontrada pero todos los campos estan vacios',
+                            'raw_data': data_obj
+                        }
+
+                    # 5. CONVERTIR ARRAYS A DICCIONARIOS CON INDICES NUMERICOS
+                    # Esto mantiene compatibilidad con el resto del sistema que espera diccionarios
+                    bienes_no_causan = {str(i+1): item for i, item in enumerate(bienes_no_causan_array)}
+                    bienes_exentos = {str(i+1): item for i, item in enumerate(bienes_exentos_array)}
+                    servicios_excluidos = {str(i+1): item for i, item in enumerate(servicios_excluidos_array)}
+
+                    # 6. RETORNAR DATOS MAPEADOS
+                    datos_iva = {
+                        'bienes_no_causan_iva': bienes_no_causan,
+                        'bienes_exentos_iva': bienes_exentos,
+                        'servicios_excluidos_iva': servicios_excluidos
+                    }
+
+                    logger.info(
+                        f"Configuracion IVA obtenida exitosamente: "
+                        f"{len(bienes_no_causan)} bienes no causan, "
+                        f"{len(bienes_exentos)} bienes exentos, "
+                        f"{len(servicios_excluidos)} servicios excluidos"
+                    )
+
+                    return {
+                        'success': True,
+                        'data': datos_iva,
+                        'message': 'Configuracion IVA obtenida exitosamente desde Nexura API',
+                        'raw_data': data_obj
+                    }
+                else:
+                    logger.warning("API retorno respuesta exitosa pero sin datos de configuracion IVA")
+                    return {
+                        'success': False,
+                        'data': None,
+                        'message': 'No se encontro configuracion IVA en la base de datos'
+                    }
+
+            # 6. CASO 404 (NO ENCONTRADO)
+            elif error_code == 404:
+                logger.info("Configuracion IVA no encontrada en la base de datos (404)")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': 'No se encontro configuracion IVA en la base de datos',
+                    'skip_fallback': True
+                }
+
+            # 7. OTROS ERRORES DE API
+            else:
+                error_message = error_info.get('message', 'Error desconocido')
+                logger.error(
+                    f"Error de API al consultar configuracion IVA: "
+                    f"Code={error_code}, Message={error_message}"
+                )
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f"Error de API al consultar configuracion IVA: {error_message}"
+                }
+
+        # 8. MANEJO DE EXCEPCIONES
+        except requests.exceptions.Timeout:
+            logger.error("Timeout al consultar configuracion IVA")
+            return {
+                'success': False,
+                'data': None,
+                'error': 'Timeout',
+                'message': 'Timeout al consultar configuracion IVA. Intente nuevamente.'
+            }
+
+        except requests.exceptions.HTTPError as e:
+            if '404' in str(e):
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': 'No se encontro configuracion IVA en la base de datos',
+                    'skip_fallback': True
+                }
+            else:
+                logger.error(f"Error HTTP al consultar configuracion IVA: {e}")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f"Error HTTP al consultar configuracion IVA: {str(e)}"
+                }
+
+        except Exception as e:
+            logger.error(f"Error inesperado al consultar configuracion IVA: {e}", exc_info=True)
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f"Error inesperado al consultar configuracion IVA: {str(e)}"
+            }
+
     def health_check(self) -> bool:
         """
         Verifica si la conexion a Nexura API funciona
@@ -2898,6 +3100,20 @@ class DatabaseManager:
             - data: Dict con tarifa (float), centro_costo (int) y municipio_departamento (str)
         """
         return self.db_connection.obtener_datos_rubro_tasa_prodeporte(codigo_rubro)
+
+    def obtener_configuracion_iva_db(self) -> Dict[str, Any]:
+        """
+        Obtiene la configuracion de IVA desde la base de datos.
+
+        SRP: Delega a la implementacion configurada (Strategy Pattern)
+
+        Returns:
+            Dict con resultado de la consulta incluyendo:
+            - success: bool
+            - message: str
+            - data: Dict con bienes_no_causan_iva, bienes_exentos_iva, servicios_excluidos_iva
+        """
+        return self.db_connection.obtener_configuracion_iva_db()
 
 
 def ejecutar_pruebas_completas(db_manager: DatabaseManager):
@@ -3234,6 +3450,14 @@ class DatabaseWithFallback(DatabaseInterface):
             self.primary_db.obtener_datos_rubro_tasa_prodeporte,
             self.fallback_db.obtener_datos_rubro_tasa_prodeporte,
             codigo_rubro
+        )
+
+    def obtener_configuracion_iva_db(self) -> Dict[str, Any]:
+        """Obtiene configuracion IVA con fallback automatico"""
+        return self._ejecutar_con_fallback(
+            'obtener_configuracion_iva_db',
+            self.primary_db.obtener_configuracion_iva_db,
+            self.fallback_db.obtener_configuracion_iva_db
         )
 
 

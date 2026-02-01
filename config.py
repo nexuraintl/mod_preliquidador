@@ -1008,14 +1008,6 @@ def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio
     }
 
 
-def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
-    """Obtiene configuración integrada para ambos impuestos"""
-    return {
-        "estampilla_universidad": obtener_configuracion_estampilla_universidad(),
-        "contribucion_obra_publica": obtener_configuracion_obra_publica(),
-        "terceros_recursos_publicos_compartidos": list(TERCEROS_RECURSOS_PUBLICOS.keys())
-    }
-
 # ===============================
 # CONFIGURACIÓN IVA Y RETEIVA
 # ===============================
@@ -1412,15 +1404,124 @@ def nit_aplica_timbre(nit: str) -> bool:
     es_valido, _, impuestos = validar_nit_administrativo(nit)
     return es_valido and "IMPUESTO_TIMBRE" in impuestos
 
-def obtener_configuracion_iva() -> Dict[str, Any]:
-    """Obtiene toda la configuración de IVA para uso en prompts"""
-    return {
-        "nits_validos": NITS_IVA_RETEIVA,
-        "bienes_no_causan_iva": BIENES_NO_CAUSAN_IVA,
-        "bienes_exentos_iva": BIENES_EXENTOS_IVA,
-        "servicios_excluidos_iva": SERVICIOS_EXCLUIDOS_IVA,
-        "config_reteiva": CONFIG_RETEIVA
-    }
+# Cache global para configuracion IVA desde base de datos
+_cache_config_iva_db = None
+_cache_timestamp_iva = None
+
+
+def obtener_configuracion_iva(database_manager=None, usar_cache: bool = True) -> Dict[str, Any]:
+    """
+    Obtiene toda la configuracion de IVA desde base de datos Nexura con cache.
+
+    ESTRATEGIA DE OBTENCION:
+    1. Intenta obtener desde base de datos Nexura (OBLIGATORIO - database_manager requerido)
+    2. Implementa cache para evitar llamadas repetidas a la base de datos
+    3. Si falla, lanza excepcion
+
+    PRINCIPIOS SOLID APLICADOS:
+    - SRP: Solo obtiene configuracion de IVA
+    - OCP: Extensible para nuevas fuentes de datos
+    - DIP: Depende de abstraccion (database_manager)
+
+    Args:
+        database_manager: DatabaseManager REQUERIDO para obtener datos desde BD
+        usar_cache: Si True, usa cache de configuracion IVA (default: True)
+
+    Returns:
+        Dict con estructura:
+        {
+            'nits_validos': Dict,
+            'bienes_no_causan_iva': Dict[str, str],
+            'bienes_exentos_iva': Dict[str, str],
+            'servicios_excluidos_iva': Dict[str, str],
+            'config_reteiva': Dict,
+            'fuente': str  # siempre 'database'
+        }
+
+    Raises:
+        ValueError: Si database_manager es None o si falla la obtencion desde BD
+
+    Example:
+        >>> from database.setup import inicializar_database_manager
+        >>> db_manager, _ = inicializar_database_manager()
+        >>> config = obtener_configuracion_iva(db_manager)
+        >>> print(config['fuente'])  # 'database'
+    """
+    global _cache_config_iva_db, _cache_timestamp_iva
+
+    # 1. VERIFICAR CACHE (si esta habilitado)
+    if usar_cache and _cache_config_iva_db is not None:
+        logger.debug("Usando configuracion IVA desde cache")
+        return _cache_config_iva_db
+
+    # 2. VALIDAR QUE DATABASE_MANAGER ESTE DISPONIBLE
+    if database_manager is None:
+        error_msg = "database_manager es requerido para obtener configuracion IVA"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # 3. OBTENER DESDE BASE DE DATOS
+    try:
+        logger.info("Obteniendo configuracion IVA desde base de datos")
+        resultado = database_manager.obtener_configuracion_iva_db()
+
+        if resultado.get('success', False) and resultado.get('data'):
+            datos_db = resultado['data']
+
+            # Construir configuracion completa con datos de BD
+            config_completa = {
+                'nits_validos': NITS_IVA_RETEIVA,
+                'bienes_no_causan_iva': datos_db.get('bienes_no_causan_iva', {}),
+                'bienes_exentos_iva': datos_db.get('bienes_exentos_iva', {}),
+                'servicios_excluidos_iva': datos_db.get('servicios_excluidos_iva', {}),
+                'config_reteiva': CONFIG_RETEIVA,
+                'fuente': 'database'
+            }
+
+            # Guardar en cache
+            _cache_config_iva_db = config_completa
+            _cache_timestamp_iva = datetime.now()
+
+            logger.info(
+                f"Configuracion IVA obtenida desde base de datos: "
+                f"{len(config_completa['bienes_no_causan_iva'])} bienes no causan, "
+                f"{len(config_completa['bienes_exentos_iva'])} bienes exentos, "
+                f"{len(config_completa['servicios_excluidos_iva'])} servicios excluidos"
+            )
+
+            return config_completa
+
+        else:
+            error_msg = f"No se pudo obtener configuracion IVA desde BD: {resultado.get('message', 'Error desconocido')}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+    except ValueError:
+        # Re-lanzar ValueError (ya tiene el mensaje correcto)
+        raise
+    except Exception as e:
+        error_msg = f"Error obteniendo configuracion IVA desde base de datos: {e}"
+        logger.error(error_msg)
+        logger.exception("Traceback del error:")
+        raise ValueError(error_msg) from e
+
+
+def limpiar_cache_configuracion_iva():
+    """
+    Limpia el cache de configuracion IVA.
+
+    Util cuando se necesita forzar una recarga desde la base de datos.
+
+    SRP: Solo limpia cache de configuracion IVA
+
+    Example:
+        >>> limpiar_cache_configuracion_iva()
+        >>> config = obtener_configuracion_iva(db_manager, usar_cache=False)
+    """
+    global _cache_config_iva_db, _cache_timestamp_iva
+    _cache_config_iva_db = None
+    _cache_timestamp_iva = None
+    logger.info("Cache de configuracion IVA limpiado")
 
 def es_fuente_ingreso_nacional(respuestas_fuente: Dict[str, bool]) -> bool:
     """Determina si un servicio/bien es de fuente nacional según validaciones
@@ -1505,12 +1606,23 @@ def detectar_impuestos_aplicables(nit: str) -> Dict[str, Any]:
         "nombre_entidad_iva": NITS_IVA_RETEIVA.get(nit, {}).get("nombre")  # ✅ NUEVO CAMPO
     }
 
-def obtener_configuracion_impuestos_integrada() -> Dict[str, Any]:
-    """Obtiene configuración integrada para todos los impuestos - ACTUALIZADO CON IVA"""
+def obtener_configuracion_impuestos_integrada(database_manager=None) -> Dict[str, Any]:
+    """
+    Obtiene configuracion integrada para todos los impuestos - ACTUALIZADO CON IVA
+
+    Args:
+        database_manager: DatabaseManager para obtener configuracion IVA desde BD (REQUERIDO para IVA)
+
+    Returns:
+        Dict con configuraciones de todos los impuestos
+
+    Raises:
+        ValueError: Si database_manager es None (requerido para obtener config IVA)
+    """
     return {
         "estampilla_universidad": obtener_configuracion_estampilla_universidad(),
         "contribucion_obra_publica": obtener_configuracion_obra_publica(),
-        "iva_reteiva": obtener_configuracion_iva(),  # ✅ NUEVA CONFIGURACIÓN
+        "iva_reteiva": obtener_configuracion_iva(database_manager=database_manager),
         "terceros_recursos_publicos_compartidos": list(TERCEROS_RECURSOS_PUBLICOS.keys())
     }
 
