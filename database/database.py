@@ -132,6 +132,32 @@ class DatabaseInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    def obtener_rangos_estampilla_universidad(self) -> Dict[str, Any]:
+        """
+        Obtiene rangos UVT y tarifas para Estampilla Pro Universidad Nacional.
+
+        SRP: Solo consulta datos de rangos (Data Access Layer)
+        DIP: Abstraccion que permite multiples implementaciones
+
+        Returns:
+            Dict con estructura estandar:
+            {
+                'success': bool,
+                'data': [
+                    {
+                        'desde_uvt': float,      # 26.0
+                        'hasta_uvt': float,      # 52652.0 (o float('inf') para infinito)
+                        'tarifa': float,         # 0.005 (0.5% convertido de "0.5000")
+                        'id': int                # identificador unico
+                    }
+                ] | None,
+                'message': str,
+                'raw_data': list  # opcional para debugging
+            }
+        """
+        pass
+
 
 # ================================
 #  IMPLEMENTACIÓN SUPABASE
@@ -823,6 +849,29 @@ class SupabaseDatabase(DatabaseInterface):
         logger.warning(
             "SupabaseDatabase: Tabla configuracion IVA no implementada. "
             "Use NexuraAPIDatabase para obtener configuracion IVA."
+        )
+
+        return {
+            'success': False,
+            'data': None,
+            'message': (
+                'Error consultando a la base de datos, Timeouts y retrys excedidos.'
+            )
+        }
+
+    def obtener_rangos_estampilla_universidad(self) -> Dict[str, Any]:
+        """
+        Implementacion Supabase para rangos estampilla universidad.
+
+        NOTA: Tabla no existe en Supabase, retorna error descriptivo.
+        OCP: Preparada para extension futura si se crea tabla.
+
+        Returns:
+            Dict con success=False indicando que no esta implementado
+        """
+        logger.warning(
+            "SupabaseDatabase: Tabla rangos estampilla no implementada. "
+            "Use NexuraAPIDatabase."
         )
 
         return {
@@ -2834,6 +2883,289 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'message': f"Error inesperado al consultar configuracion IVA: {str(e)}"
             }
 
+    def obtener_rangos_estampilla_universidad(self) -> Dict[str, Any]:
+        """
+        Obtiene rangos UVT y tarifas para Estampilla Pro Universidad Nacional.
+
+        SRP: Solo consulta endpoint de rangos estampilla (Data Access Layer)
+
+        Endpoint: GET /preliquidador/estampillaProUniversidad/
+        Sin parametros requeridos
+
+        PARSING CRITICO:
+        - "0.5000" (string) → 0.005 (float) [dividir por 100]
+        - "26" (string) → 26.0 (float)
+        - "" (string vacio en hasta_uvt) → float('inf')
+        - "> 52.626" → 52.626 (extraer numero)
+        - "<= 52.652" → 52.652 (extraer numero)
+
+        CONSOLIDACION DE RANGOS:
+        - Registros con id 1 y 2 son el mismo rango (diferentes notaciones)
+        - Consolidar registros duplicados por rango real
+
+        Returns:
+            Dict con estructura estandar:
+            {
+                'success': bool,
+                'data': [
+                    {
+                        'desde_uvt': float,      # 26.0
+                        'hasta_uvt': float,      # 52652.0 (o float('inf') para infinito)
+                        'tarifa': float,         # 0.005 (0.5% convertido de "0.5000")
+                        'id': int                # identificador unico
+                    }
+                ] | None,
+                'message': str,
+                'raw_data': list  # opcional para debugging
+            }
+        """
+        logger.info("Consultando rangos estampilla universidad desde Nexura API: /preliquidador/estampillaProUniversidad/")
+
+        try:
+            # PASO 1: REQUEST A NEXURA API
+            response = self._hacer_request(
+                endpoint='/preliquidador/estampillaProUniversidad/',
+                method='GET'
+            )
+
+            logger.debug("Respuesta API rangos estampilla recibida: status code verificado")
+
+            # PASO 2: VERIFICAR ERROR CODE
+            error_info = response.get('error', {})
+            error_code = error_info.get('code', -1)
+
+            # PASO 3: CASO EXITOSO (error.code = 0)
+            if error_code == 0:
+                data_array = response.get('data', [])
+
+                if not data_array:
+                    logger.warning("API retorno respuesta exitosa pero sin rangos de estampilla")
+                    return {
+                        'success': False,
+                        'data': None,
+                        'message': 'Configuracion de rangos estampilla no encontrada en BD',
+                        'skip_fallback': True
+                    }
+
+                # PASO 4: PARSING Y CONSOLIDACION DE RANGOS
+                rangos_parseados = []
+
+                for registro in data_array:
+                    try:
+                        desde_uvt = self._parsear_uvt(registro.get('desde_uvt', '0'))
+                        hasta_uvt = self._parsear_uvt(registro.get('hasta_uvt', ''))
+                        tarifa_str = registro.get('tarifa', '0')
+
+                        # Convertir tarifa: "0.5000" → 0.5 → 0.005 (dividir por 100)
+                        tarifa_porcentaje = float(tarifa_str)
+                        tarifa_decimal = tarifa_porcentaje / 100.0
+
+                        # Validar estado activo
+                        estado = registro.get('estado', 0)
+                        if estado != 1:
+                            logger.debug(f"Rango inactivo ignorado: id={registro.get('id')}")
+                            continue
+
+                        rango = {
+                            'id': registro.get('id'),
+                            'desde_uvt': desde_uvt,
+                            'hasta_uvt': hasta_uvt,
+                            'tarifa': tarifa_decimal
+                        }
+
+                        rangos_parseados.append(rango)
+
+                        logger.debug(
+                            f"Rango parseado: id={rango['id']}, "
+                            f"desde_uvt={desde_uvt}, hasta_uvt={hasta_uvt}, "
+                            f"tarifa={tarifa_decimal} ({tarifa_porcentaje}%)"
+                        )
+
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Error parseando registro {registro.get('id')}: {e}")
+                        continue
+
+                # PASO 5: CONSOLIDAR RANGOS DUPLICADOS
+                rangos_consolidados = self._consolidar_rangos_estampilla(rangos_parseados)
+
+                if not rangos_consolidados:
+                    logger.error("No se pudieron parsear rangos validos de estampilla")
+                    return {
+                        'success': False,
+                        'data': None,
+                        'message': 'No se pudieron parsear rangos validos de estampilla',
+                        'skip_fallback': True,
+                        'raw_data': data_array
+                    }
+
+                logger.info(
+                    f"Rangos estampilla obtenidos exitosamente: "
+                    f"{len(rangos_consolidados)} rangos parseados de {len(data_array)} registros"
+                )
+
+                return {
+                    'success': True,
+                    'data': rangos_consolidados,
+                    'message': 'Rangos estampilla obtenidos exitosamente desde Nexura API',
+                    'raw_data': data_array
+                }
+
+            # CASO 404
+            elif error_code == 404:
+                logger.info("Configuracion de rangos estampilla no encontrada (404)")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': 'Configuracion de rangos estampilla no encontrada',
+                    'skip_fallback': True
+                }
+
+            # OTROS ERRORES
+            else:
+                error_message = error_info.get('message', 'Error desconocido')
+                logger.error(
+                    f"Error de API al consultar rangos estampilla: "
+                    f"Code={error_code}, Message={error_message}"
+                )
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f"Error de API al consultar rangos estampilla: {error_message}"
+                }
+
+        # MANEJO DE EXCEPCIONES
+        except requests.exceptions.Timeout:
+            logger.error("Timeout al consultar rangos estampilla")
+            return {
+                'success': False,
+                'data': None,
+                'error': 'Timeout',
+                'message': "Timeout al consultar rangos estampilla. Intente nuevamente."
+            }
+
+        except requests.exceptions.HTTPError as e:
+            if '404' in str(e):
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': 'Configuracion de rangos estampilla no encontrada',
+                    'skip_fallback': True
+                }
+            else:
+                logger.error(f"Error HTTP al consultar rangos estampilla: {e}")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': f"Error HTTP al consultar rangos estampilla: {str(e)}"
+                }
+
+        except Exception as e:
+            logger.error(f"Error inesperado al consultar rangos estampilla: {e}", exc_info=True)
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f"Error inesperado: {str(e)}"
+            }
+
+    def _parsear_uvt(self, uvt_str: str) -> float:
+        """
+        Parsea valores UVT desde string con posibles operadores y separadores de miles.
+
+        IMPORTANTE: Los puntos son separadores de miles, NO decimales.
+        Ejemplo: "52.626" = 52,626 UVT (cincuenta y dos mil seiscientos veintiseis)
+
+        Casos soportados:
+        - "26" → 26.0
+        - "52.626" → 52626.0 (punto como separador de miles)
+        - "> 52.626" → 52626.0
+        - "<= 52.652" → 52652.0
+        - "157.904" → 157904.0
+        - "" (vacio) → float('inf')
+
+        Args:
+            uvt_str: String con valor UVT (puede tener puntos como separadores de miles)
+
+        Returns:
+            float: Valor UVT parseado como numero entero
+        """
+        if not uvt_str or uvt_str.strip() == '':
+            return float('inf')
+
+        try:
+            import re
+            # Extraer solo numeros y puntos
+            numeros = re.findall(r'[\d\.]+', uvt_str)
+
+            if not numeros:
+                logger.warning(f"No se encontraron numeros en UVT: '{uvt_str}'")
+                return 0.0
+
+            # Tomar primer numero encontrado y eliminar puntos (separadores de miles)
+            numero_str = numeros[0].replace('.', '')  # "52.626" → "52626"
+            valor = float(numero_str)
+
+            logger.debug(f"UVT parseado: '{uvt_str}' → {valor}")
+            return valor
+
+        except (ValueError, IndexError) as e:
+            logger.error(f"Error parseando UVT '{uvt_str}': {e}")
+            return 0.0
+
+    def _consolidar_rangos_estampilla(self, rangos: List[Dict]) -> List[Dict]:
+        """
+        Consolida rangos duplicados con diferentes notaciones.
+
+        IMPORTANTE: Los valores UVT ya vienen parseados sin puntos (separadores de miles)
+
+        Ejemplo:
+        - id=1: desde_uvt=26, hasta_uvt=52626, tarifa=0.005
+        - id=2: desde_uvt=52626, hasta_uvt=52652, tarifa=0.005
+
+        Se consolida como:
+        - desde_uvt=26, hasta_uvt=52652, tarifa=0.005
+
+        Args:
+            rangos: Lista de rangos parseados
+
+        Returns:
+            Lista de rangos consolidados sin duplicados
+        """
+        if not rangos:
+            return []
+
+        # Ordenar por desde_uvt
+        rangos_ordenados = sorted(rangos, key=lambda r: r['desde_uvt'])
+
+        consolidados = []
+        rango_actual = None
+
+        for rango in rangos_ordenados:
+            if rango_actual is None:
+                # Primer rango
+                rango_actual = rango.copy()
+            else:
+                # Verificar si es continuacion del rango actual
+                # (misma tarifa y rango contiguo)
+                if (abs(rango_actual['tarifa'] - rango['tarifa']) < 0.0001 and
+                    abs(rango_actual['hasta_uvt'] - rango['desde_uvt']) < 1.0):
+                    # Extender rango actual
+                    rango_actual['hasta_uvt'] = rango['hasta_uvt']
+                    logger.debug(
+                        f"Consolidando rangos: extendiendo hasta_uvt a {rango['hasta_uvt']}"
+                    )
+                else:
+                    # Nuevo rango diferente
+                    consolidados.append(rango_actual)
+                    rango_actual = rango.copy()
+
+        # Agregar ultimo rango
+        if rango_actual:
+            consolidados.append(rango_actual)
+
+        logger.debug(f"Rangos consolidados: {len(rangos)} → {len(consolidados)}")
+        return consolidados
+
     def health_check(self) -> bool:
         """
         Verifica si la conexion a Nexura API funciona
@@ -3114,6 +3446,20 @@ class DatabaseManager:
             - data: Dict con bienes_no_causan_iva, bienes_exentos_iva, servicios_excluidos_iva
         """
         return self.db_connection.obtener_configuracion_iva_db()
+
+    def obtener_rangos_estampilla_universidad(self) -> Dict[str, Any]:
+        """
+        Obtiene rangos UVT y tarifas para Estampilla Pro Universidad Nacional.
+
+        SRP: Delega a la implementacion configurada (Strategy Pattern)
+
+        Returns:
+            Dict con resultado de la consulta incluyendo:
+            - success: bool
+            - message: str
+            - data: List de rangos con desde_uvt, hasta_uvt, tarifa
+        """
+        return self.db_connection.obtener_rangos_estampilla_universidad()
 
 
 def ejecutar_pruebas_completas(db_manager: DatabaseManager):
@@ -3458,6 +3804,14 @@ class DatabaseWithFallback(DatabaseInterface):
             'obtener_configuracion_iva_db',
             self.primary_db.obtener_configuracion_iva_db,
             self.fallback_db.obtener_configuracion_iva_db
+        )
+
+    def obtener_rangos_estampilla_universidad(self) -> Dict[str, Any]:
+        """Obtiene rangos UVT y tarifas para Estampilla Universidad con fallback automatico"""
+        return self._ejecutar_con_fallback(
+            'obtener_rangos_estampilla_universidad',
+            self.primary_db.obtener_rangos_estampilla_universidad,
+            self.fallback_db.obtener_rangos_estampilla_universidad
         )
 
 

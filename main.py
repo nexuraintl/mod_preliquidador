@@ -401,7 +401,8 @@ async def procesar_facturas_integrado(
             aplica_estampilla=aplica_estampilla,
             aplica_obra_publica=aplica_obra_publica,
             codigo_del_negocio=codigo_del_negocio,
-            nombre_negocio=nombre_negocio
+            nombre_negocio=nombre_negocio,
+            database_manager=db_manager
         )
 
         if resultado_especiales:

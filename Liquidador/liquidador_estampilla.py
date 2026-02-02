@@ -142,11 +142,22 @@ class LiquidadorEstampilla:
         - obtener_prompt_gemini_integrado() → Movido a prompt_clasificador.py
     """
     
-    def __init__(self):
+    def __init__(self, database_manager=None):
+        """
+        Inicializa el liquidador de estampilla con inyeccion de dependencias.
+
+        PRINCIPIO DIP: Recibe database_manager como dependencia inyectada
+
+        Args:
+            database_manager: DatabaseManager para consultas a BD (opcional)
+        """
         self.uvt_2025 = UVT_2025
+        self.database_manager = database_manager
         logger.info(f" LiquidadorEstampilla INTEGRADO inicializado - UVT 2025: ${self.uvt_2025:,}")
         logger.info(f" Configuración: {len(CODIGOS_NEGOCIO_ESTAMPILLA)} códigos de negocio válidos")
         logger.info(f" Modo: ANÁLISIS INTEGRADO (estampilla + obra pública)")
+        if database_manager:
+            logger.info(f" DatabaseManager inyectado: tarifas desde BD")
 
     def validar_codigo_negocio_estampilla(self, codigo_negocio: int, nombre_negocio: str = None) -> Tuple[bool, str]:
         """
@@ -339,10 +350,39 @@ class LiquidadorEstampilla:
         if valor_factura_sin_iva is None:
             valor_factura_sin_iva = valor_contrato_pesos
             logger.warning(" No se proporcionó valor de factura, usando valor del contrato")
-        
+
         # Obtener tarifa según valor del contrato en UVT
-        info_tarifa = obtener_tarifa_estampilla_universidad(valor_contrato_pesos)
-        
+        try:
+            info_tarifa = obtener_tarifa_estampilla_universidad(
+                valor_contrato_pesos,
+                database_manager=self.database_manager
+            )
+        except ValueError as e:
+            error_msg = str(e)
+
+            # Caso especial: Contrato menor a 26 UVT - NO APLICA
+            if "NO_APLICA_ESTAMPILLA_UNIVERSIDAD" in error_msg:
+                logger.info(f"Estampilla Universidad no aplica: {error_msg}")
+                return {
+                    "aplica": False,
+                    "valor_estampilla": 0,
+                    "tarifa_aplicada": 0,
+                    "rango_uvt": "Menor a 26 UVT",
+                    "valor_contrato_pesos": valor_contrato_pesos,
+                    "valor_contrato_uvt": valor_contrato_pesos / self.uvt_2025,
+                    "razon": "Contrato menor al mínimo de 26 UVT requerido para aplicar estampilla",
+                    "valor_factura_sin_iva": valor_factura_sin_iva
+                }
+
+            # Otros errores de BD
+            logger.error(f"Error obteniendo tarifa estampilla: {e}")
+            return {
+                "error": True,
+                "mensaje": f"No se pudo obtener tarifa de estampilla desde BD: {str(e)}",
+                "valor_estampilla": 0,
+                "tarifa_aplicada": 0
+            }
+
         # ✅ CÁLCULO CORRECTO: Aplicar tarifa sobre valor de FACTURA sin IVA
         valor_estampilla = valor_factura_sin_iva * info_tarifa["tarifa"]
         
@@ -383,10 +423,35 @@ class LiquidadorEstampilla:
             List[Dict]: Cálculo para cada consorciado
         """
         resultados = []
-        
+
         # Obtener tarifa una sola vez (basada en valor total del contrato)
-        info_tarifa = obtener_tarifa_estampilla_universidad(valor_contrato_pesos)
-        
+        try:
+            info_tarifa = obtener_tarifa_estampilla_universidad(
+                valor_contrato_pesos,
+                database_manager=self.database_manager
+            )
+        except ValueError as e:
+            error_msg = str(e)
+
+            # Caso especial: Contrato menor a 26 UVT - NO APLICA
+            if "NO_APLICA_ESTAMPILLA_UNIVERSIDAD" in error_msg:
+                logger.info(f"Estampilla Universidad no aplica para consorcio: {error_msg}")
+                return [{
+                    "aplica": False,
+                    "valor_estampilla": 0,
+                    "tarifa_aplicada": 0,
+                    "razon": "Contrato menor al mínimo de 26 UVT requerido para aplicar estampilla"
+                }]
+
+            # Otros errores de BD
+            logger.error(f"Error obteniendo tarifa estampilla para consorcio: {e}")
+            return [{
+                "error": True,
+                "mensaje": f"No se pudo obtener tarifa de estampilla desde BD: {str(e)}",
+                "valor_estampilla": 0,
+                "tarifa_aplicada": 0
+            }]
+
         for consorciado in consorciados:
             nombre = consorciado.get("nombre", "Sin nombre")
             participacion = consorciado.get("participacion_porcentaje", 0) / 100
@@ -1069,7 +1134,32 @@ class LiquidadorEstampilla:
             valor_contrato_uvt = valor_contrato_total / self.uvt_2025
 
             # CÁLCULO MANUAL: Buscar rango UVT y obtener tarifa
-            info_tarifa = obtener_tarifa_estampilla_universidad(valor_contrato_total)
+            try:
+                info_tarifa = obtener_tarifa_estampilla_universidad(
+                    valor_contrato_total,
+                    database_manager=self.database_manager
+                )
+            except ValueError as e:
+                error_msg = str(e)
+
+                # Caso especial: Contrato menor a 26 UVT - NO APLICA
+                if "NO_APLICA_ESTAMPILLA_UNIVERSIDAD" in error_msg:
+                    logger.info(f"Estampilla Universidad no aplica en liquidación manual: {error_msg}")
+                    resultado["aplica"] = False
+                    resultado["estado"] = "no_aplica_impuesto"
+                    resultado["razon"] = "Contrato menor al mínimo de 26 UVT requerido para aplicar estampilla"
+                    resultado["rango_uvt"] = "Menor a 26 UVT"
+                    resultado["valor_contrato_uvt"] = valor_contrato_uvt
+                    return resultado
+
+                # Otros errores de BD
+                logger.error(f"Error obteniendo tarifa estampilla en liquidacion manual: {e}")
+                resultado["aplica"] = False
+                resultado["estado"] = "preliquidacion_sin_finalizar"
+                resultado["razon"] = f"No se pudo obtener tarifa de estampilla desde BD: {str(e)}"
+                resultado["mensajes_error"].append(str(e))
+                return resultado
+
             tarifa_aplicable = info_tarifa["tarifa"]
 
             # CÁLCULO MANUAL: Estampilla = Valor factura sin IVA x Tarifa
