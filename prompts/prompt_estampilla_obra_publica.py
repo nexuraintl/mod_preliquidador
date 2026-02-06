@@ -22,7 +22,8 @@ from .prompt_clasificador import _generar_seccion_archivos_directos
 
 def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_texto: str, anexos_texto: str,
                                                        cotizaciones_texto: str, anexo_contrato: str,
-                                                       nit_administrativo: str, nombres_archivos_directos: List[str] = None) -> str:
+                                                       nit_administrativo: str, nombres_archivos_directos: List[str] = None,
+                                                       database_manager = None) -> str:
     """
     PROMPT INTEGRADO OPTIMIZADO - EXTRACCIÓN Y CLASIFICACIÓN
 
@@ -37,6 +38,7 @@ def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_te
         anexo_contrato: Texto del anexo de concepto de contrato
         nit_administrativo: NIT de la entidad administrativa
         nombres_archivos_directos: Lista de nombres de archivos analizados
+        database_manager: DatabaseManager para obtener configuración IVA (REQUERIDO)
 
     Returns:
         str: Prompt optimizado para extracción y clasificación
@@ -53,7 +55,7 @@ def PROMPT_ANALISIS_OBRA_PUBLICA_ESTAMPILLA_INTEGRADO(factura_texto: str, rut_te
         obtener_configuracion_impuestos_integrada
     )
 
-    config_integrada = obtener_configuracion_impuestos_integrada()
+    config_integrada = obtener_configuracion_impuestos_integrada(database_manager=database_manager)
 
     return f"""
 ### TAREA: EXTRACCIÓN DE DATOS Y CLASIFICACIÓN DE CONTRATO ###

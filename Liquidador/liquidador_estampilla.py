@@ -629,7 +629,8 @@ class LiquidadorEstampilla:
             cotizaciones_texto=cotizaciones_texto,
             anexo_contrato=anexo_contrato,
             nit_administrativo=nit_administrativo,
-            nombres_archivos_directos=nombres_archivos_directos
+            nombres_archivos_directos=nombres_archivos_directos,
+            database_manager=self.database_manager
         )
     
     # ===============================

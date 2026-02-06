@@ -175,9 +175,12 @@ class ProcesadorGemini:
                 database_manager=self.db_manager
             )
             logger.info("Clasificador IVA inicializado correctamente")
-            
-            self.clasificador_obra_uni = ClasificadorObraUni(procesador_gemini=self)
-            
+
+            self.clasificador_obra_uni = ClasificadorObraUni(
+                procesador_gemini=self,
+                database_manager=self.db_manager
+            )
+
             logger.info("ClasificadorObraUni inicializado correctamente")
             
 

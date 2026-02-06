@@ -250,7 +250,8 @@ class InstanciadorClasificadores:
         # Estampilla Universidad + Obra Publica (condicional, analisis integrado)
         if aplica_estampilla or aplica_obra_publica:
             clasificadores["obra_uni"] = ClasificadorObraUni(
-                procesador_gemini=self.clasificador
+                procesador_gemini=self.clasificador,
+                database_manager=self.clasificador.db_manager
             )
 
         # IVA/ReteIVA (condicional)
