@@ -1,5 +1,225 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.12.0 - AUTENTICACIÓN: Login Centralizado Nexura] - 2026-02-06
+
+### 🎯 OBJETIVO
+
+Implementar autenticación centralizada con Nexura API mediante login en startup. El sistema hace login al iniciar y usa el token JWT para todas las llamadas HTTP (consultas a base de datos + POST de resultados). Si el login falla, el servicio NO inicia (fail-fast crítico).
+
+### 🏗️ ARQUITECTURA
+
+**Principios SOLID Aplicados:**
+- **SRP:** NexuraAuthService tiene una sola responsabilidad (gestionar autenticación)
+- **DIP:** Retorna IAuthProvider (abstracción) para inyección en otros componentes
+- **OCP:** Extensible para nuevos métodos de autenticación sin modificar código existente
+- **Fail-Fast:** Sistema no opera sin autenticación válida (previene errores en cascada)
+
+**Clean Architecture:**
+- **Infrastructure Layer:** NexuraAuthService maneja comunicación externa (login)
+- **Dependency Injection:** AuthProvider se inyecta en NexuraAPIDatabase y WebhookPublisher
+- **Startup Critical:** Login es pre-requisito para inicializar servicios
+
+**Arquitectura de Autenticación:**
+- Login centralizado en startup ejecuta POST a `/usuarios/login`
+- Token JWT obtenido se almacena en JWTAuthProvider
+- Mismo token compartido entre database y webhook (consistencia)
+- Si login falla, RuntimeError detiene startup de FastAPI
+
+### 🆕 AÑADIDO
+
+#### `database/nexura_auth_service.py` (NUEVO ARCHIVO)
+- **Clase NexuraAuthService:** Servicio centralizado de autenticación
+  - Método `login()`: Ejecuta POST a `/usuarios/login` de forma asíncrona
+  - Valida respuesta y extrae token de `data.token`
+  - Crea y retorna JWTAuthProvider configurado con el token
+- **Excepción NexuraAuthenticationError:** Excepción crítica cuando falla autenticación
+  - Lanzada si login falla (status != 200, error.code != 0, token ausente)
+  - Detiene startup de FastAPI (fail-fast)
+
+#### `database/setup.py`
+- **Función `inicializar_auth_service_nexura()` (línea ~40):**
+  - Inicializa servicio de autenticación ejecutando login
+  - Valida variables requeridas: `NEXURA_LOGIN_USER` y `NEXURA_LOGIN_PASSWORD`
+  - Lanza NexuraAuthenticationError si falta configuración o login falla
+  - Retorna IAuthProvider (DIP) con token válido
+
+#### `.env`
+- **Variables nuevas para login centralizado:**
+  - `NEXURA_LOGIN_USER`: Usuario para autenticación (obligatorio)
+  - `NEXURA_LOGIN_PASSWORD`: Contraseña para autenticación (obligatorio)
+- **Webhook actualizado:**
+  - `WEBHOOK_URL` actualizado a endpoint `/preliquidador/savePreliquidacion/`
+  - `WEBHOOK_AUTH_TYPE=bearer` (configurado para usar token JWT)
+  - Nota: `WEBHOOK_AUTH_TOKEN` se inyecta automáticamente (no configurar manualmente)
+
+### 🔧 CAMBIADO
+
+#### `database/setup.py`
+- **Función `crear_database_por_tipo()` (línea 99):**
+  - **NUEVO parámetro:** `auth_provider: Optional[IAuthProvider] = None`
+  - Si `auth_provider` es None: crea desde config (modo legacy)
+  - Si `auth_provider` es inyectado: lo usa directamente (login centralizado)
+  - Logging mejorado para indicar si usa login centralizado o config
+
+- **Función `inicializar_database_manager()` (línea ~220):**
+  - **MODIFICADO:** Ahora es async para ejecutar login
+  - **Flujo nuevo:**
+    1. Si `DATABASE_TYPE='nexura'`: ejecuta `await inicializar_auth_service_nexura()`
+    2. Obtiene AuthProvider con token válido
+    3. Inyecta AuthProvider en `crear_database_por_tipo()`
+    4. Si login falla: re-lanza NexuraAuthenticationError (fail-fast)
+  - **Docstring actualizado:** Documenta comportamiento async y login centralizado
+
+#### `main.py`
+- **Función `lifespan()` (línea 156):**
+  - **MODIFICADO:** Ahora ejecuta `await inicializar_database_manager()` (async)
+  - **Try/except agregado:** Captura excepciones y detiene startup si falla
+  - **Inyección de token en WebhookPublisher:**
+    - Extrae token del `auth_provider` del `db_manager`
+    - Pasa token a WebhookPublisher constructor: `auth_token=auth_token`
+  - **Logging mejorado:** Indica cuando token se inyecta exitosamente
+  - **RuntimeError:** Si login falla o database_manager es None
+
+#### `Background/webhook_publisher.py`
+- **Método `update_auth_token()` (nuevo):**
+  - Permite actualizar token dinámicamente después de inicialización
+  - Útil para refresh de tokens o configuración posterior al login
+  - Logging al actualizar token
+
+### 📚 DOCUMENTACIÓN
+
+**Actualizado:** `CHANGELOG.md` - Esta entrada (v3.12.0)
+**Actualizado:** `.env` - Nuevas variables y comentarios explicativos
+
+### ✅ FLUJO DE AUTENTICACIÓN
+
+```
+1. FastAPI startup (lifespan)
+   ↓
+2. await inicializar_database_manager() [ASYNC]
+   ↓
+3. Si DATABASE_TYPE='nexura':
+   ├─ await inicializar_auth_service_nexura()
+   ├─ NexuraAuthService.login() → POST /usuarios/login
+   ├─ Obtener token JWT de response.data.token
+   └─ Crear JWTAuthProvider(token)
+   ↓
+4. Inyectar auth_provider en crear_database_por_tipo()
+   ↓
+5. NexuraAPIDatabase recibe auth_provider (DIP)
+   ↓
+6. Extraer token del auth_provider
+   ↓
+7. Inyectar token en WebhookPublisher (DIP)
+   ↓
+8. ✅ Servicio listo - token compartido entre database y webhook
+
+❌ Si falla paso 3 (login):
+   → NexuraAuthenticationError
+   → RuntimeError en lifespan
+   → FastAPI NO inicia (fail-fast)
+```
+
+### 🔐 SEGURIDAD
+
+- ✅ Credenciales en variables de entorno (nunca hardcoded)
+- ✅ Token obtenido dinámicamente en startup (no configurado manualmente)
+- ✅ Mismo token compartido (database + webhook) - consistencia
+- ✅ Fail-fast si autenticación falla (no operar sin auth válida)
+- ✅ Token manejado por JWTAuthProvider (auto-refresh preparado)
+
+### ⚠️ BREAKING CHANGES
+
+- **`inicializar_database_manager()`** ahora es async (requiere `await` en llamadas)
+- **Variables requeridas:** Sistema NO inicia sin `NEXURA_LOGIN_USER` y `NEXURA_LOGIN_PASSWORD`
+- **Fail-fast crítico:** Sistema NO inicia si login a Nexura falla
+- **`WEBHOOK_URL`** debe apuntar a `/preliquidador/savePreliquidacion/`
+- **`WEBHOOK_AUTH_TYPE`** debe ser `bearer`
+
+### 📊 IMPACTO
+
+- ✅ Autenticación centralizada y segura
+- ✅ Token compartido reduce complejidad
+- ✅ Fail-fast previene errores en cascada
+- ✅ Logging completo para debugging
+- ✅ Arquitectura SOLID mantenida
+- ✅ Fácil testing con inyección de dependencias
+
+### 🧪 TESTING
+
+**Login Exitoso:**
+```bash
+NEXURA_LOGIN_USER=pruebas
+NEXURA_LOGIN_PASSWORD=contraseña_correcta
+# Logs esperados:
+✅ "Iniciando login a Nexura API..."
+✅ "Login exitoso - Token obtenido"
+✅ "Autenticación Nexura inicializada correctamente"
+✅ "Token de autenticación inyectado en WebhookPublisher"
+```
+
+**Login Fallido (Fail-Fast):**
+```bash
+NEXURA_LOGIN_USER=usuario_invalido
+# Logs esperados:
+❌ "Login falló: status 401"
+❌ "FALLO CRÍTICO: No se pudo autenticar con Nexura"
+❌ "EL SERVICIO NO PUEDE INICIAR SIN AUTENTICACIÓN VALIDA"
+# FastAPI NO inicia
+```
+
+---
+
+## [3.11.2 - LIMPIEZA: Eliminación de JobManager] - 2026-02-06
+
+### 🎯 OBJETIVO
+
+Eliminar módulo `JobManager` no utilizado del paquete Background para mantener código limpio y adherirse a principios SOLID (eliminar código muerto).
+
+### 🏗️ ARQUITECTURA
+
+**Principios SOLID Aplicados:**
+- **SRP:** Eliminar responsabilidades no utilizadas del sistema
+- **YAGNI:** You Aren't Gonna Need It - remover código que nunca se usó
+- **Clean Code:** Mantener base de código libre de elementos obsoletos
+
+**Análisis de Impacto:**
+- JobManager se importaba pero nunca se instanciaba ni usaba
+- BackgroundProcessor no requería job_id en su flujo actual
+- Sistema usa factura_id del cliente directamente (más simple y directo)
+
+### 🗑️ ELIMINADO
+
+#### `Background/job_manager.py`
+- **ELIMINADO COMPLETAMENTE:** Clase JobManager con método generar_job_id()
+- **RAZÓN:** Código muerto - importado pero nunca usado en producción
+- **ALTERNATIVA:** Sistema usa factura_id proporcionado por el cliente
+
+### 🔧 CAMBIADO
+
+#### `Background/__init__.py`
+- **REMOVIDO:** Importación de JobManager
+- **REMOVIDO:** Exportación en __all__
+- **ACTUALIZADO:** Docstring de ejemplo de uso (eliminada referencia a job_manager)
+
+#### `Background/background_processor.py`
+- **REMOVIDO:** Importación de JobManager
+- **ACTUALIZADO:** Docstrings (DIP ahora solo menciona WebhookPublisher)
+- **MANTIENE:** Funcionalidad completa usando factura_id del cliente
+
+### 📚 DOCUMENTACIÓN
+
+**Actualizado:** `CHANGELOG.md` - Esta entrada
+
+### ✅ IMPACTO
+
+- ✅ Código más limpio y mantenible
+- ✅ Sin cambios funcionales (JobManager nunca se usaba)
+- ✅ Documentación actualizada y coherente
+- ✅ Reducción de complejidad innecesaria
+
+---
+
 ## [3.11.1 - ARQUITECTURA: Desactivación de Fallback Supabase] - 2026-01-29
 
 ### 🎯 OBJETIVO
