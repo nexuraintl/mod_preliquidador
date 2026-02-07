@@ -163,77 +163,53 @@ async def lifespan(app: FastAPI):
     - SRP: Solo maneja ciclo de vida de la aplicación
     - DIP: Usa funciones de infraestructura inyectadas
 
-    NUEVO v3.12.0:
-    - Startup ahora ejecuta login a Nexura (async)
-    - Si login falla, el servicio NO inicia (fail-fast)
-    - Token obtenido se inyecta en WebhookPublisher
+    MODIFICADO v3.13.0:
+    - Elimina autenticacion en startup
+    - La autenticacion se realiza por tarea en BackgroundProcessor
+    - WebhookPublisher se crea sin token inicial
     """
     # Código que se ejecuta ANTES de que la aplicación inicie
     configurar_logging()
     global logger, db_manager, business_service, webhook_publisher, background_processor
     logger = logging.getLogger(__name__)
 
-    logger.info(" Worker de FastAPI iniciándose... Cargando configuración.")
+    logger.info(" Worker de FastAPI iniciándose...")
     if not inicializar_configuracion():
-        logger.critical(" FALLO EN LA CARGA DE CONFIGURACIÓN")
-        raise RuntimeError("Configuración inválida - servicio no puede iniciar")
+        logger.critical(" FALLO EN CONFIGURACIÓN")
+        raise RuntimeError("Configuración inválida")
 
-    # MODIFICADO v3.12.0: inicializar_database_manager() ahora es async
+    # MODIFICADO v3.13.0: inicializar_database_manager() YA NO hace login
     try:
         db_manager, business_service = await inicializar_database_manager()
 
         if not db_manager:
             logger.critical(" DatabaseManager no inicializado")
-            raise RuntimeError("Database manager requerido - servicio no puede iniciar")
+            raise RuntimeError("Database manager requerido")
 
-        logger.info(" Database manager inicializado correctamente")
+        logger.info(" Database manager inicializado")
 
     except Exception as e:
-        logger.critical(f" ERROR CRÍTICO EN STARTUP: {e}")
-        logger.exception("Traceback completo:")
-        raise  # Re-lanzar para detener FastAPI startup
+        logger.critical(f" ERROR EN STARTUP: {e}")
+        logger.exception("Traceback:")
+        raise
 
-    # NUEVO v3.12.0: Obtener token para WebhookPublisher desde auth_provider
-    auth_token = None
-    logger.info("[DEBUG] Intentando extraer token para webhook...")
-    logger.info(f"[DEBUG] db_manager existe: {db_manager is not None}")
+    # ELIMINADO v3.13.0: Ya NO extraer token desde auth_provider
+    # El token se obtendrá por tarea en BackgroundProcessor
 
-    if hasattr(db_manager, 'db_connection'):
-        logger.info(f"[DEBUG] db_manager.db_connection existe: {db_manager.db_connection is not None}")
-        logger.info(f"[DEBUG] db_connection tipo: {type(db_manager.db_connection).__name__}")
-
-        if hasattr(db_manager.db_connection, 'auth_provider'):
-            auth_provider = db_manager.db_connection.auth_provider
-            logger.info(f"[DEBUG] auth_provider existe: {auth_provider is not None}")
-            logger.info(f"[DEBUG] auth_provider tipo: {type(auth_provider).__name__}")
-
-            if hasattr(auth_provider, '_token'):
-                auth_token = auth_provider._token
-                logger.info(f"[DEBUG] Token extraido exitosamente (primeros 20 chars): {auth_token[:20] if auth_token else 'NONE'}...")
-                logger.info(" Token de autenticación inyectado en WebhookPublisher")
-            else:
-                logger.error("[DEBUG] auth_provider NO tiene atributo _token")
-        else:
-            logger.error("[DEBUG] db_connection NO tiene atributo auth_provider")
-    else:
-        logger.error("[DEBUG] db_manager NO tiene atributo db_connection")
-
-    logger.info(f"[DEBUG] Token final para webhook: {bool(auth_token)}")
-
-    # MODIFICADO v3.12.0: Inyectar token en WebhookPublisher
+    # MODIFICADO v3.13.0: Crear WebhookPublisher SIN token inicial
     webhook_publisher = WebhookPublisher(
         auth_type="bearer",
-        auth_token=auth_token  # Token obtenido del login centralizado
+        auth_token=None  # Token se actualizará por tarea
     )
-
-    logger.info(f"[DEBUG] WebhookPublisher creado con auth_type=bearer, auth_token presente: {bool(auth_token)}")
+    logger.info(" WebhookPublisher creado (sin token inicial)")
 
     background_processor = BackgroundProcessor(
         webhook_publisher=webhook_publisher,
         business_service=business_service,
         db_manager=db_manager
     )
-    logger.info(" Componentes de procesamiento asincrono inicializados")
+    logger.info(" BackgroundProcessor inicializado")
+    logger.info("  La autenticacion se ejecutara al inicio de cada tarea")
 
     yield # <--- La aplicación se ejecuta aquí
 

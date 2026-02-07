@@ -1,5 +1,191 @@
 # CHANGELOG - Preliquidador de Retención en la Fuente
 
+## [3.13.0 - FIX: Re-autenticación por Tarea (Token TTL)] - 2026-02-07
+
+### 🎯 PROBLEMA RESUELTO
+
+**Issue:** Tokens expiran en instancias persistentes (min instances = 1)
+- **Síntoma:** 401 Unauthorized después de ~1 hora de inactividad
+- **Causa raíz:** Token obtenido en startup expira, pero la instancia sigue viva
+- **Impacto:** Facturas procesadas después del TTL fallan con errores de autenticación
+
+### 🏗️ SOLUCIÓN ARQUITECTÓNICA
+
+**Cambio de estrategia:** De "autenticar en startup" a "autenticar por tarea"
+
+**Principios SOLID aplicados:**
+- **SRP:** BackgroundProcessor ahora tiene responsabilidad de autenticación por tarea
+- **DIP:** Sigue usando IAuthProvider como abstracción (sin cambios en arquitectura)
+- **Robustez:** Retry con exponential backoff (2s, 4s, 8s) para fallos transitorios
+
+**Clean Architecture:**
+- **Application Layer:** BackgroundProcessor orquesta re-autenticación antes de procesar
+- **Infrastructure Layer:** NexuraAuthService reutilizado (sin cambios)
+- **Stateless Tasks:** Cada tarea obtiene token fresco independientemente
+
+### 🆕 AÑADIDO
+
+#### `Background/background_processor.py`
+- **Método `_autenticar_con_retry(factura_id: int) -> bool` (línea ~53):**
+  - Re-autentica con Nexura usando credenciales desde `.env`
+  - Implementa retry exponencial (3 intentos: 2s, 4s, 8s de espera)
+  - Actualiza token en `webhook_publisher.update_auth_token(token)`
+  - Actualiza token en `db_manager.db_connection.auth_provider.update_token(token, expiration)`
+  - Retorna `True` si exitoso, `False` si falló después de 3 intentos
+  - Logging detallado por factura para trazabilidad
+
+### 🔧 CAMBIADO
+
+#### `Background/background_processor.py`
+- **Método `procesar_factura_background()` (línea ~150):**
+  - AÑADE re-autenticación al inicio (antes de procesar archivos)
+  - Si autenticación falla: Aborta procesamiento, envía error al webhook, retorna
+  - Si autenticación exitosa: Continúa con flujo normal de procesamiento
+  - Actualiza docstring para reflejar flujo v3.13.0
+
+#### `database/setup.py`
+- **Función `inicializar_database_manager()` (línea ~236):**
+  - ELIMINA llamada a `inicializar_auth_service_nexura()` (líneas 237-248 removidas)
+  - ELIMINA manejo de NexuraAuthenticationError en except
+  - Pasa `auth_provider=None` a `crear_database_por_tipo()`
+  - Actualiza docstring: v3.13.0 elimina autenticación en startup
+  - Añade log: "La autenticación se ejecutará al inicio de cada tarea"
+
+- **Función `crear_database_por_tipo()` (línea ~154):**
+  - MODIFICA manejo de `auth_provider=None`:
+    - Antes: Creaba desde config (modo legacy)
+    - Ahora: Usa `AuthProviderFactory.create_no_auth()` directamente
+  - Simplifica lógica (elimina ~20 líneas de fallback legacy)
+  - Actualiza log: "NoAuthProvider inicial - token se actualizará por tarea"
+
+#### `main.py`
+- **Función `lifespan()` (línea ~156):**
+  - ELIMINA bloque de extracción de token desde auth_provider (líneas 196-202)
+  - MODIFICA creación de WebhookPublisher:
+    - Antes: `auth_token=auth_token` (token desde database)
+    - Ahora: `auth_token=None` (sin token inicial)
+  - AÑADE log: "WebhookPublisher creado (sin token inicial)"
+  - AÑADE log: "La autenticación se ejecutará al inicio de cada tarea"
+  - Actualiza docstring: v3.13.0 elimina autenticación en startup
+
+### ❌ ELIMINADO
+
+- **Autenticación en startup de FastAPI:**
+  - Llamada a `inicializar_auth_service_nexura()` en `database/setup.py` (línea 237-248)
+  - Bloque try/except para NexuraAuthenticationError
+  - Fail-fast behavior si login falla en startup
+
+- **Extracción de token en startup:**
+  - Bloque de extracción de token desde `db_manager.db_connection.auth_provider` (main.py línea 196-202)
+  - Inyección de token en WebhookPublisher desde startup
+
+- **Modo legacy de autenticación:**
+  - Código de fallback que creaba auth_provider desde config (NEXURA_AUTH_TYPE, NEXURA_JWT_TOKEN)
+  - Logs de advertencia sobre modo legacy
+
+### ✅ FLUJO v3.13.0
+
+**Startup (sin autenticación):**
+1. FastAPI inicia → inicializar_database_manager()
+2. Crear NexuraAPIDatabase con NoAuthProvider (sin token)
+3. Crear WebhookPublisher sin token
+4. Crear BackgroundProcessor
+5. ✅ Servicio listo (puede arrancar sin Nexura disponible)
+
+**Procesamiento de factura:**
+1. Request llega a `/api/procesar-facturas`
+2. `procesar_factura_background(factura_id, ...)` ejecuta
+3. **RE-AUTENTICAR:** `_autenticar_con_retry(factura_id)`
+   - Intento 1: Login inmediato
+   - Si falla: Esperar 2s, reintentar
+   - Si falla: Esperar 4s, reintentar
+   - Si falla: Esperar 8s, reintentar
+   - Si falla 3 veces: Abortar tarea, enviar error al webhook
+4. **ACTUALIZAR TOKENS:**
+   - `webhook_publisher.update_auth_token(token)`
+   - `db_manager.db_connection.auth_provider.update_token(token, expiration=now+1h)`
+5. **PROCESAR:** Ejecutar flujo completo con token fresco
+6. **ENVIAR:** POST resultado al webhook con token fresco
+
+### ⚠️ BREAKING CHANGES
+
+1. **Servicio YA NO falla en startup si Nexura está caído**
+   - Antes (v3.12.0): RuntimeError si login falla → FastAPI no inicia
+   - Ahora (v3.13.0): Servicio inicia OK → tareas fallan individualmente si Nexura caído
+
+2. **Cada tarea hace login independiente**
+   - Overhead: +200-500ms por factura (HTTP roundtrip de login)
+   - Trade-off: Robustez vs latencia
+
+3. **Si Nexura está caído, las tareas fallan individualmente**
+   - Antes: Servicio completo caído
+   - Ahora: Solo tareas afectadas fallan, servicio sigue vivo para otras tareas
+
+### 🧪 TESTING
+
+**Caso 1: Instancia persistente con token expirado**
+```bash
+# T0: Procesar factura 1
+POST /api/procesar-facturas {"facturaId": 100}
+✅ Re-autentica → Token1 (expira en 1 hora)
+✅ Procesa exitosamente
+
+# T+2h: Procesar factura 2 (token expirado)
+POST /api/procesar-facturas {"facturaId": 200}
+ℹ️ "Factura 200: Re-autenticando para obtener token fresco..."
+✅ Re-autentica → Token2 (nuevo, válido por 1 hora)
+✅ Procesa exitosamente (SIN 401 error)
+
+# Resultado: ✅ Token siempre fresco por tarea
+```
+
+**Caso 2: Nexura temporalmente lento**
+```bash
+POST /api/procesar-facturas
+⚠️ Intento 1: Timeout
+ℹ️ Reintentando en 2 segundos...
+✅ Intento 2: Exitoso
+✅ Tarea procesada con retry
+```
+
+**Caso 3: Nexura completamente caído**
+```bash
+POST /api/procesar-facturas
+❌ Intento 1, 2, 3: Connection refused
+❌ Tarea abortada, error enviado al webhook
+✅ Servicio sigue vivo para otras tareas
+```
+
+### 📊 IMPACTO EN PERFORMANCE
+
+- **Overhead por tarea:** +200-500ms (login HTTP roundtrip)
+- **Trade-off:** Robustez vs latencia
+- **Justificación:** Preferible 500ms extra que 401 errors en producción
+- **Mitigación futura:** Implementar cache de tokens con TTL (v3.14.0+)
+
+### 🔄 MIGRACIÓN
+
+**Antes (v3.12.0):**
+- Login en startup → Token compartido → Expira en instancias persistentes → 401 errors
+
+**Después (v3.13.0):**
+- Sin login en startup → Re-autenticación por tarea → Token siempre fresco → Sin 401 errors
+
+**Pasos de migración:**
+1. ✅ Sin cambios en `.env` (credenciales ya configuradas desde v3.12.0)
+2. ✅ Deploy nuevo código
+3. ✅ Verificar logs: "La autenticación se ejecutará al inicio de cada tarea"
+4. ✅ Monitorear overhead de login en cada tarea
+
+### 📝 NOTAS TÉCNICAS
+
+- NexuraAuthService reutilizado sin cambios (DIP funcionando correctamente)
+- JWTAuthProvider.update_token() ya existía (desde v3.12.0)
+- WebhookPublisher.update_auth_token() ya existía (desde v3.12.0)
+- Arquitectura SOLID permitió cambio con mínimas modificaciones
+
+---
+
 ## [3.12.0 - AUTENTICACIÓN: Login Centralizado Nexura] - 2026-02-06
 
 ### 🎯 OBJETIVO

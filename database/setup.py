@@ -36,62 +36,8 @@ from .auth_provider import AuthProviderFactory, IAuthProvider
 logger = logging.getLogger(__name__)
 
 
-async def inicializar_auth_service_nexura() -> IAuthProvider:
-    """
-    Inicializa servicio de autenticacion de Nexura ejecutando login.
-
-    CRITICAL: Lanza NexuraAuthenticationError si falla.
-    El sistema NO debe iniciar sin autenticacion valida.
-
-    SRP: Solo inicializa autenticacion
-    DIP: Retorna IAuthProvider (abstraccion)
-
-    Returns:
-        IAuthProvider configurado con token valido
-
-    Raises:
-        NexuraAuthenticationError: Si login falla (CRITICO)
-
-    Environment Variables:
-        - NEXURA_API_BASE_URL: URL base de Nexura
-        - NEXURA_LOGIN_USER: Usuario para login
-        - NEXURA_LOGIN_PASSWORD: Contrasena para login
-        - NEXURA_API_TIMEOUT: Timeout en segundos (default: 30)
-    """
-    from .nexura_auth_service import NexuraAuthService, NexuraAuthenticationError
-
-    nexura_url = os.getenv("NEXURA_API_BASE_URL")
-    login_user = os.getenv("NEXURA_LOGIN_USER")
-    login_password = os.getenv("NEXURA_LOGIN_PASSWORD")
-    timeout = int(os.getenv("NEXURA_API_TIMEOUT", "30"))
-
-    # Validar variables requeridas
-    if not nexura_url:
-        error_msg = "NEXURA_API_BASE_URL no configurado"
-        logger.critical(error_msg)
-        raise NexuraAuthenticationError(error_msg)
-
-    if not login_user or not login_password:
-        error_msg = "NEXURA_LOGIN_USER y NEXURA_LOGIN_PASSWORD son requeridos para autenticacion"
-        logger.critical(error_msg)
-        raise NexuraAuthenticationError(error_msg)
-
-    # Crear servicio de autenticacion
-    auth_service = NexuraAuthService(
-        base_url=nexura_url,
-        login_user=login_user,
-        login_password=login_password,
-        timeout=timeout
-    )
-
-    # Ejecutar login (async)
-    try:
-        auth_provider = await auth_service.login()
-        logger.info("Autenticacion Nexura inicializada correctamente")
-        return auth_provider
-    except NexuraAuthenticationError:
-        # Re-lanzar para detener startup
-        raise
+# ELIMINADO v3.13.0: inicializar_auth_service_nexura() ya no se usa
+# La autenticacion ahora se realiza por tarea en BackgroundProcessor._autenticar_con_retry()
 
 
 def crear_database_por_tipo(tipo_db: str, auth_provider: Optional[IAuthProvider] = None) -> Optional[DatabaseInterface]:
@@ -152,53 +98,31 @@ def crear_database_por_tipo(tipo_db: str, auth_provider: Optional[IAuthProvider]
         return SupabaseDatabase(supabase_url, supabase_key)
 
     elif tipo_db == 'nexura':
-        logger.info("Creando database tipo: Nexura API (fallback desactivado)")
+        logger.info("Creando database tipo: Nexura API")
 
         nexura_url = os.getenv("NEXURA_API_BASE_URL")
-        # Timeout aumentado a 30 segundos (sin fallback activo desde v3.11.1)
         timeout = int(os.getenv("NEXURA_API_TIMEOUT", "30"))
 
         if not nexura_url:
             logger.warning("Variable NEXURA_API_BASE_URL no configurada")
             return None
 
-        # MODIFICADO v3.12.0: Usar auth_provider inyectado si esta disponible
+        # MODIFICADO v3.13.0: Si no se pasa auth_provider, usar NoAuthProvider
         if auth_provider is None:
-            # Fallback: Crear desde config (modo legacy sin login centralizado)
-            logger.warning("No se inyecto auth_provider - creando desde config (modo legacy)")
-            auth_type = os.getenv("NEXURA_AUTH_TYPE", "none")
-            jwt_token = os.getenv("NEXURA_JWT_TOKEN", "")
-            api_key = os.getenv("NEXURA_API_KEY", "")
-
-            try:
-                provider = AuthProviderFactory.create_from_config(
-                    auth_type=auth_type,
-                    token=jwt_token,
-                    api_key=api_key
-                )
-                logger.info(f"Auth provider creado desde config: tipo={auth_type}")
-            except ValueError as e:
-                logger.error(f"Error creando auth provider: {e}")
-                return None
+            logger.info("No se inyecto auth_provider - usando NoAuthProvider inicial")
+            provider = AuthProviderFactory.create_no_auth()
         else:
-            # Usar auth_provider pre-configurado con login centralizado
             provider = auth_provider
-            logger.info("Usando auth_provider pre-configurado con login centralizado")
+            logger.info("Usando auth_provider pre-configurado")
 
-        # Crear database primaria (Nexura) con auth provider
+        # Crear database con auth provider (NoAuthProvider o inyectado)
         nexura_db = NexuraAPIDatabase(
             base_url=nexura_url,
             auth_provider=provider,  # DIP: Inyeccion de dependencia
             timeout=timeout
         )
 
-        # DECISIÓN ARQUITECTÓNICA v3.11.1+: Fallback desactivado
-        logger.info(
-            "⚠️  FALLBACK A SUPABASE DESACTIVADO - Sistema usando solo Nexura API en producción"
-        )
-        logger.info(
-            "ℹ️  Para reactivar fallback: Descomentar código en database/setup.py líneas 127-150"
-        )
+        logger.info("NexuraAPIDatabase creado (token se actualizara por tarea)")
 
         # ========================================
         # CÓDIGO DE FALLBACK PRESERVADO (COMENTADO)
@@ -244,7 +168,7 @@ async def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Opt
 
     ARQUITECTURA:
     - Obtiene credenciales de variables de entorno (seguridad)
-    - Crea implementacion concreta de database (SupabaseDatabase)
+    - Crea implementacion concreta de database
     - Crea DatabaseManager usando Strategy Pattern
     - Crea BusinessDataService con Dependency Injection
     - Implementa graceful degradation si no hay credenciales
@@ -254,11 +178,10 @@ async def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Opt
     - Si hay error: Loggea error y retorna None + BusinessService sin DB
     - Si exitoso: Retorna DatabaseManager + BusinessService completo
 
-    NUEVO v3.12.0:
-    - Funcion ahora es async para ejecutar login a Nexura en startup
-    - Si DATABASE_TYPE='nexura': ejecuta login ANTES de crear database
-    - Si login falla: lanza excepcion (servicio NO inicia - fail-fast)
-    - Token obtenido se inyecta en NexuraAPIDatabase via auth_provider
+    MODIFICADO v3.13.0:
+    - ELIMINA autenticacion en startup
+    - La autenticacion se realiza por tarea en BackgroundProcessor
+    - Database se crea con NoAuthProvider inicial (token se actualiza por tarea)
 
     Returns:
         tuple: (database_manager, business_service)
@@ -278,16 +201,11 @@ async def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Opt
             - NEXURA_LOGIN_PASSWORD: Contrasena para login (v3.12.0+)
             - NEXURA_API_TIMEOUT: Timeout en segundos (default: 30)
 
-    NOTA v3.11.1+:
-        - Fallback Nexura → Supabase DESACTIVADO por defecto
-        - DATABASE_TYPE='nexura' retorna NexuraAPIDatabase directamente
-        - Para reactivar fallback: ver database/setup.py líneas 127-150
-        - DATABASE_TYPE='supabase' sigue funcionando sin cambios
-
-    NOTA v3.12.0+:
-        - Login centralizado a Nexura en startup
-        - Si login falla, el servicio NO inicia (NexuraAuthenticationError)
-        - Token compartido entre database y webhook
+    NOTA v3.13.0+:
+        - Sin autenticacion en startup
+        - Database se crea con NoAuthProvider inicial
+        - Cada tarea hace re-autenticacion independiente en BackgroundProcessor
+        - Token siempre fresco por tarea (evita expiracion en instancias persistentes)
 
     Example:
         >>> db_manager, business_service = await inicializar_database_manager()
@@ -301,21 +219,11 @@ async def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Opt
         tipo_db = os.getenv("DATABASE_TYPE", "nexura")
         logger.info(f"Inicializando database tipo: {tipo_db}")
 
-        # NUEVO v3.12.0: Si es Nexura, hacer login primero
-        provider = None
-        if tipo_db == 'nexura':
-            logger.info("Tipo Nexura detectado - iniciando autenticacion centralizada...")
-            try:
-                from .nexura_auth_service import NexuraAuthenticationError
-                provider = await inicializar_auth_service_nexura()
-                logger.info("Autenticacion completada exitosamente")
-            except NexuraAuthenticationError as e:
-                logger.critical(f"FALLO CRITICO: No se pudo autenticar con Nexura: {e}")
-                logger.critical("EL SERVICIO NO PUEDE INICIAR SIN AUTENTICACION VALIDA")
-                raise  # Re-lanzar para detener startup de FastAPI
+        # ELIMINADO v3.13.0: Ya NO hacer login en startup
+        # La autenticacion se hara por tarea en BackgroundProcessor
 
-        # Usar factory para crear la implementacion correcta con auth_provider inyectado
-        db_implementation = crear_database_por_tipo(tipo_db, provider)
+        # Crear database SIN auth_provider (usar NoAuthProvider inicial)
+        db_implementation = crear_database_por_tipo(tipo_db, auth_provider=None)
 
         if not db_implementation:
             logger.warning(f"No se pudo crear implementacion de database tipo '{tipo_db}'")
@@ -335,19 +243,14 @@ async def inicializar_database_manager() -> Tuple[Optional[DatabaseManager], Opt
         logger.info("BusinessDataService inicializado con database manager")
 
         logger.info(f"Stack completo de base de datos inicializado exitosamente (tipo: {tipo_db})")
+        logger.info("La autenticacion se ejecutara al inicio de cada tarea")
         return db_manager, business_service
 
     except Exception as e:
         logger.error(f"Error inicializando DatabaseManager: {e}")
         logger.exception("Traceback completo del error:")
 
-        # Re-lanzar NexuraAuthenticationError para fail-fast
-        from .nexura_auth_service import NexuraAuthenticationError
-        if isinstance(e, NexuraAuthenticationError):
-            logger.critical("Re-lanzando NexuraAuthenticationError para detener startup")
-            raise
-
-        # Graceful degradation para otros errores
+        # Graceful degradation
         business_service = crear_business_service(None)
         logger.info("BusinessService creado en modo degradado tras error")
 
