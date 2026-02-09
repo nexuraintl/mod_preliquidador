@@ -59,8 +59,8 @@ class WebhookPublisher:
         """
         Actualiza el token de autenticacion dinamicamente.
 
-        Util cuando el token se obtiene despues de la inicializacion
-        (ej: login centralizado en startup).
+        v3.13.0: Usado por BackgroundProcessor para inyectar token fresco
+        obtenido via re-autenticacion antes de cada tarea.
 
         Args:
             new_token: Nuevo token JWT
@@ -146,10 +146,6 @@ class WebhookPublisher:
                     logger.warning(
                         f"Factura {factura_id}: Webhook respondio con status {response.status_code}"
                     )
-                    # DEBUG: Ver respuesta completa del servidor
-                    logger.error(f"[DEBUG] Respuesta del servidor: {response.text[:1000]}")
-                    logger.error(f"[DEBUG] Headers enviados: {headers}")
-                    logger.error(f"[DEBUG] URL: {self.webhook_url}")
                     if intento < self.max_retries:
                         await asyncio.sleep(2 ** intento)  # Backoff exponencial
                         continue
@@ -188,19 +184,9 @@ class WebhookPublisher:
             "Content-Type": "application/json"
         }
 
-        # DEBUG: Verificar configuracion de auth
-        logger.info(f"[DEBUG] auth_type: {self.auth_type}")
-        logger.info(f"[DEBUG] auth_token presente: {bool(self.auth_token)}")
-        if self.auth_token:
-            logger.info(f"[DEBUG] auth_token (primeros 20 chars): {self.auth_token[:20]}...")
-
         if self.auth_type == "bearer" and self.auth_token:
             headers["Authorization"] = f"Bearer {self.auth_token}"
-            logger.info("[DEBUG] Header Authorization agregado con Bearer token")
         elif self.auth_type == "api_key" and self.auth_token:
             headers["X-API-Key"] = self.auth_token
-            logger.info("[DEBUG] Header X-API-Key agregado")
-        else:
-            logger.warning("[DEBUG] NO se agrego header de autenticacion")
 
         return headers

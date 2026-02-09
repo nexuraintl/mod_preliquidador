@@ -50,6 +50,97 @@ class BackgroundProcessor:
         self.business_service = business_service
         self.db_manager = db_manager
 
+    async def _autenticar_con_retry(self, factura_id: int) -> bool:
+        """
+        Re-autentica con Nexura con reintentos exponenciales.
+        Actualiza tokens en webhook_publisher y db_manager.
+
+        v3.13.0: Autenticacion por tarea para evitar tokens expirados.
+
+        Args:
+            factura_id: ID de la factura (para logging)
+
+        Returns:
+            True si autenticacion exitosa, False si fallo despues de todos los reintentos
+        """
+        import asyncio
+        import os
+        from database.nexura_auth_service import NexuraAuthService, NexuraAuthenticationError
+        from datetime import datetime, timedelta
+
+        # Obtener credenciales desde env
+        nexura_url = os.getenv("NEXURA_API_BASE_URL")
+        login_user = os.getenv("NEXURA_LOGIN_USER")
+        login_password = os.getenv("NEXURA_LOGIN_PASSWORD")
+        timeout = int(os.getenv("NEXURA_API_TIMEOUT", "30"))
+
+        if not nexura_url or not login_user or not login_password:
+            logger.error(f"Factura {factura_id}: Credenciales Nexura no configuradas")
+            return False
+
+        # Crear servicio de autenticacion
+        auth_service = NexuraAuthService(
+            base_url=nexura_url,
+            login_user=login_user,
+            login_password=login_password,
+            timeout=timeout
+        )
+
+        # Intentar login con retry exponencial (3 intentos)
+        max_retries = 3
+        for intento in range(1, max_retries + 1):
+            try:
+                logger.info(f"Factura {factura_id}: Autenticando con Nexura (intento {intento}/{max_retries})")
+
+                # Ejecutar login
+                auth_provider = await auth_service.login()
+                token = auth_service.get_token()
+
+                # Actualizar token en webhook_publisher
+                self.webhook_publisher.update_auth_token(token)
+                logger.info(f"Factura {factura_id}: Token actualizado en webhook_publisher")
+
+                # Actualizar/reemplazar auth_provider en db_manager
+                if hasattr(self.db_manager, 'db_connection') and hasattr(self.db_manager.db_connection, 'auth_provider'):
+                    current_provider = self.db_manager.db_connection.auth_provider
+
+                    # Si es NoAuthProvider, reemplazarlo con el nuevo JWTAuthProvider
+                    if not hasattr(current_provider, 'update_token'):
+                        self.db_manager.db_connection.auth_provider = auth_provider
+                        logger.info(f"Factura {factura_id}: Auth provider reemplazado en db_manager (NoAuth -> JWT)")
+                    else:
+                        # Si ya es JWTAuthProvider, solo actualizar el token
+                        current_provider.update_token(
+                            new_token=token,
+                            expiration_time=datetime.now() + timedelta(hours=1)
+                        )
+                        logger.info(f"Factura {factura_id}: Token actualizado en db_manager")
+
+                logger.info(f"Factura {factura_id}: Autenticacion exitosa en intento {intento}")
+                return True
+
+            except NexuraAuthenticationError as e:
+                logger.error(f"Factura {factura_id}: Error en autenticacion (intento {intento}): {e}")
+
+                if intento < max_retries:
+                    # Backoff exponencial: 2^intento segundos (2s, 4s, 8s)
+                    wait_time = 2 ** intento
+                    logger.info(f"Factura {factura_id}: Reintentando en {wait_time} segundos...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Factura {factura_id}: Autenticacion fallo despues de {max_retries} intentos")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Factura {factura_id}: Error inesperado en autenticacion: {e}")
+                if intento < max_retries:
+                    wait_time = 2 ** intento
+                    await asyncio.sleep(wait_time)
+                else:
+                    return False
+
+        return False
+
     async def procesar_factura_background(
         self,
         factura_id: int,
@@ -59,12 +150,15 @@ class BackgroundProcessor:
         """
         Ejecuta el procesamiento completo en background.
 
+        v3.13.0: SIEMPRE re-autentica antes de procesar para evitar tokens expirados.
+
         FLUJO:
-        1. Reconstruir UploadFile desde bytes
-        2. Ejecutar flujo completo (REUTILIZAR codigo main.py)
-        3. Guardar JSON local
-        4. Enviar resultado a webhook (factura_id se agrega en payload del webhook)
-        5. Manejar errores
+        1. Re-autenticar con Nexura (v3.13.0+)
+        2. Reconstruir UploadFile desde bytes
+        3. Ejecutar flujo completo (REUTILIZAR codigo main.py)
+        4. Guardar JSON local
+        5. Enviar resultado a webhook (factura_id se agrega en payload del webhook)
+        6. Manejar errores
 
         Args:
             factura_id: ID unico de la factura del cliente (entero)
@@ -73,6 +167,34 @@ class BackgroundProcessor:
         """
         try:
             logger.info(f"Factura {factura_id}: Iniciando procesamiento en background")
+
+            # NUEVO v3.13.0: Re-autenticar ANTES de procesar
+            logger.info(f"Factura {factura_id}: Re-autenticando para obtener token fresco...")
+            auth_exitosa = await self._autenticar_con_retry(factura_id)
+
+            if not auth_exitosa:
+                # Si falla autenticacion, enviar error al webhook y retornar
+                error_result = {
+                    "error": True,
+                    "mensaje": "Autenticacion con Nexura fallo - no se pudo procesar factura",
+                    "factura_id": factura_id,
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                logger.error(f"Factura {factura_id}: Procesamiento abortado - autenticacion fallo")
+
+                # Intentar enviar error al webhook (puede fallar si no hay token)
+                try:
+                    await self.webhook_publisher.enviar_resultado(
+                        factura_id=factura_id,
+                        resultado=error_result
+                    )
+                except Exception as e:
+                    logger.error(f"Factura {factura_id}: No se pudo enviar error al webhook: {e}")
+
+                return
+
+            logger.info(f"Factura {factura_id}: Token fresco obtenido - iniciando procesamiento")
 
             # Reconstruir UploadFile desde bytes
             archivos = self._reconstruir_archivos(archivos_data)
