@@ -29,7 +29,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 # FastAPI y dependencias web
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
@@ -47,9 +47,11 @@ logger = logging.getLogger(__name__)
 
 # Importar clases desde módulos
 from app.validacion_archivos import ValidadorArchivos
+from app.descarga_archivos import ArchivoInvalido, validar_adjuntos
+from modelos import SolicitudProcesarFacturas
 from Clasificador import ProcesadorGemini
 from Liquidador import LiquidadorRetencion
-from Extraccion import ProcesadorArchivos, preprocesar_excel_limpio
+from Extraccion import ProcesadorArchivos
 from app.extraccion_hibrida import ExtractorHibrido
 
 # Importar módulos de base de datos (SOLID: Clean Architecture Module)
@@ -75,7 +77,6 @@ from config import (
     nit_aplica_ICA,  #  NUEVA IMPORTACIÓN ICA
     nit_aplica_tasa_prodeporte,  #  NUEVA IMPORTACIÓN TASA PRODEPORTE
     nit_aplica_timbre,  #  NUEVA IMPORTACIÓN TIMBRE
-    detectar_impuestos_aplicables_por_codigo,  #  DETECCIÓN AUTOMÁTICA POR CÓDIGO
     guardar_archivo_json,  # FUNCIÓN DE UTILIDAD PARA GUARDAR JSON
 
 )
@@ -85,12 +86,10 @@ from config import (
 # Importar modulo de procesamiento asincrono (Background)
 from Background import WebhookPublisher, BackgroundProcessor
 
-# Dependencias para preprocesamiento Excel
-import pandas as pd
-import io
 
 # Importar utilidades - Respuestas mock para validaciones (SRP)
 from utils.error_handlers import registrar_exception_handler
+from utils import crear_respuesta_preliquidacion_sin_finalizar
 
 # ===============================
 # INICIALIZACIÓN DE BASE DE DATOS
@@ -210,7 +209,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Preliquidador de Retefuente - Colombia",
     description="Sistema automatizado para calcular retención en la fuente con arquitectura modular",
-    version="2.0.0",
+    version="3.19.8",
     lifespan=lifespan
 )
 
@@ -221,20 +220,8 @@ registrar_exception_handler(app)
 
 @app.post("/api/procesar-facturas")
 async def procesar_facturas_integrado(
-    background_tasks: BackgroundTasks,
-    facturaId: int = Form(...),
-    archivos: List[UploadFile] = File(...),
-    codigo_del_negocio: int = Form(...),
-    proveedor: str = Form(...),
-    nit_proveedor: str = Form(...),
-    estructura_contable: int = Form(...),
-    observaciones_tp: Optional[str] = Form(None),
-    genera_presupuesto: Optional[str] = Form(None),
-    rubro: Optional[str] = Form(None),
-    centro_costos: Optional[int] = Form(None),
-    numero_contrato: Optional[str] = Form(None),
-    valor_contrato_municipio: Optional[float] = Form(None),
-    tipoMoneda: Optional[str] = Form("COP")
+    solicitud: SolicitudProcesarFacturas,
+    background_tasks: BackgroundTasks
 ) -> JSONResponse:
     """
     ENDPOINT PRINCIPAL - SISTEMA INTEGRADO v3.0 (PROCESAMIENTO ASINCRONO)
@@ -251,56 +238,69 @@ async def procesar_facturas_integrado(
     FLUJO ASINCRONO v2.0:
     1. Recibe facturaId del cliente (identificador unico)
     2. Responde 200 INMEDIATO con facturaId confirmado
-    3. Procesa en background (30-60 segundos)
+    3. Descarga los adjuntos desde la API de Nexura y procesa en background (30-60 s)
     4. Al finalizar: hace POST a servicio externo con resultado y facturaId
 
     Args:
+        solicitud: Cuerpo JSON con facturaId, los metadatos de los archivos adjuntos
+            (file_uri, name, mime_type, size) y los parametros de negocio
         background_tasks: Gestor de tareas en background de FastAPI
-        facturaId: ID unico de la factura enviado por el cliente (entero obligatorio)
-        archivos: Lista de archivos (facturas, RUTs, anexos, contratos)
-        codigo_del_negocio: Codigo del negocio para consultar en base de datos
-        proveedor: Nombre del proveedor que emite la factura
-        ... (otros parametros del formulario)
 
     Returns:
         JSONResponse: Respuesta inmediata con facturaId confirmado y status "processing"
     """
-    logger.info(f"ENDPOINT ASINCRONO v3.0 - Recibidos {len(archivos)} archivos")
-    logger.info(f"Factura {facturaId} | Codigo negocio: {codigo_del_negocio} | Proveedor: {proveedor}")
+    factura_id = solicitud.facturaId
+    codigo_del_negocio = solicitud.codigo_del_negocio
+    archivos = [adjunto.model_dump() for adjunto in solicitud.archivos]
+
+    logger.info(f"ENDPOINT ASINCRONO v3.0 - Recibidos {len(archivos)} archivos adjuntos")
+    logger.info(
+        f"Factura {factura_id} | Codigo negocio: {codigo_del_negocio} | "
+        f"Proveedor: {solicitud.proveedor}"
+    )
 
     try:
         # =================================
-        # FASE 1: LEER ARCHIVOS A BYTES
+        # FASE 1: VALIDAR METADATOS DE LOS ADJUNTOS
         # =================================
-        # IMPORTANTE: UploadFile puede cerrarse antes que background task termine
-        # Solucion: leer archivos a bytes ahora y pasar bytes al background
-        archivos_data = []
-        for archivo in archivos:
-            contenido = await archivo.read()
-            archivos_data.append({
-                "filename": archivo.filename,
-                "content_type": archivo.content_type,
-                "content": contenido
-            })
-            await archivo.seek(0)  # Reset para posible uso posterior
+        # Solo se comprueba que las URIs sean descargables desde la API de Nexura y
+        # que no superen el maximo de archivos. La descarga ocurre en background para
+        # no romper el contrato de responder de inmediato.
+        try:
+            validar_adjuntos(archivos)
+        except ArchivoInvalido as e:
+            logger.warning(f"Factura {factura_id}: Archivos invalidos - {e}")
+            return JSONResponse(
+                status_code=200,
+                content=crear_respuesta_preliquidacion_sin_finalizar(
+                    mensaje=f"Archivos adjuntos invalidos: {e}",
+                    codigo_del_negocio=codigo_del_negocio,
+                    diagnostico={
+                        "tipo_error": "ArchivoInvalido",
+                        "servicio_externo": "Descarga de archivos",
+                        "timestamp_error": datetime.now().isoformat(),
+                        "retry_sugerido": False
+                    }
+                )
+            )
 
-        logger.info(f"Factura {facturaId}: Archivos leidos a bytes ({len(archivos_data)} archivos)")
+        logger.info(f"Factura {factura_id}: {len(archivos)} archivos validados")
 
         # =================================
         # FASE 2: PREPARAR PARAMETROS
         # =================================
         parametros = {
             "codigo_del_negocio": codigo_del_negocio,
-            "proveedor": proveedor,
-            "nit_proveedor": nit_proveedor,
-            "estructura_contable": estructura_contable,
-            "observaciones_tp": observaciones_tp,
-            "genera_presupuesto": genera_presupuesto,
-            "rubro": rubro,
-            "centro_costos": centro_costos,
-            "numero_contrato": numero_contrato,
-            "valor_contrato_municipio": valor_contrato_municipio,
-            "tipoMoneda": tipoMoneda
+            "proveedor": solicitud.proveedor,
+            "nit_proveedor": solicitud.nit_proveedor,
+            "estructura_contable": solicitud.estructura_contable,
+            "observaciones_tp": solicitud.observaciones_tp,
+            "genera_presupuesto": solicitud.genera_presupuesto,
+            "rubro": solicitud.rubro,
+            "centro_costos": solicitud.centro_costos,
+            "numero_contrato": solicitud.numero_contrato,
+            "valor_contrato_municipio": solicitud.valor_contrato_municipio,
+            "tipoMoneda": solicitud.tipoMoneda
         }
 
         # =================================
@@ -308,12 +308,12 @@ async def procesar_facturas_integrado(
         # =================================
         background_tasks.add_task(
             background_processor.procesar_factura_background,
-            factura_id=facturaId,
-            archivos_data=archivos_data,
+            factura_id=factura_id,
+            archivos=archivos,
             parametros=parametros
         )
 
-        logger.info(f"Factura {facturaId}: Tarea agregada al background - Respondiendo inmediatamente")
+        logger.info(f"Factura {factura_id}: Tarea agregada al background - Respondiendo inmediatamente")
 
         # =================================
         # FASE 4: RESPONDER 200 INMEDIATO
@@ -321,13 +321,13 @@ async def procesar_facturas_integrado(
         return JSONResponse(
             status_code=200,
             content={
-                "factura_id": facturaId,
+                "factura_id": factura_id,
                 "status": "processing",
                 "message": "Procesamiento iniciado en background",
                 "timestamp": datetime.now().isoformat(),
                 "archivos_recibidos": len(archivos),
                 "codigo_negocio": codigo_del_negocio,
-                "proveedor": proveedor
+                "proveedor": solicitud.proveedor
             }
         )
 
@@ -353,82 +353,6 @@ async def procesar_facturas_integrado(
 # ENDPOINTS ADICIONALES
 # ===============================
 
-
-@app.get("/api/nits-disponibles")
-async def obtener_nits_disponibles_endpoint():
-    """Obtener lista de NITs administrativos disponibles"""
-    try:
-        nits_data = obtener_nits_disponibles()
-        
-        # Formatear para el frontend
-        nits_formateados = []
-        for nit, datos in nits_data.items():
-            nits_formateados.append({
-                "nit": nit,
-                "nombre": datos["nombre"],
-                "impuestos_aplicables": datos["impuestos_aplicables"],
-                "total_impuestos": len(datos["impuestos_aplicables"]),
-                "aplica_retencion_fuente": "RETENCION_FUENTE" in datos["impuestos_aplicables"],
-                "aplica_estampilla_universidad": "ESTAMPILLA_UNIVERSIDAD" in datos["impuestos_aplicables"]
-            })
-        
-        return {
-            "success": True,
-            "nits": nits_formateados,
-            "total_nits": len(nits_formateados),
-            "version": "2.4.0",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error obteniendo NITs disponibles: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Error obteniendo NITs",
-                "mensaje": str(e),
-                "version": "2.4.0"
-            }
-        )
-
-@app.get("/api/extracciones")
-async def obtener_estadisticas_extracciones():
-    """Obtener estadísticas de textos extraídos guardados"""
-    try:
-        extractor = ProcesadorArchivos()
-        estadisticas = extractor.obtener_estadisticas_guardado()
-        
-        return {
-            "success": True,
-            "version": "2.4.0",
-            "modulo": "Extraccion",
-            "estadisticas": estadisticas,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error obteniendo estadísticas de extracciones: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Error obteniendo estadísticas",
-                "mensaje": str(e),
-                "modulo": "Extraccion"
-            }
-        )
-
-@app.post("/api/prueba-simple")
-async def prueba_simple(nit_administrativo: Optional[str] = Form(None)):
-    """Endpoint de prueba simple SIN archivos"""
-    logger.info(f" PRUEBA SIMPLE: Recibido NIT: {nit_administrativo}")
-    return {
-        "success": True,
-        "mensaje": "POST sin archivos funciona - Sistema integrado",
-        "nit_recibido": nit_administrativo,
-        "version": "2.4.0",
-        "sistema": "integrado_retefuente_estampilla",
-        "timestamp": datetime.now().isoformat()
-    }
 
 @app.get("/api/database/health")
 async def database_health_check():
@@ -480,51 +404,12 @@ async def database_health_check():
             }
         )
 
-@app.get("/api/database/test/{codigo_negocio}")
-async def test_database_query(codigo_negocio: int):
-    """
-    Probar consulta de negocio por código usando BusinessService.
-
-    PRINCIPIO SRP: Endpoint específico para testing de consultas de negocio
-    """
-    if not business_service:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": "BusinessService no está disponible",
-                "details": "Error en inicialización del sistema de base de datos",
-                "service": "BusinessDataService"
-            }
-        )
-
-    try:
-        # Usar el servicio para la consulta (SRP + DIP)
-        resultado = business_service.obtener_datos_negocio(codigo_negocio)
-
-        return {
-            "resultado": resultado,
-            "service": "BusinessDataService",
-            "architecture": "SOLID + Clean Architecture",
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": f"Error consultando negocio: {str(e)}",
-                "codigo_consultado": codigo_negocio,
-                "service": "BusinessDataService",
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-
 @app.get("/api/diagnostico")
 async def diagnostico_completo():
     """Endpoint de diagnóstico completo para verificar todos los componentes del sistema"""
     diagnostico = {
         "timestamp": datetime.now().isoformat(),
-        "version": "2.4.0",
-        "sistema": "integrado_retefuente_estampilla",
+        "version": app.version,
         "estado_general": "VERIFICANDO",
         "componentes": {}
     }
@@ -536,12 +421,6 @@ async def diagnostico_completo():
                 "configurado": bool(GEMINI_API_KEY),
                 "status": "OK" if GEMINI_API_KEY else "ERROR",
                 "mensaje": "Configurado" if GEMINI_API_KEY else "FALTA GEMINI_API_KEY en .env"
-            },
-            "google_credentials": {
-                "configurado": bool(GOOGLE_CLOUD_CREDENTIALS),
-                "archivo_existe": bool(GOOGLE_CLOUD_CREDENTIALS and os.path.exists(GOOGLE_CLOUD_CREDENTIALS)),
-                "status": "OK" if (GOOGLE_CLOUD_CREDENTIALS and os.path.exists(GOOGLE_CLOUD_CREDENTIALS)) else "WARNING",
-                "mensaje": "Configurado correctamente" if (GOOGLE_CLOUD_CREDENTIALS and os.path.exists(GOOGLE_CLOUD_CREDENTIALS)) else "Vision no disponible (opcional)"
             }
         }
         
@@ -629,21 +508,6 @@ async def diagnostico_completo():
                     "aplica_retencion": aplica_rf,
                     "mensaje": f"NIT {primer_nit} {'SÍ' if aplica_rf else 'NO'} aplica retención fuente"
                 }
-                
-         
-                #  VERIFICAR DETECCIÓN AUTOMÁTICA INTEGRADA
-                try:
-                    deteccion_auto = detectar_impuestos_aplicables(primer_nit)
-                    config_status["deteccion_automatica"] = {
-                        "status": "OK",
-                        "impuestos_detectados": deteccion_auto['impuestos_aplicables'],
-                        "mensaje": f"Detección automática funcionando: {len(deteccion_auto['impuestos_aplicables'])} impuestos detectados"
-                    }
-                except Exception as e:
-                    config_status["deteccion_automatica"] = {
-                        "status": "ERROR",
-                        "mensaje": f"Error en detección automática: {str(e)}"
-                    }
             else:
                 config_status["validar_nit"] = {
                     "status": "WARNING",
@@ -665,7 +529,7 @@ async def diagnostico_completo():
             "archivos_criticos": {}
         }
         
-        carpetas_requeridas = ["Clasificador", "Liquidador", "Extraccion", "Static", "Results"]
+        carpetas_requeridas = ["Clasificador", "Liquidador", "Extraccion", "Results"]
         for carpeta in carpetas_requeridas:
             existe = os.path.exists(carpeta)
             archivos_py = []
@@ -683,7 +547,7 @@ async def diagnostico_completo():
             }
             
         # Verificar archivos críticos
-        archivos_criticos = [".env", "config.py", "RETEFUENTE_CONCEPTOS.xlsx"]
+        archivos_criticos = [".env", "config.py"]
         for archivo in archivos_criticos:
             existe = os.path.exists(archivo)
             archivos_status["archivos_criticos"][archivo] = {
@@ -746,7 +610,6 @@ if __name__ == "__main__":
     logger.info(" Iniciando Preliquidador de Retefuente v2.0 - Sistema Integrado")
     logger.info(" Funcionalidades: Retención en la fuente + Estampilla universidad + Obra pública 5%")
     logger.info(f" Gemini configurado: {bool(GEMINI_API_KEY)}")
-    #logger.info(f" Vision configurado: {bool(GOOGLE_CLOUD_CREDENTIALS)}")
     
     # Verificar estructura de carpetas
     carpetas_requeridas = ["Clasificador", "Liquidador", "Extraccion",  "Results"]
