@@ -274,8 +274,7 @@ PREGUNTAS_FUENTE_NACIONAL = [
 # ===============================
 
 CONFIG = {
-    "archivo_excel": "RETEFUENTE_CONCEPTOS.xlsx",
-    "max_archivos": 6,
+    "max_archivos": 20,
     "max_tamaño_mb": 50,
     "extensiones_soportadas": [".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".docx", ".doc"],
     "min_caracteres_ocr": 1000,
@@ -582,16 +581,15 @@ def obtener_constantes_articulo_383() -> Dict[str, Any]:
 # IMPORTANTE: Desde 2025, estampilla pro universidad nacional y contribución
 # a obra pública aplican para los MISMOS códigos de negocio
 
-# Códigos de negocio válidos para AMBOS impuestos (estampilla + obra pública)
-# Estos códigos identifican a los negocios que aplican estos dos impuestos
-CODIGOS_NEGOCIO_ESTAMPILLA = {
-    69164: "PATRIMONIO AUTONOMO INNPULSA COLOMBIA",
-    69166: "PATRIMONIO AUTONOMO COLOMBIA PRODUCTIVA",
-    99664: "PATRIMONIO AUTÓNOMO FONDO MUJER EMPRENDE"
-}
+# Códigos de negocio válidos para AMBOS impuestos (estampilla + obra pública).
+# Ya NO se hardcodean: se cargan por solicitud desde la API
+# (/preliquidador/codigoNegociosFiduciaria/) con caché TTL, vía
+# refrescar_codigos_negocio(). Se mutan EN SITIO (clear()+update()) para no
+# romper los `from config import ...` que hacen otros módulos.
+CODIGOS_NEGOCIO_ESTAMPILLA = {}
 
-# Alias para compatibilidad hacia atrás - MISMO contenido
-CODIGOS_NEGOCIO_OBRA_PUBLICA = CODIGOS_NEGOCIO_ESTAMPILLA.copy()
+# Alias hacia atrás - se llena con el mismo contenido en cada refresco
+CODIGOS_NEGOCIO_OBRA_PUBLICA = {}
 
 # NITs administrativos válidos para Estampilla Universidad y Obra Pública
 # Estos NITs determinan si se deben liquidar estos impuestos
@@ -608,11 +606,9 @@ NITS_REQUIEREN_VALIDACION_CODIGO = {"830054060"}
 # DEPRECATED: Mantener por compatibilidad legacy (NO USAR en nuevo código)
 NITS_ESTAMPILLA_UNIVERSIDAD = {}
 NITS_CONTRIBUCION_OBRA_PUBLICA = {}
-TERCEROS_RECURSOS_PUBLICOS = {
-    "PATRIMONIO AUTONOMO INNPULSA COLOMBIA": True,
-    "PATRIMONIO AUTONOMO COLOMBIA PRODUCTIVA": True,
-    "PATRIMONIO AUTÓNOMO FONDO MUJER EMPRENDE": True
-}
+# Se deriva de los nombres de CODIGOS_NEGOCIO_ESTAMPILLA en cada refresco
+# (ver refrescar_codigos_negocio). Arranca vacío y se llena por solicitud.
+TERCEROS_RECURSOS_PUBLICOS = {}
 
 # Objetos de contrato que aplican para estampilla universidad
 OBJETOS_CONTRATO_ESTAMPILLA = {
@@ -660,6 +656,91 @@ RANGOS_ESTAMPILLA_UNIVERSIDAD = [
     {"desde_uvt": 52652, "hasta_uvt": 157904, "tarifa": 0.01},   # 1.0%
     {"desde_uvt": 157904, "hasta_uvt": float('inf'), "tarifa": 0.02}  # 2.0%
 ]
+
+# ===============================
+# CARGA DE CÓDIGOS DE NEGOCIO DESDE API (caché TTL)
+# ===============================
+
+# Caché en memoria con expiración. Cada instancia (worker) mantiene su propia
+# copia y la refresca al expirar el TTL. Ver "Consideraciones Cloud Run" en el
+# plan: con 1 CPU / worker async único el refresco queda serializado por el
+# fetch bloqueante, por lo que no se requiere lock.
+_cache_codigos_negocio_timestamp = None
+_CODIGOS_NEGOCIO_TTL_SEGUNDOS = 600  # 10 min
+
+
+def refrescar_codigos_negocio(business_service=None) -> None:
+    """
+    Asegura que CODIGOS_NEGOCIO_ESTAMPILLA / CODIGOS_NEGOCIO_OBRA_PUBLICA /
+    TERCEROS_RECURSOS_PUBLICOS estén poblados con datos frescos desde la API
+    (/preliquidador/codigoNegociosFiduciaria/).
+
+    Comportamiento:
+    - Si el caché está fresco (dentro del TTL y no vacío), no llama a la API.
+    - Si está vacío o expirado, consulta la API y MUTA EN SITIO los 3 dicts.
+    - Si la API falla y no hay caché válido, lanza RuntimeError (se aborta la
+      preliquidación; NO se usan valores hardcodeados).
+
+    SRP: Solo gestiona la carga/caché de los códigos de negocio.
+    DIP: Recibe business_service como dependencia inyectada.
+    """
+    global _cache_codigos_negocio_timestamp
+
+    # Caché fresco: nada que hacer
+    if (_cache_codigos_negocio_timestamp is not None
+            and CODIGOS_NEGOCIO_ESTAMPILLA
+            and (datetime.now() - _cache_codigos_negocio_timestamp).total_seconds() < _CODIGOS_NEGOCIO_TTL_SEGUNDOS):
+        logger.debug("Códigos de negocio: usando caché vigente")
+        return
+
+    if business_service is None:
+        raise RuntimeError(
+            "No se pudieron obtener los códigos de negocio desde la API "
+            "(business_service no disponible) y no hay caché válido; se aborta la preliquidación"
+        )
+
+    logger.info("Obteniendo códigos de negocio desde la API (/preliquidador/codigoNegociosFiduciaria/)")
+    resultado = business_service.obtener_codigos_negocios_fiduciaria()
+
+    if not resultado or not resultado.get("success") or not resultado.get("data"):
+        mensaje = (resultado or {}).get("message", "respuesta vacía")
+        raise RuntimeError(
+            f"No se pudieron obtener los códigos de negocio desde la API y no hay caché válido; "
+            f"se aborta la preliquidación. Detalle: {mensaje}"
+        )
+
+    data = resultado["data"]  # { "69164": "PATRIMONIO ...", ... }
+
+    try:
+        nuevos_codigos = {int(codigo): nombre for codigo, nombre in data.items()}
+    except (ValueError, TypeError) as e:
+        raise RuntimeError(
+            f"Códigos de negocio con formato inválido desde la API: {e}; se aborta la preliquidación"
+        ) from e
+
+    nuevos_terceros = {str(nombre).upper().strip(): True for nombre in data.values()}
+
+    # Mutación EN SITIO de los mismos objetos importados por otros módulos
+    CODIGOS_NEGOCIO_ESTAMPILLA.clear()
+    CODIGOS_NEGOCIO_ESTAMPILLA.update(nuevos_codigos)
+    CODIGOS_NEGOCIO_OBRA_PUBLICA.clear()
+    CODIGOS_NEGOCIO_OBRA_PUBLICA.update(nuevos_codigos)
+    TERCEROS_RECURSOS_PUBLICOS.clear()
+    TERCEROS_RECURSOS_PUBLICOS.update(nuevos_terceros)
+
+    _cache_codigos_negocio_timestamp = datetime.now()
+    logger.info(f"Códigos de negocio cargados desde API: {len(nuevos_codigos)} códigos")
+
+
+def limpiar_cache_codigos_negocio() -> None:
+    """Limpia el caché de códigos de negocio (vacía los 3 dicts + timestamp). Para tests/refresh manual."""
+    global _cache_codigos_negocio_timestamp
+    CODIGOS_NEGOCIO_ESTAMPILLA.clear()
+    CODIGOS_NEGOCIO_OBRA_PUBLICA.clear()
+    TERCEROS_RECURSOS_PUBLICOS.clear()
+    _cache_codigos_negocio_timestamp = None
+    logger.info("Caché de códigos de negocio limpiado")
+
 
 # ===============================
 # FUNCIONES ESTAMPILLA UNIVERSIDAD
@@ -714,7 +795,7 @@ def validar_nit_administrativo_para_impuestos(nit_administrativo: str, codigo_ne
                 "nit_valido": True,
                 "requiere_validacion_codigo": True,
                 "codigo_valido": False,
-                "razon_no_aplica": f"El NIT {nit_administrativo} ({nombre_entidad}) requiere que el código de negocio sea uno de los patrimonios autónomos válidos (69164, 69166, 99664)",
+                "razon_no_aplica": f"El NIT {nit_administrativo} ({nombre_entidad}) requiere que el código de negocio sea uno de los patrimonios autónomos válidos {tuple(CODIGOS_NEGOCIO_ESTAMPILLA.keys())}",
                 "nombre_entidad": nombre_entidad
             }
 
@@ -1009,7 +1090,13 @@ def detectar_impuestos_aplicables_por_codigo(codigo_negocio: int, nombre_negocio
         - Si no se proporciona nit_administrativo, solo valida por código de negocio (compatibilidad)
         - Si se proporciona nit_administrativo, valida PRIMERO el NIT, DESPUÉS el código
         - Si se proporciona business_service, valida tipo de recurso (Públicos/Privados) en BD
+        - Refresca los códigos de negocio desde la API (caché TTL) antes de validar;
+          si la fuente falla sin caché válido, lanza RuntimeError (aborta la preliquidación)
     """
+    # Cargar/refrescar códigos de negocio desde la API antes de leerlos.
+    # Si falla sin caché válido, propaga el error y la factura se aborta.
+    refrescar_codigos_negocio(business_service)
+
     nombre_registrado = CODIGOS_NEGOCIO_ESTAMPILLA.get(codigo_negocio, nombre_negocio or "Desconocido")
 
 
@@ -1437,7 +1524,7 @@ def detectar_impuestos_aplicables(nit: str) -> Dict[str, Any]:
     """
     aplica_estampilla = nit_aplica_estampilla_universidad(nit)
     aplica_obra_publica = nit_aplica_contribucion_obra_publica(nit)
-    aplica_iva = nit_aplica_iva_reteiva(nit)  # ✅ NUEVA VALIDACIÓN
+    aplica_iva = nit_aplica_iva_reteiva(nit)  # NUEVA VALIDACIÓN
     
     impuestos_aplicables = []
     if aplica_estampilla:
@@ -1445,18 +1532,18 @@ def detectar_impuestos_aplicables(nit: str) -> Dict[str, Any]:
     if aplica_obra_publica:
         impuestos_aplicables.append("CONTRIBUCION_OBRA_PUBLICA")
     if aplica_iva:
-        impuestos_aplicables.append("IVA_RETEIVA")  # ✅ NUEVO IMPUESTO
+        impuestos_aplicables.append("IVA_RETEIVA")  # NUEVO IMPUESTO
     
     return {
         "nit": nit,
         "aplica_estampilla_universidad": aplica_estampilla,
         "aplica_contribucion_obra_publica": aplica_obra_publica,
-        "aplica_iva_reteiva": aplica_iva,  # ✅ NUEVO CAMPO
+        "aplica_iva_reteiva": aplica_iva,  # NUEVO CAMPO
         "impuestos_aplicables": impuestos_aplicables,
-        "procesamiento_paralelo": len(impuestos_aplicables) > 1,  # ✅ LÓGICA ACTUALIZADA
+        "procesamiento_paralelo": len(impuestos_aplicables) > 1,  # LÓGICA ACTUALIZADA
         "nombre_entidad_estampilla": NITS_ESTAMPILLA_UNIVERSIDAD.get(nit),
         "nombre_entidad_obra_publica": NITS_CONTRIBUCION_OBRA_PUBLICA.get(nit),
-        "nombre_entidad_iva": NITS_IVA_RETEIVA.get(nit, {}).get("nombre")  # ✅ NUEVO CAMPO
+        "nombre_entidad_iva": NITS_IVA_RETEIVA.get(nit, {}).get("nombre")  # NUEVO CAMPO
     }
 
 def obtener_configuracion_impuestos_integrada(database_manager=None) -> Dict[str, Any]:
@@ -1549,13 +1636,14 @@ def inicializar_configuracion():
     try:
         # UVT se valida despues de obtenerlo desde la API
         assert SMMLV_2025 > 0, "SMMLV_2025 debe ser mayor a 0"
-        assert len(TERCEROS_RECURSOS_PUBLICOS) > 0, "Debe haber terceros configurados"
+        # TERCEROS_RECURSOS_PUBLICOS se puebla por solicitud desde la API
+        # (refrescar_codigos_negocio), por eso ya no se valida aquí.
         assert len(CONCEPTOS_RETEFUENTE) > 0, "Debe haber conceptos de retefuente configurados"
         assert len(NITS_IVA_RETEIVA) > 0, "Debe haber NITs configurados para IVA y ReteIVA"
-        
+
         logger.info(" Configuración inicializada correctamente")
         logger.info(f"   - UVT 2025: pendiente (se obtendra desde API)")
-        logger.info(f"   - Terceros: {len(TERCEROS_RECURSOS_PUBLICOS)}")
+        logger.info(f"   - Terceros: pendiente (se obtendra desde API por solicitud)")
         logger.info(f"   - Conceptos ReteFuente: {len(CONCEPTOS_RETEFUENTE)}")
         logger.info(f"   - NITs IVA y ReteIVA: {len(NITS_IVA_RETEIVA)}")
         
@@ -1576,11 +1664,33 @@ def inicializar_configuracion():
 # FUNCIÓN PARA GUARDAR ARCHIVOS JSON
 # ===============================
 
-def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str = "") -> bool:
+def modo_pruebas_local() -> bool:
+    """
+    Indica si el sistema esta en modo de pruebas y debe dejar rastro en disco.
+
+    El criterio es la ausencia de WEBHOOK_URL: sin webhook el resultado no viaja a
+    ninguna parte, asi que los JSON y los textos extraidos de Results/ y extracciones/
+    son la unica forma de revisar la liquidacion. Con webhook configurado el consumidor
+    ya recibe el resultado y esas carpetas solo acumularian datos sensibles en el disco
+    efimero del contenedor.
+
+    Returns:
+        bool: True si NO hay WEBHOOK_URL configurada (modo pruebas local).
+    """
+    return not (os.getenv("WEBHOOK_URL") or "").strip()
+
+
+def guardar_archivo_json(
+    contenido: dict,
+    nombre_archivo: str,
+    subcarpeta: str = "",
+    forzar: bool = False
+) -> bool:
     """
     Guarda archivos JSON en la carpeta Results/ organizados por fecha.
 
     FUNCIONALIDAD:
+     Solo escribe en modo pruebas local (sin WEBHOOK_URL), salvo forzar=True
      Crea estructura Results/YYYY-MM-DD/
      Guarda archivos JSON con timestamp
      Manejo de errores sin afectar flujo principal
@@ -1591,10 +1701,15 @@ def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str =
         contenido: Diccionario a guardar como JSON
         nombre_archivo: Nombre base del archivo (sin extensión)
         subcarpeta: Subcarpeta opcional dentro de la fecha
+        forzar: Guarda aunque haya WEBHOOK_URL. Reservado para el respaldo del
+            resultado cuando el webhook falla y no queda otra copia
 
     Returns:
         bool: True si se guardó exitosamente, False en caso contrario
     """
+    if not forzar and not modo_pruebas_local():
+        return False
+
     try:
         # 1. CREAR ESTRUCTURA DE CARPETAS CON PATH ABSOLUTO
         fecha_actual = datetime.now().strftime("%Y-%m-%d")
