@@ -158,6 +158,27 @@ class DatabaseInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    def obtener_codigos_negocios_fiduciaria(self) -> Dict[str, Any]:
+        """
+        Obtiene los codigos de negocio que aplican Estampilla Pro Universidad
+        Nacional y Contribucion a Obra Publica.
+
+        SRP: Solo consulta el endpoint de codigos de negocio (Data Access Layer)
+        DIP: Abstraccion que permite multiples implementaciones
+
+        Endpoint: GET /preliquidador/codigoNegociosFiduciaria/
+
+        Returns:
+            Dict con estructura estandar:
+            {
+                'success': bool,
+                'data': { "69164": "PATRIMONIO ...", ... } | None,  # codigo(str) -> nombre
+                'message': str
+            }
+        """
+        pass
+
 
 # ================================
 #  IMPLEMENTACIÓN SUPABASE
@@ -880,6 +901,24 @@ class SupabaseDatabase(DatabaseInterface):
             'message': (
                 'Error consultando a la base de datos, Timeouts y retrys excedidos.'
             )
+        }
+
+    def obtener_codigos_negocios_fiduciaria(self) -> Dict[str, Any]:
+        """
+        Implementacion Supabase para codigos de negocio fiduciaria.
+
+        NOTA: No soportado en Supabase, retorna error descriptivo.
+        OCP: Preparada para extension futura si se crea la fuente.
+        """
+        logger.warning(
+            "SupabaseDatabase: codigos de negocio fiduciaria no implementado. "
+            "Use NexuraAPIDatabase."
+        )
+
+        return {
+            'success': False,
+            'data': None,
+            'message': 'Codigos de negocio fiduciaria no soportado en Supabase'
         }
 
     def health_check(self) -> bool:
@@ -2754,21 +2793,24 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'message': f"Error inesperado: {str(e)}"
             }
 
-    def _parsear_porcentaje_prodeporte(self, porcentaje_str: str) -> Optional[float]:
+    def _parsear_porcentaje_prodeporte(self, porcentaje_str: Any) -> Optional[float]:
         """
         Parsea PORCENTAJE_PRODEPORTE de Nexura a tarifa decimal.
 
         SRP: Solo parsing de porcentajes
 
         CASOS SOPORTADOS:
+        - 1.5 (numerico, formato actual de la API) -> 0.015
         - "Si aplica 1,5%" -> 0.015
         - "Si aplica 2,5%" -> 0.025
         - "1.5%" -> 0.015
         - "No aplica" -> None
-        - "" -> None
+        - "" / None -> None
 
         Args:
-            porcentaje_str: Cadena con el porcentaje (ej: "Si aplica 1,5%")
+            porcentaje_str: Porcentaje entregado por Nexura. La API devuelve hoy un
+                numero (1.5), pero historicamente enviaba texto ("Si aplica 1,5%"),
+                por lo que se aceptan ambos formatos.
 
         Returns:
             float con tarifa decimal o None si no se puede parsear
@@ -2776,7 +2818,8 @@ class NexuraAPIDatabase(DatabaseInterface):
         if not porcentaje_str:
             return None
 
-        texto_normalizado = porcentaje_str.lower().strip()
+        # Se normaliza a texto porque la API puede enviar el porcentaje como numero.
+        texto_normalizado = str(porcentaje_str).lower().strip()
 
         # Caso "No aplica"
         if 'no aplica' in texto_normalizado:
@@ -3254,6 +3297,79 @@ class NexuraAPIDatabase(DatabaseInterface):
         logger.debug(f"Rangos consolidados: {len(rangos)} → {len(consolidados)}")
         return consolidados
 
+    def obtener_codigos_negocios_fiduciaria(self) -> Dict[str, Any]:
+        """
+        Obtiene los codigos de negocio que aplican Estampilla Pro Universidad
+        Nacional y Contribucion a Obra Publica desde Nexura API.
+
+        SRP: Solo consulta el endpoint de codigos de negocio (Data Access Layer)
+
+        Endpoint: GET /preliquidador/codigoNegociosFiduciaria/
+        Sin parametros requeridos.
+
+        Respuesta esperada de la API:
+            { "error": {"code": 0, ...},
+              "data": { "69164": "PATRIMONIO ...", ... } }   # codigo(str) -> nombre
+
+        Returns:
+            Dict con estructura estandar {success, data, message} donde data es el
+            objeto crudo { codigo(str): nombre(str) }.
+        """
+        logger.info("Consultando codigos de negocio desde Nexura API: /preliquidador/codigoNegociosFiduciaria/")
+
+        try:
+            response = self._hacer_request(
+                endpoint='/preliquidador/codigoNegociosFiduciaria/',
+                method='GET'
+            )
+
+            error_info = response.get('error', {})
+            error_code = error_info.get('code', -1)
+
+            if error_code == 0:
+                data_obj = response.get('data', {})
+
+                if data_obj and isinstance(data_obj, dict):
+                    logger.info(f"Codigos de negocio obtenidos exitosamente: {len(data_obj)} codigos")
+                    return {
+                        'success': True,
+                        'data': data_obj,
+                        'message': f'{len(data_obj)} codigos de negocio obtenidos desde Nexura API'
+                    }
+
+                logger.warning("API retorno respuesta exitosa pero sin codigos de negocio")
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': 'No se encontraron codigos de negocio en la base de datos'
+                }
+
+            error_message = error_info.get('message', 'Error desconocido')
+            logger.error(f"Error de API al consultar codigos de negocio: Code={error_code}, Message={error_message}")
+            return {
+                'success': False,
+                'data': None,
+                'message': f"Error de API al consultar codigos de negocio: {error_message}"
+            }
+
+        except requests.exceptions.Timeout:
+            logger.error("Timeout al consultar codigos de negocio")
+            return {
+                'success': False,
+                'data': None,
+                'error': 'Timeout',
+                'message': 'Timeout al consultar codigos de negocio. Intente nuevamente.'
+            }
+
+        except Exception as e:
+            logger.error(f"Error inesperado al consultar codigos de negocio: {e}", exc_info=True)
+            return {
+                'success': False,
+                'data': None,
+                'error': str(e),
+                'message': f"Error inesperado al consultar codigos de negocio: {str(e)}"
+            }
+
     def health_check(self) -> bool:
         """
         Verifica si la conexion a Nexura API funciona
@@ -3322,15 +3438,15 @@ class DatabaseManager:
         try:
             health_status = self.db_connection.health_check()
             if health_status:
-                logger.info("✅ DatabaseManager inicializado correctamente con conexión activa")
+                logger.info("DatabaseManager inicializado correctamente con conexión activa")
             else:
                 logger.warning(
-                    "⚠️ DatabaseManager inicializado pero health check falló. "
+                    "DatabaseManager inicializado pero health check falló. "
                     "Si hay fallback configurado, se activará automáticamente en las operaciones."
                 )
         except Exception as e:
             logger.warning(
-                f"⚠️ DatabaseManager inicializado pero health check generó excepción: {str(e)[:100]}. "
+                f"DatabaseManager inicializado pero health check generó excepción: {str(e)[:100]}. "
                 "Si hay fallback configurado, se activará automáticamente en las operaciones."
             )
     
@@ -3549,6 +3665,14 @@ class DatabaseManager:
         """
         return self.db_connection.obtener_rangos_estampilla_universidad()
 
+    def obtener_codigos_negocios_fiduciaria(self) -> Dict[str, Any]:
+        """
+        Obtiene los codigos de negocio (estampilla / obra publica).
+
+        SRP: Delega a la implementacion configurada (Strategy Pattern)
+        """
+        return self.db_connection.obtener_codigos_negocios_fiduciaria()
+
 
 def ejecutar_pruebas_completas(db_manager: DatabaseManager):
     """
@@ -3589,26 +3713,26 @@ def ejecutar_pruebas_completas(db_manager: DatabaseManager):
                 print(f"       NIT: {data['nit']}")
                 print(f"       Nombre: {data['nombre_fiduciario']}")
             else:
-                print(f"   ❌ Error: {resultado['message']}")
+                print(f"   Error: {resultado['message']}")
     else:
-        print(f"   ❌ No se pudieron listar códigos: {codigos_result['message']}")
+        print(f"   No se pudieron listar códigos: {codigos_result['message']}")
     
     # 4. Probar con código específico conocido
     print("\n Probando con código específico:")
     resultado_especifico = db_manager.obtener_negocio_por_codigo("44658")
     
     if resultado_especifico['success']:
-        print("   ✅ Código '44658' encontrado!")
+        print("   Código '44658' encontrado!")
         data = resultado_especifico['data']
-        print(f"      📊 Datos: {data}")
+        print(f"      Datos: {data}")
         
         # Para integración con preliquidador
-        print(f"\n🔧 DATOS PARA PRELIQUIDADOR:")
+        print(f"\nDATOS PARA PRELIQUIDADOR:")
         print(f"   NIT a procesar: {data['nit']}")
         print(f"   Entidad: {data['nombre_fiduciario']}")
         
     else:
-        print(f"   ❌ Código '44658': {resultado_especifico['message']}")
+        print(f"   Código '44658': {resultado_especifico['message']}")
 
 # ================================
 # FALLBACK DATABASE - NEXURA CON SUPABASE COMO RESPALDO
@@ -3902,6 +4026,14 @@ class DatabaseWithFallback(DatabaseInterface):
             self.fallback_db.obtener_rangos_estampilla_universidad
         )
 
+    def obtener_codigos_negocios_fiduciaria(self) -> Dict[str, Any]:
+        """Obtiene los codigos de negocio (estampilla / obra publica) con fallback automatico"""
+        return self._ejecutar_con_fallback(
+            'obtener_codigos_negocios_fiduciaria',
+            self.primary_db.obtener_codigos_negocios_fiduciaria,
+            self.fallback_db.obtener_codigos_negocios_fiduciaria
+        )
+
 
 # ================================
 # TESTING Y FUNCIONES DE PRUEBA
@@ -3911,7 +4043,7 @@ def main():
     """
     Función principal de prueba
     """
-    print("🚀 INICIANDO SISTEMA DE CONSULTA DE NEGOCIOS")
+    print("INICIANDO SISTEMA DE CONSULTA DE NEGOCIOS")
     print("=" * 60)
     
     try:
