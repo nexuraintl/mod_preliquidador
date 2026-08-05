@@ -18,6 +18,7 @@ ORGANIZACION DE EXPORTS:
 - Seccion 1: Modelos para Retencion General (3 modelos)
 - Seccion 2: Modelos para Articulo 383 (9 modelos)
 - Seccion 3: Modelos Agregadores (2 modelos)
+- Seccion 4: Modelos de entrada del endpoint (2 modelos)
 
 Autor: Sistema Preliquidador
 Version: 3.0 - Clean Architecture
@@ -66,6 +67,15 @@ from .modelos import (
 )
 
 # ===============================
+# SECCION 4: MODELOS DE ENTRADA DEL ENDPOINT
+# ===============================
+
+from .modelos import (
+    ArchivoAdjunto,
+    SolicitudProcesarFacturas,
+)
+
+# ===============================
 # EXPORTS PUBLICOS DEL MODULO
 # ===============================
 
@@ -89,6 +99,10 @@ __all__ = [
     # Seccion 3: Agregadores
     "AnalisisFactura",
     "ResultadoLiquidacion",
+
+    # Seccion 4: Entrada del endpoint
+    "ArchivoAdjunto",
+    "SolicitudProcesarFacturas",
 ]
 
 # ===============================
@@ -98,7 +112,7 @@ __all__ = [
 __version__ = "3.0.0"
 __author__ = "Sistema Preliquidador"
 __architecture__ = "Clean Architecture - Domain Layer"
-__total_modelos__ = 14
+__total_modelos__ = 16
 
 # Log de inicializacion
 import logging
