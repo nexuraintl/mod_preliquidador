@@ -274,7 +274,7 @@ PREGUNTAS_FUENTE_NACIONAL = [
 # ===============================
 
 CONFIG = {
-    "max_archivos": 6,
+    "max_archivos": 20,
     "max_tamaño_mb": 50,
     "extensiones_soportadas": [".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".docx", ".doc"],
     "min_caracteres_ocr": 1000,
@@ -1664,11 +1664,33 @@ def inicializar_configuracion():
 # FUNCIÓN PARA GUARDAR ARCHIVOS JSON
 # ===============================
 
-def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str = "") -> bool:
+def modo_pruebas_local() -> bool:
+    """
+    Indica si el sistema esta en modo de pruebas y debe dejar rastro en disco.
+
+    El criterio es la ausencia de WEBHOOK_URL: sin webhook el resultado no viaja a
+    ninguna parte, asi que los JSON y los textos extraidos de Results/ y extracciones/
+    son la unica forma de revisar la liquidacion. Con webhook configurado el consumidor
+    ya recibe el resultado y esas carpetas solo acumularian datos sensibles en el disco
+    efimero del contenedor.
+
+    Returns:
+        bool: True si NO hay WEBHOOK_URL configurada (modo pruebas local).
+    """
+    return not (os.getenv("WEBHOOK_URL") or "").strip()
+
+
+def guardar_archivo_json(
+    contenido: dict,
+    nombre_archivo: str,
+    subcarpeta: str = "",
+    forzar: bool = False
+) -> bool:
     """
     Guarda archivos JSON en la carpeta Results/ organizados por fecha.
 
     FUNCIONALIDAD:
+     Solo escribe en modo pruebas local (sin WEBHOOK_URL), salvo forzar=True
      Crea estructura Results/YYYY-MM-DD/
      Guarda archivos JSON con timestamp
      Manejo de errores sin afectar flujo principal
@@ -1679,10 +1701,15 @@ def guardar_archivo_json(contenido: dict, nombre_archivo: str, subcarpeta: str =
         contenido: Diccionario a guardar como JSON
         nombre_archivo: Nombre base del archivo (sin extensión)
         subcarpeta: Subcarpeta opcional dentro de la fecha
+        forzar: Guarda aunque haya WEBHOOK_URL. Reservado para el respaldo del
+            resultado cuando el webhook falla y no queda otra copia
 
     Returns:
         bool: True si se guardó exitosamente, False en caso contrario
     """
+    if not forzar and not modo_pruebas_local():
+        return False
+
     try:
         # 1. CREAR ESTRUCTURA DE CARPETAS CON PATH ABSOLUTO
         fecha_actual = datetime.now().strftime("%Y-%m-%d")
