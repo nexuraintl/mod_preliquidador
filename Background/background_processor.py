@@ -20,6 +20,9 @@ from fastapi import UploadFile
 # Importar componentes de Background
 from .webhook_publisher import WebhookPublisher
 
+# Descarga de los documentos desde el gestor de archivos de Nexura
+from app.descarga_archivos import DescargadorArchivos, DescargaAbortada
+
 logger = logging.getLogger(__name__)
 
 
@@ -144,7 +147,7 @@ class BackgroundProcessor:
     async def procesar_factura_background(
         self,
         factura_id: int,
-        archivos_data: List[Dict[str, Any]],
+        archivos: List[Dict[str, Any]],
         parametros: Dict[str, Any]
     ) -> None:
         """
@@ -154,18 +157,19 @@ class BackgroundProcessor:
 
         FLUJO:
         1. Re-autenticar con Nexura (v3.13.0+)
-        2. Reconstruir UploadFile desde bytes
-        3. Ejecutar flujo completo (REUTILIZAR codigo main.py)
-        4. Guardar JSON local
-        5. Enviar resultado a webhook (factura_id se agrega en payload del webhook)
-        6. Manejar errores
+        2. Descargar los archivos desde la API de Nexura (en memoria)
+        3. Reconstruir UploadFile desde bytes
+        4. Ejecutar flujo completo (REUTILIZAR codigo main.py)
+        5. Guardar JSON local
+        6. Enviar resultado a webhook (factura_id se agrega en payload del webhook)
+        7. Manejar errores
 
         Args:
             factura_id: ID unico de la factura del cliente (entero)
-            archivos_data: Lista de diccionarios con {filename, content_type, content (bytes)}
+            archivos: Metadatos de los adjuntos ({file_uri, name, mime_type, size})
             parametros: Parametros del endpoint (codigo_negocio, proveedor, etc.)
         """
-        clasificador = None
+        contexto_flujo: Dict[str, Any] = {}
         try:
             logger.info(f"Factura {factura_id}: Iniciando procesamiento en background")
 
@@ -197,16 +201,36 @@ class BackgroundProcessor:
 
             logger.info(f"Factura {factura_id}: Token fresco obtenido - iniciando procesamiento")
 
+            # DESCARGAR DE LA API DE NEXURA
+            # El token acaba de refrescarse arriba, asi que se reutiliza por si el
+            # endpoint de descarga exige autenticacion.
+            descargador = DescargadorArchivos(
+                factura_id,
+                token=self.webhook_publisher.auth_token
+            )
+            descarga = await descargador.descargar_todos(archivos)
+
             # Reconstruir UploadFile desde bytes
-            archivos = self._reconstruir_archivos(archivos_data)
+            archivos_upload = self._reconstruir_archivos(descarga.archivos_data)
 
             # EJECUTAR FLUJO COMPLETO (REUTILIZAR main.py)
             resultado = await self._ejecutar_flujo_completo(
-                archivos=archivos,
-                parametros=parametros
+                archivos=archivos_upload,
+                parametros=parametros,
+                contexto=contexto_flujo
             )
 
-            # Guardar JSON local (respaldo)
+            # Dejar constancia de los adjuntos que no se pudieron descargar. Por debajo
+            # del umbral de aborto el procesamiento continua, pero el consumidor debe
+            # saber que se liquido con documentacion incompleta.
+            if descarga.fallidos:
+                resultado.setdefault("observaciones_generales", []).append(
+                    f"No se descargaron {len(descarga.fallidos)} de {len(archivos)} "
+                    f"archivos: {descarga.resumen_fallos}"
+                )
+
+            # Guardar JSON local (respaldo). Sin WEBHOOK_URL es la unica forma de ver
+            # el resultado; con webhook configurado no escribe (ver modo_pruebas_local).
             from config import guardar_archivo_json
             guardar_archivo_json(resultado, f"resultado_final_{factura_id}")
 
@@ -227,6 +251,11 @@ class BackgroundProcessor:
                 logger.warning(
                     f"Factura {factura_id}: Webhook fallo - {webhook_response['message']}"
                 )
+                # Agotados los reintentos el resultado no existe en ningun otro sitio:
+                # se guarda aunque haya WEBHOOK_URL, o se pierde la liquidacion.
+                guardar_archivo_json(
+                    resultado, f"resultado_final_{factura_id}", forzar=True
+                )
 
             logger.info(f"Factura {factura_id}: Procesamiento completado exitosamente")
 
@@ -237,8 +266,9 @@ class BackgroundProcessor:
             logger.error(f"Factura {factura_id}: {error_msg}")
             logger.error(f"Traceback: {error_traceback}")
 
-            # Guardar error tecnico completo (CON traceback) en JSON local
-            # para soporte interno. Esto NO se envia al webhook/frontend.
+            # Guardar error tecnico completo (CON traceback) en JSON local para soporte
+            # interno. Esto NO se envia al webhook/frontend. Solo se escribe en modo
+            # pruebas local; en produccion el traceback ya queda en el log de arriba.
             from config import guardar_archivo_json
             error_data = {
                 "timestamp": datetime.now().isoformat(),
@@ -256,6 +286,7 @@ class BackgroundProcessor:
 
             error_str = str(e).lower()
             tipo_error = type(e).__name__
+            es_fallo_descarga = isinstance(e, DescargaAbortada)
             es_limite_archivos = "demasiados archivos directos" in error_str
             # Fallo al cargar los codigos de negocio (estampilla / obra publica)
             # desde la API Nexura. Se usa un substring ASCII estable del mensaje
@@ -272,7 +303,15 @@ class BackgroundProcessor:
                 or "clasificacion híbrida" in error_str
             )
 
-            if es_limite_archivos:
+            if es_fallo_descarga:
+                # El texto de la excepcion ya dice cuantos archivos fallaron y por que,
+                # que es lo unico accionable para el usuario. Solo se añade la pista
+                # sobre disponibilidad, que es la causa mas habitual.
+                mensaje_usuario = (
+                    f"{e} Verifique que los archivos sigan disponibles en el gestor "
+                    "documental de Nexura."
+                )
+            elif es_limite_archivos:
                 mensaje_usuario = (
                     "Error en el procesamiento, Límite de archivos adjuntos superado."
                 )
@@ -297,7 +336,16 @@ class BackgroundProcessor:
             except AttributeError:
                 codigo_del_negocio = 0
 
-            if es_limite_archivos:
+            if es_fallo_descarga:
+                # Un archivo borrado o sin permisos no se arregla reintentando: hay que
+                # corregir el adjunto en el origen.
+                diagnostico = {
+                    "tipo_error": tipo_error,
+                    "servicio_externo": "Descarga de archivos",
+                    "timestamp_error": datetime.now().isoformat(),
+                    "retry_sugerido": False,
+                }
+            elif es_limite_archivos:
                 # El limite de archivos no es un fallo de Gemini; reintentar con los
                 # mismos archivos volveria a fallar (el usuario debe reducirlos).
                 diagnostico = {
@@ -334,20 +382,64 @@ class BackgroundProcessor:
 
             # Intentar enviar resultado (formato de contrato) a webhook
             try:
-                await self.webhook_publisher.enviar_resultado(
+                envio = await self.webhook_publisher.enviar_resultado(
                     factura_id=factura_id,
                     resultado=resultado_contrato
                 )
+                if not (envio or {}).get("success"):
+                    # Mismo criterio que en el camino de exito: si el webhook no lo
+                    # recibio, el payload solo existe aqui.
+                    guardar_archivo_json(
+                        resultado_contrato, f"resultado_final_{factura_id}", forzar=True
+                    )
             except Exception as webhook_error:
                 logger.error(
                     f"Factura {factura_id}: Error adicional enviando resultado a webhook: {webhook_error}"
                 )
+                guardar_archivo_json(
+                    resultado_contrato, f"resultado_final_{factura_id}", forzar=True
+                )
 
         finally:
-            # Resumen agregado de tokens Gemini por factura (incl. ICA).
-            # Siempre, aun si una tarea fallo. Best-effort.
+            # El clasificador se instancia dentro de _ejecutar_flujo_completo y se publica
+            # en contexto_flujo. Se lee de ahi (y no del retorno) porque este bloque tiene
+            # que ejecutarse tambien cuando el flujo lanza excepcion: es justo ahi donde
+            # quedaban archivos huerfanos en Files API.
+            clasificador = contexto_flujo.get("clasificador")
             if clasificador is not None:
+                # Resumen agregado de tokens Gemini por factura (incl. ICA). Best-effort.
                 clasificador._log_resumen_uso_tokens()
+                await self._limpiar_archivos_gemini(factura_id, clasificador)
+
+    async def _limpiar_archivos_gemini(self, factura_id: int, clasificador) -> None:
+        """
+        Elimina de Gemini Files API los archivos subidos para esta factura.
+
+        Se ejecuta UNA vez por factura, no una por impuesto: la cache de
+        GeminiFilesManager es compartida por todos los validadores, asi que limpiarla
+        antes de tiempo borraria archivos que los demas todavia necesitan.
+
+        Los archivos suben con el contenido integro de facturas y RUTs, y Gemini los
+        conserva ~48 h consumiendo cuota del proyecto. Es best-effort: un fallo aqui
+        nunca debe tumbar una liquidacion ya terminada.
+
+        Args:
+            factura_id: ID de la factura (para logging)
+            clasificador: ProcesadorGemini usado en el flujo, dueno del files_manager
+        """
+        files_manager = getattr(clasificador, "files_manager", None)
+        if not files_manager:
+            return
+
+        pendientes = len(getattr(files_manager, "uploaded_files", {}))
+        if not pendientes:
+            return
+
+        try:
+            await files_manager.cleanup_all(ignore_errors=True)
+            logger.info(f"Factura {factura_id}: Cleanup Files API de {pendientes} archivos")
+        except Exception as e:
+            logger.warning(f"Factura {factura_id}: Error en cleanup de Files API: {e}")
 
     def _reconstruir_archivos(self, archivos_data: List[Dict[str, Any]]) -> List[UploadFile]:
         """
@@ -379,7 +471,8 @@ class BackgroundProcessor:
     async def _ejecutar_flujo_completo(
         self,
         archivos: List[UploadFile],
-        parametros: Dict[str, Any]
+        parametros: Dict[str, Any],
+        contexto: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
         Ejecuta el flujo completo de procesamiento.
@@ -390,10 +483,13 @@ class BackgroundProcessor:
         Args:
             archivos: Lista de archivos
             parametros: Parametros del endpoint
+            contexto: Diccionario donde publicar el clasificador en cuanto existe, para
+                que el llamador pueda limpiar Files API aunque el flujo falle despues
 
         Returns:
             Dict con resultado completo del procesamiento
         """
+        contexto = contexto if contexto is not None else {}
         # ================================
         # IMPORTAR FUNCIONES DE main.py
         # ================================
@@ -472,6 +568,9 @@ class BackgroundProcessor:
             estructura_contable=estructura_contable,
             db_manager=self.db_manager
         )
+        # Publicarlo de inmediato: a partir de aqui ya puede subir archivos a Files API,
+        # y el finally del llamador es el unico punto que garantiza su limpieza.
+        contexto["clasificador"] = clasificador
 
         resultado_clasificacion = await clasificar_archivos(
             clasificador=clasificador,
