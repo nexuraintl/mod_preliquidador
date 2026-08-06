@@ -2793,21 +2793,24 @@ class NexuraAPIDatabase(DatabaseInterface):
                 'message': f"Error inesperado: {str(e)}"
             }
 
-    def _parsear_porcentaje_prodeporte(self, porcentaje_str: str) -> Optional[float]:
+    def _parsear_porcentaje_prodeporte(self, porcentaje_str: Any) -> Optional[float]:
         """
         Parsea PORCENTAJE_PRODEPORTE de Nexura a tarifa decimal.
 
         SRP: Solo parsing de porcentajes
 
         CASOS SOPORTADOS:
+        - 1.5 (numerico, formato actual de la API) -> 0.015
         - "Si aplica 1,5%" -> 0.015
         - "Si aplica 2,5%" -> 0.025
         - "1.5%" -> 0.015
         - "No aplica" -> None
-        - "" -> None
+        - "" / None -> None
 
         Args:
-            porcentaje_str: Cadena con el porcentaje (ej: "Si aplica 1,5%")
+            porcentaje_str: Porcentaje entregado por Nexura. La API devuelve hoy un
+                numero (1.5), pero historicamente enviaba texto ("Si aplica 1,5%"),
+                por lo que se aceptan ambos formatos.
 
         Returns:
             float con tarifa decimal o None si no se puede parsear
@@ -2815,7 +2818,8 @@ class NexuraAPIDatabase(DatabaseInterface):
         if not porcentaje_str:
             return None
 
-        texto_normalizado = porcentaje_str.lower().strip()
+        # Se normaliza a texto porque la API puede enviar el porcentaje como numero.
+        texto_normalizado = str(porcentaje_str).lower().strip()
 
         # Caso "No aplica"
         if 'no aplica' in texto_normalizado:

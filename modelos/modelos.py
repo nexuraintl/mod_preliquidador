@@ -459,6 +459,71 @@ class ResultadoLiquidacion(BaseModel):
 
 
 # ===============================
+# SECCION 4: MODELOS DE ENTRADA DEL ENDPOINT
+# ===============================
+
+class ArchivoAdjunto(BaseModel):
+    """Metadatos de un documento adjunto a la factura.
+
+    El cliente no sube los bytes: envia la URI de descarga del gestor de archivos de
+    Nexura junto con el nombre y el tipo del documento.
+
+    Attributes:
+        file_uri: URL de descarga del archivo en la API de Nexura
+        name: Nombre del archivo con extension; determina como se procesa
+        mime_type: Tipo MIME declarado por el cliente (opcional)
+        size: Tamaño en bytes declarado por el cliente, como texto (opcional)
+
+    Example:
+        >>> adjunto = ArchivoAdjunto(
+        ...     file_uri="https://host/api/Preliquidador/downloadFile/?idFile=1079",
+        ...     name="factura.pdf",
+        ...     mime_type="application/pdf",
+        ...     size="45431"
+        ... )
+    """
+
+    file_uri: str
+    name: str
+    mime_type: Optional[str] = None
+    size: Optional[str] = None
+
+
+class SolicitudProcesarFacturas(BaseModel):
+    """Cuerpo JSON del endpoint POST /api/procesar-facturas.
+
+    Attributes:
+        facturaId: Identificador unico de la factura asignado por el cliente
+        archivos: Adjuntos de la factura (factura, RUT, anexos, contratos)
+        codigo_del_negocio: Codigo del negocio para consultar en base de datos
+        proveedor: Nombre del proveedor que emite la factura
+        nit_proveedor: NIT del proveedor
+        estructura_contable: Estructura contable asociada
+        observaciones_tp: Observaciones para Tasa Prodeporte (opcional)
+        genera_presupuesto: Indicador presupuestal de Tasa Prodeporte (opcional)
+        rubro: Rubro presupuestal (opcional)
+        centro_costos: Centro de costos (opcional)
+        numero_contrato: Numero de contrato (opcional)
+        valor_contrato_municipio: Valor del contrato por municipio (opcional)
+        tipoMoneda: Moneda de la factura, COP por defecto
+    """
+
+    facturaId: int
+    archivos: List[ArchivoAdjunto]
+    codigo_del_negocio: int
+    proveedor: str
+    nit_proveedor: str
+    estructura_contable: int
+    observaciones_tp: Optional[str] = None
+    genera_presupuesto: Optional[str] = None
+    rubro: Optional[str] = None
+    centro_costos: Optional[int] = None
+    numero_contrato: Optional[str] = None
+    valor_contrato_municipio: Optional[float] = None
+    tipoMoneda: Optional[str] = "COP"
+
+
+# ===============================
 # METADATA DEL MODULO
 # ===============================
 
@@ -467,4 +532,4 @@ __author__ = "Sistema Preliquidador"
 __architecture__ = "Clean Architecture - Domain Layer"
 
 # Total de modelos definidos
-__total_modelos__ = 14
+__total_modelos__ = 16

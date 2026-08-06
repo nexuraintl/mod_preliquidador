@@ -1347,13 +1347,13 @@ class ProcesadorGemini:
                 )
 
         finally:
-            # PASO 5 (NUEVO v3.0): Cleanup automático de Files API
-            try:
-                if hasattr(self, 'files_manager') and self.files_manager and uploaded_files_refs:
-                    await self.files_manager.cleanup_all(ignore_errors=True)
-                    logger.info(f" Cleanup Files API: {len(uploaded_files_refs)} archivos eliminados")
-            except Exception as cleanup_error:
-                logger.warning(f" Error en cleanup Files API: {cleanup_error}")
+            # PASO 5: Cleanup omitido intencionalmente.
+            # Este metodo se invoca una vez POR IMPUESTO (8 o mas veces por factura) y
+            # cleanup_all() purga toda la cache compartida de GeminiFilesManager: limpiar
+            # aqui borraba los archivos que los validadores siguientes todavia necesitan.
+            # La limpieza ocurre una sola vez por factura, en el finally de
+            # BackgroundProcessor.procesar_factura_background().
+            pass
 
     def _obtener_archivos_clonados_desde_cache(self, cache_archivos):
         """
@@ -2040,6 +2040,12 @@ class ProcesadorGemini:
             nombre_archivo: Nombre del archivo JSON
             contenido: Contenido a guardar
         """
+        from config import modo_pruebas_local
+
+        if not modo_pruebas_local():
+            # Con WEBHOOK_URL configurada no se deja rastro en disco (ni el fallback).
+            return
+
         try:
             # CORREGIDO: Usar rutas absolutas para evitar errores de subpath
             directorio_base = Path.cwd()  # Directorio actual del proyecto
