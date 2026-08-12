@@ -389,7 +389,7 @@ def crear_respuesta_error_validacion(
             "metodo_http": metodo_http,
             "timestamp_error": datetime.now().isoformat(),
             "errores_detallados": errores_validacion,
-            "mensaje_principal": "prueba"
+            "mensaje_principal": mensaje_error_principal
         },
         "impuestos": {
             "retefuente": _crear_mock_retefuente_validacion(mensaje_observacion),
