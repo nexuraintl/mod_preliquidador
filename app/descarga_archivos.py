@@ -2,13 +2,19 @@
 
 El cliente no sube los bytes: en el cuerpo de la peticion envia los metadatos de cada
 adjunto (`file_uri`, `name`, `mime_type`, `size`) y el servicio descarga el contenido
-en memoria, en el mismo formato {filename, content_type, content} que consume el
+en memoria, en el mismo formato {filename, content_type, file} que consume el
 pipeline de clasificacion.
+
+La descarga es **secuencial y con una sola conexion reutilizada**. El servicio corre en
+una instancia de 1 vCPU donde Cloud Run estrangula la CPU en cuanto el endpoint
+responde: descargar en paralelo no acelera nada y si dispara el pico de memoria (todos
+los adjuntos vivos a la vez) y el de CPU (un handshake TLS por archivo).
 """
 import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
@@ -29,8 +35,15 @@ USER_AGENT = (
 # Proporcion de adjuntos fallidos a partir de la cual se aborta la factura completa.
 UMBRAL_ABORTO = 0.5
 
-TIMEOUT_DESCARGA_SEGUNDOS = 60
-MAX_REINTENTOS = 3
+# Timeouts por fase, no un tope global. Al ser la descarga secuencial, un adjunto
+# colgado retiene a los siguientes: mas vale rendirse pronto. Un `downloadFile` que
+# tarda mas de 20 s en responder ya esta roto.
+TIMEOUT_DESCARGA = httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=5.0)
+MAX_REINTENTOS = 2
+
+# Una sola conexion viva: la descarga es secuencial, mas conexiones solo gastarian
+# handshakes TLS, que son trabajo de CPU en el peor momento posible.
+LIMITES_CONEXION = httpx.Limits(max_connections=1, max_keepalive_connections=1)
 
 
 class ArchivoInvalido(ValueError):
@@ -47,7 +60,8 @@ class ResultadoDescarga:
 
     Attributes:
         archivos_data: Archivos descargados, en el formato {filename, content_type,
-            content} que espera BackgroundProcessor.
+            file} que espera BackgroundProcessor. `file` es un BytesIO listo para
+            envolver en UploadFile, no bytes: evita duplicar el contenido en memoria.
         fallidos: Adjuntos que no se pudieron descargar, con su motivo.
     """
 
@@ -190,7 +204,7 @@ class DescargadorArchivos:
         self,
         factura_id: int,
         token: Optional[str] = None,
-        timeout: int = TIMEOUT_DESCARGA_SEGUNDOS,
+        timeout: Optional[httpx.Timeout] = None,
     ):
         """Inicializa el descargador.
 
@@ -199,15 +213,29 @@ class DescargadorArchivos:
             token: Token JWT de Nexura. Se envia como Bearer si esta disponible; el
                 endpoint de descarga actual no lo exige, pero si lo exigiera en
                 produccion la descarga seguiria funcionando.
-            timeout: Timeout en segundos de cada peticion de descarga.
+            timeout: Timeouts por fase de cada peticion. Por defecto TIMEOUT_DESCARGA.
         """
         self.factura_id = factura_id
         self.token = token
-        self.timeout = timeout
+        self.timeout = timeout or TIMEOUT_DESCARGA
         self.max_bytes = CONFIG['max_tamaño_mb'] * 1024 * 1024
 
+    def _cabeceras(self) -> Dict[str, str]:
+        """Construye las cabeceras de la descarga.
+
+        Returns:
+            User-Agent de navegador y, si hay token, la cabecera Authorization.
+        """
+        cabeceras = {'User-Agent': USER_AGENT}
+        if self.token:
+            cabeceras['Authorization'] = f'Bearer {self.token}'
+        return cabeceras
+
     async def descargar_todos(self, archivos: List[Dict[str, Any]]) -> ResultadoDescarga:
-        """Descarga en paralelo todos los adjuntos y aplica la regla de aborto.
+        """Descarga los adjuntos uno a uno y aplica la regla de aborto.
+
+        Secuencial y sobre una unica conexion reutilizada: con 1 vCPU el paralelismo
+        no da velocidad, solo multiplica el pico de memoria y los handshakes TLS.
 
         Args:
             archivos: Adjuntos enviados por el cliente.
@@ -221,20 +249,25 @@ class DescargadorArchivos:
                 alterar la liquidacion sin que nadie lo advierta.
         """
         total = len(archivos)
-        logger.info(f"Factura {self.factura_id}: Descargando {total} archivos de Nexura")
-
-        tareas = [self._descargar_uno(adjunto) for adjunto in archivos]
-        descargas = await asyncio.gather(*tareas, return_exceptions=True)
+        logger.info(
+            f"Factura {self.factura_id}: Descargando {total} archivos de Nexura "
+            '(secuencial, conexion reutilizada)'
+        )
 
         resultado = ResultadoDescarga()
-        for adjunto, descarga in zip(archivos, descargas):
-            if isinstance(descarga, BaseException):
-                motivo = str(descarga) or type(descarga).__name__
-                referencia = adjunto.get('name') or adjunto.get('file_uri') or '(sin nombre)'
-                logger.warning(f"Factura {self.factura_id}: Fallo {referencia} - {motivo}")
-                resultado.fallidos.append({'archivo': referencia, 'motivo': motivo})
-            else:
-                resultado.archivos_data.append(descarga)
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            limits=LIMITES_CONEXION,
+            follow_redirects=True,
+        ) as cliente:
+            for adjunto in archivos:
+                try:
+                    resultado.archivos_data.append(await self._descargar_uno(cliente, adjunto))
+                except Exception as e:
+                    motivo = str(e) or type(e).__name__
+                    referencia = adjunto.get('name') or adjunto.get('file_uri') or '(sin nombre)'
+                    logger.warning(f"Factura {self.factura_id}: Fallo {referencia} - {motivo}")
+                    resultado.fallidos.append({'archivo': referencia, 'motivo': motivo})
 
         fallidos = len(resultado.fallidos)
         if total and (fallidos / total) >= UMBRAL_ABORTO:
@@ -251,7 +284,11 @@ class DescargadorArchivos:
 
         return resultado
 
-    async def _descargar_uno(self, adjunto: Dict[str, Any]) -> Dict[str, Any]:
+    async def _descargar_uno(
+        self,
+        cliente: httpx.AsyncClient,
+        adjunto: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """Descarga un adjunto con reintentos ante fallos transitorios.
 
         Solo se reintentan timeouts, errores de conexion y respuestas 429 o 5xx.
@@ -259,10 +296,11 @@ class DescargadorArchivos:
         reintentarlos solo retrasa el fallo.
 
         Args:
+            cliente: Cliente HTTP compartido por todo el lote.
             adjunto: Diccionario con file_uri, name, mime_type y size.
 
         Returns:
-            Diccionario {filename, content_type, content} listo para el pipeline.
+            Diccionario {filename, content_type, file} listo para el pipeline.
 
         Raises:
             ArchivoInvalido: Ante cualquier fallo permanente.
@@ -274,7 +312,7 @@ class DescargadorArchivos:
 
         for intento in range(1, MAX_REINTENTOS + 1):
             try:
-                return await self._intentar_descarga(uri, nombre, mime)
+                return await self._intentar_descarga(cliente, uri, nombre, mime)
 
             except ArchivoInvalido:
                 raise  # Permanente: no tiene sentido reintentar.
@@ -292,6 +330,7 @@ class DescargadorArchivos:
 
     async def _intentar_descarga(
         self,
+        cliente: httpx.AsyncClient,
         uri: str,
         nombre: str,
         mime: Optional[str],
@@ -299,35 +338,32 @@ class DescargadorArchivos:
         """Ejecuta un intento de descarga por streaming.
 
         Args:
+            cliente: Cliente HTTP compartido por todo el lote.
             uri: URL de descarga enviada por el cliente.
             nombre: Nombre ya saneado del archivo.
             mime: Tipo MIME declarado por el cliente.
 
         Returns:
-            Diccionario {filename, content_type, content}.
+            Diccionario {filename, content_type, file}.
 
         Raises:
             ArchivoInvalido: Fallo permanente (404, sin permisos, HTML de error o
                 tamaño excedido).
             httpx.TransportError: Fallo transitorio, gestionado por el llamador.
         """
-        headers = {'User-Agent': USER_AGENT}
-        if self.token:
-            headers['Authorization'] = f'Bearer {self.token}'
-
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as cliente:
-            async with cliente.stream('GET', uri, headers=headers) as respuesta:
-                self._verificar_respuesta(respuesta, nombre)
-                contenido = await self._leer_con_limite(respuesta, nombre)
+        async with cliente.stream('GET', uri, headers=self._cabeceras()) as respuesta:
+            self._verificar_respuesta(respuesta, nombre)
+            buffer = await self._leer_con_limite(respuesta, nombre)
 
         logger.info(
             f"Factura {self.factura_id}: Descargado '{nombre}' "
-            f"({len(contenido) / 1024 / 1024:.2f} MB)"
+            f"({buffer.tell() / 1024 / 1024:.2f} MB)"
         )
+        buffer.seek(0)
         return {
             'filename': nombre,
             'content_type': mime or respuesta.headers.get('content-type'),
-            'content': contenido,
+            'file': buffer,
         }
 
     def _verificar_respuesta(self, respuesta: httpx.Response, nombre: str) -> None:
@@ -364,24 +400,29 @@ class DescargadorArchivos:
                 'Suele indicar que el archivo ya no esta disponible'
             )
 
-    async def _leer_con_limite(self, respuesta: httpx.Response, nombre: str) -> bytes:
-        """Lee el cuerpo cortando la descarga si se supera el tamaño maximo.
+    async def _leer_con_limite(self, respuesta: httpx.Response, nombre: str) -> BytesIO:
+        """Vuelca el cuerpo en un buffer, cortando si se supera el tamaño maximo.
 
         No se confia en Content-Length ni en el `size` declarado: pueden faltar o no
         coincidir con lo que se envia realmente, asi que el limite se aplica sobre los
         bytes recibidos.
+
+        Se escribe directamente en el BytesIO que acabara siendo el UploadFile: la
+        version anterior acumulaba trozos en una lista y hacia `b''.join`, lo que
+        duplicaba el pico de memoria de cada archivo sin necesidad.
 
         Args:
             respuesta: Respuesta en streaming.
             nombre: Nombre del archivo, para el mensaje de error.
 
         Returns:
-            El contenido completo del archivo.
+            Buffer con el contenido completo; el puntero queda al final, de modo que
+            `tell()` da el tamaño descargado.
 
         Raises:
             ArchivoInvalido: Si se supera CONFIG['max_tamaño_mb'].
         """
-        trozos: List[bytes] = []
+        buffer = BytesIO()
         acumulado = 0
 
         async for trozo in respuesta.aiter_bytes():
@@ -391,6 +432,6 @@ class DescargadorArchivos:
                     f"El archivo '{nombre}' supera el maximo de "
                     f"{CONFIG['max_tamaño_mb']} MB"
                 )
-            trozos.append(trozo)
+            buffer.write(trozo)
 
-        return b''.join(trozos)
+        return buffer
