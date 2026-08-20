@@ -8,11 +8,12 @@ OCP: Extensible sin modificar - inyectar nuevos validadores/liquidadores
 PRINCIPIO CLAVE: NO duplica logica, REUTILIZA funciones existentes de main.py
 """
 
+import asyncio
 import logging
 import traceback
 from typing import List, Dict, Any
 from datetime import datetime
-from io import BytesIO
+from weakref import WeakKeyDictionary
 
 # Fastapi UploadFile para reconstruir archivos
 from fastapi import UploadFile
@@ -24,6 +25,36 @@ from .webhook_publisher import WebhookPublisher
 from app.descarga_archivos import DescargadorArchivos, DescargaAbortada
 
 logger = logging.getLogger(__name__)
+
+# Una factura a la vez por instancia.
+#
+# Cloud Run entrega hasta 80 peticiones concurrentes a la misma instancia, asi que sin
+# esta cola varias facturas arrancan a la vez sobre 1 vCPU: cada una con sus 2 workers
+# de Gemini y su propio juego de archivos en memoria. En una sola vCPU no hay CPU que
+# repartir, de modo que ejecutarlas en serie no baja el rendimiento total y si vuelve
+# predecible el consumo de memoria.
+#
+# Se guarda una cola por event loop: un asyncio.Semaphore queda ligado al primer loop
+# que lo usa, asi que uno creado al importar el modulo reventaria en cualquier proceso
+# que levante mas de un loop a lo largo de su vida. En produccion hay un unico loop y
+# por tanto una unica cola.
+_COLAS_POR_LOOP: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = (
+    WeakKeyDictionary()
+)
+
+
+def _cola_facturas() -> asyncio.Semaphore:
+    """Devuelve la cola de facturas del event loop en curso.
+
+    Returns:
+        Semaforo de una plaza, creado la primera vez que se pide en este loop.
+    """
+    loop = asyncio.get_running_loop()
+    cola = _COLAS_POR_LOOP.get(loop)
+    if cola is None:
+        cola = asyncio.Semaphore(1)
+        _COLAS_POR_LOOP[loop] = cola
+    return cola
 
 
 class BackgroundProcessor:
@@ -66,7 +97,6 @@ class BackgroundProcessor:
         Returns:
             True si autenticacion exitosa, False si fallo despues de todos los reintentos
         """
-        import asyncio
         import os
         from database.nexura_auth_service import NexuraAuthService, NexuraAuthenticationError
         from datetime import datetime, timedelta
@@ -145,6 +175,31 @@ class BackgroundProcessor:
         return False
 
     async def procesar_factura_background(
+        self,
+        factura_id: int,
+        archivos: List[Dict[str, Any]],
+        parametros: Dict[str, Any]
+    ) -> None:
+        """
+        Punto de entrada del procesamiento en background, serializado por instancia.
+
+        El semaforo hace que las facturas se procesen de una en una: en 1 vCPU
+        solaparlas no gana tiempo y multiplica la memoria en uso. Las que llegan
+        mientras hay una en curso esperan aqui su turno.
+
+        Args:
+            factura_id: ID unico de la factura del cliente (entero)
+            archivos: Metadatos de los adjuntos ({file_uri, name, mime_type, size})
+            parametros: Parametros del endpoint (codigo_negocio, proveedor, etc.)
+        """
+        cola = _cola_facturas()
+        if cola.locked():
+            logger.info(f"Factura {factura_id}: En cola, hay otra factura en proceso")
+
+        async with cola:
+            await self._procesar_factura(factura_id, archivos, parametros)
+
+    async def _procesar_factura(
         self,
         factura_id: int,
         archivos: List[Dict[str, Any]],
@@ -446,22 +501,19 @@ class BackgroundProcessor:
         Reconstruye objetos UploadFile desde bytes.
 
         Args:
-            archivos_data: Lista de diccionarios con {filename, content_type, content}
+            archivos_data: Lista de diccionarios con {filename, content_type, file}
 
         Returns:
             Lista de UploadFile reconstruidos
         """
         archivos = []
         for archivo_data in archivos_data:
-            # Crear BytesIO desde bytes
-            file_obj = BytesIO(archivo_data["content"])
-
-            # Crear UploadFile
+            # El buffer viene ya listo desde la descarga y se reutiliza tal cual: crear
+            # aqui un BytesIO nuevo duplicaria en memoria el contenido de cada archivo.
             # NOTA: content_type es read-only, no se puede asignar despues
-            # El content_type original ya fue usado para validacion antes de guardar bytes
             upload_file = UploadFile(
                 filename=archivo_data["filename"],
-                file=file_obj
+                file=archivo_data["file"]
             )
 
             archivos.append(upload_file)
