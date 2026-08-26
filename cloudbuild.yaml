@@ -1,5 +1,6 @@
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
+  - id: Build
+    name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
       - '-t'
@@ -8,11 +9,25 @@ steps:
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-images/$_SERVICE_NAME:latest'
       - '.'
 
-  - name: 'gcr.io/cloud-builders/docker'
+  - id: Push
+    name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
       - '--all-tags'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-images/$_SERVICE_NAME'
+
+  - id: Deploy
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'services'
+      - 'update'
+      - '$_SERVICE_NAME'
+      - '--platform=managed'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-images/$_SERVICE_NAME:$COMMIT_SHA'
+      - '--region=$_REGION'
+      - '--quiet'
 
 substitutions:
   _SERVICE_NAME: default
