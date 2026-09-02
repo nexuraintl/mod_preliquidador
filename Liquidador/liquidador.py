@@ -917,7 +917,11 @@ class LiquidadorRetencion:
             datos_faltantes = []
           
             if not hasattr(naturaleza, 'regimen_tributario') or naturaleza.regimen_tributario is None:
-                datos_faltantes.append("régimen tributario")
+                if hasattr(naturaleza, 'es_persona_natural') and naturaleza.es_persona_natural:
+                    naturaleza.regimen_tributario = "ORDINARIO"
+                    logger.info("Persona Natural sin régimen tributario explícito: asignando 'ORDINARIO' por defecto")
+                else:
+                    datos_faltantes.append("régimen tributario")
             if not hasattr(naturaleza, 'es_autorretenedor') or naturaleza.es_autorretenedor is None:
                 datos_faltantes.append("condición de autorretenedor")
 
