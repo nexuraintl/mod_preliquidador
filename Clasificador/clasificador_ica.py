@@ -91,6 +91,12 @@ class ClasificadorICA:
             tipo_llamada: "ubicaciones" o "actividades"
             nit_administrativo: NIT para organizar archivos (opcional)
         """
+        from config import modo_pruebas_local
+
+        if not modo_pruebas_local():
+            # Solo se deja rastro en disco en pruebas locales (sin WEBHOOK_URL).
+            return
+
         try:
             # Crear carpeta para respuestas ICA
             fecha_actual = datetime.now()
@@ -465,7 +471,7 @@ class ClasificadorICA:
             respuesta = await self.procesador_gemini._ejecutar_con_retry(
                 contenido=contenido_gemini,
                 config=self.procesador_gemini.generation_config,
-                timeout_segundos=240.0,
+                timeout_segundos=360.0,
                 contexto="ica_ubicaciones"
             )
 
@@ -783,7 +789,7 @@ class ClasificadorICA:
             respuesta = await self.procesador_gemini._ejecutar_con_retry(
                 contenido=contenido_gemini,
                 config=config_matching,
-                timeout_segundos=240.0,
+                timeout_segundos=360.0,
                 contexto="ica_actividades"
             )
 
@@ -823,7 +829,7 @@ class ClasificadorICA:
             }
 
         except asyncio.TimeoutError:
-            logger.error("Timeout en llamada a Gemini (actividades): la respuesta superó 240s. "
+            logger.error("Timeout en llamada a Gemini (actividades): la respuesta superó 360s. "
                          "Posible causa: prompt muy grande (muchas actividades en BD) o carga en Cloud Run.")
             return {"error_tecnico": "timeout"}
         except json.JSONDecodeError as e:

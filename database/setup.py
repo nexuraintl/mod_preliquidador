@@ -43,40 +43,55 @@ logger = logging.getLogger(__name__)
 # La autenticacion ahora se realiza por tarea en BackgroundProcessor._autenticar_con_retry()
 
 
-async def obtener_uvt_desde_api() -> int:
+async def obtener_uvt_desde_api(max_reintentos: int = 3, timeout_segundos: float = 30.0) -> int:
     """
-    Consulta el valor UVT vigente desde la API externa.
-    Lanza RuntimeError si no se puede obtener el valor.
+    Consulta el valor UVT vigente desde la API externa con reintentos y aumento de timeout.
+    Lanza RuntimeError si todos los reintentos fallan.
 
-    SRP: Responsabilidad unica de obtener el UVT desde servicio externo.
+    SRP: Responsabilidad única de obtener el UVT desde servicio externo.
     """
-    try:
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "Preliquidador/1.0",
-        }
-        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
-            response = await client.get(URL_UVT_API)
-            response.raise_for_status()
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Preliquidador/1.0",
+    }
 
-        datos = response.json()
-        codigo_error = datos.get("error", {}).get("code")
-        if codigo_error != 0:
-            mensaje = datos.get("error", {}).get("message", "Error desconocido")
-            raise RuntimeError(f"API UVT retorno error: {mensaje}")
+    ultimo_error = None
+    for intento in range(1, max_reintentos + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout_segundos, headers=headers) as client:
+                response = await client.get(URL_UVT_API)
+                response.raise_for_status()
 
-        valor_uvt = datos.get("data", {}).get("valor")
-        if not isinstance(valor_uvt, (int, float)) or valor_uvt <= 0:
-            raise RuntimeError(f"Valor UVT invalido recibido: {valor_uvt}")
+            datos = response.json()
+            codigo_error = datos.get("error", {}).get("code")
+            if codigo_error != 0:
+                mensaje = datos.get("error", {}).get("message", "Error desconocido")
+                raise RuntimeError(f"API UVT retornó error: {mensaje}")
 
-        return int(valor_uvt)
+            valor_uvt = datos.get("data", {}).get("valor")
+            if not isinstance(valor_uvt, (int, float)) or valor_uvt <= 0:
+                raise RuntimeError(f"Valor UVT inválido recibido: {valor_uvt}")
 
-    except httpx.HTTPStatusError as e:
-        raise RuntimeError(f"Error HTTP al consultar UVT: {e.response.status_code}") from e
-    except httpx.RequestError as e:
-        raise RuntimeError(f"Error de conexion al consultar UVT: {e}") from e
-    except (KeyError, TypeError, ValueError) as e:
-        raise RuntimeError(f"Error al parsear respuesta UVT: {e}") from e
+            if intento > 1:
+                logger.info(f"Consulta de UVT desde API exitosa en el reintento {intento}/{max_reintentos}")
+            return int(valor_uvt)
+
+        except (httpx.HTTPStatusError, httpx.RequestError, RuntimeError, KeyError, TypeError, ValueError) as e:
+            ultimo_error = e
+            if intento < max_reintentos:
+                espera = 2 ** intento
+                logger.warning(
+                    f"Intento {intento}/{max_reintentos} falló al consultar UVT desde API ({e}). "
+                    f"Reintentando en {espera}s (timeout: {timeout_segundos}s)..."
+                )
+                await asyncio.sleep(espera)
+            else:
+                logger.error(
+                    f"Fallo definitivo al consultar UVT desde API tras {max_reintentos} intentos. "
+                    f"Último error: {e}"
+                )
+
+    raise RuntimeError(f"Error de conexión al consultar UVT tras {max_reintentos} intentos: {ultimo_error}") from ultimo_error
 
 
 def crear_database_por_tipo(tipo_db: str, auth_provider: Optional[IAuthProvider] = None) -> Optional[DatabaseInterface]:

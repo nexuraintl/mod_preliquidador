@@ -100,6 +100,21 @@ class ValidadorArchivos:
                 nombre_archivo = archivo.filename
                 extension = self._extraer_extension(nombre_archivo)
 
+                # Verificar si el archivo está vacío (0 bytes)
+                try:
+                    archivo.file.seek(0, 2)
+                    tamanio = archivo.file.tell()
+                    archivo.file.seek(0)
+                except Exception:
+                    tamanio = getattr(archivo, 'size', None)
+
+                if tamanio == 0:
+                    archivos_ignorados.append(nombre_archivo)
+                    logger.warning(
+                        f" Archivo ignorado (archivo vacío / 0 bytes): {nombre_archivo}"
+                    )
+                    continue
+
                 if extension in self.extensiones_soportadas:
                     archivos_validos.append(archivo)
                 else:
