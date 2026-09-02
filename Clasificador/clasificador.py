@@ -304,19 +304,19 @@ class ProcesadorGemini:
                 for i, archivo in enumerate(archivos_directos):
                     nombre_archivo = nombres_archivos_directos[i]
                     try:
-                        # Subir archivo a Files API usando GeminiFilesManager
+                        # upload_file ya espera el estado ACTIVE y devuelve name, uri y
+                        # mime_type, todo lo que _llamar_gemini_hibrido necesita para el
+                        # Part: un files.get adicional por archivo solo suma latencia.
                         file_result = await self.files_manager.upload_file(
                             archivo=archivo,
                             wait_for_active=True,
                             timeout_seconds=300
                         )
-                        # Obtener objeto File usando la referencia con retry
-                        file_obj = await self._files_get_con_retry(name=file_result.name)
                         archivos_directos_resueltos.append({
                             "nombre": nombre_archivo,
-                            "gemini_part": file_obj
+                            "gemini_part": file_result
                         })
-                        logger.info(f"Archivo subido y resuelto a Files API: {nombre_archivo} -> {file_result.name}")
+                        logger.info(f"Archivo subido a Files API: {nombre_archivo} -> {file_result.name}")
                     except Exception as e:
                         logger.error(f"Error subiendo archivo {i+1} a Files API: {e}")
                         logger.warning(f"Fallback: intentando envío inline para archivo {i+1}")
@@ -771,9 +771,20 @@ class ProcesadorGemini:
 
                 return respuesta
 
-            except asyncio.TimeoutError:
-                # Timeout NO se reintenta, se propaga inmediatamente
-                raise
+            except asyncio.TimeoutError as e:
+                ultima_excepcion = e
+                if intento < max_reintentos:
+                    espera = 2 ** (intento - 1)
+                    logger.warning(
+                        f"Timeout en llamada a Gemini ({contexto}) en intento {intento}/{max_reintentos} "
+                        f"(límite {timeout_segundos}s). Reintentando en {espera}s..."
+                    )
+                    await asyncio.sleep(espera)
+                else:
+                    logger.error(
+                        f"Timeout en llamada a Gemini ({contexto}) tras {max_reintentos} intentos de {timeout_segundos}s."
+                    )
+                    raise
 
             except Exception as e:
                 ultima_excepcion = e
@@ -1435,17 +1446,19 @@ class ProcesadorGemini:
         upload_tasks = []
         for archivo in archivos_directos:
             try:
-                # Validar archivo antes de subir
-                archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
-
-                # Validar PDF si es necesario
-                if archivo_bytes.startswith(b'%PDF'):
-                    if not await self._validar_pdf_tiene_paginas(archivo_bytes, nombre_archivo):
+                nombre_archivo = getattr(archivo, 'filename', None) or 'sin_nombre'
+                # Lo que ya se subio en la clasificacion se resuelve desde la cache de
+                # Files API: releerlo y volver a parsearlo con PyPDF2 (bloqueante y caro
+                # en PDFs de cientos de paginas) no cambia nada. Solo se valida lo nuevo.
+                if nombre_archivo not in self.files_manager.uploaded_files:
+                    archivo_bytes, nombre_archivo = await self._leer_archivo_seguro(archivo)
+                    es_pdf = archivo_bytes.startswith(b'%PDF')
+                    if es_pdf and not await self._validar_pdf_tiene_paginas(
+                        archivo_bytes, nombre_archivo
+                    ):
                         logger.error(f"PDF inválido omitido: {nombre_archivo}")
                         continue
-
-                # Resetear puntero para upload
-                await archivo.seek(0)
+                    await archivo.seek(0)
 
                 # Crear tarea de upload
                 task = self.files_manager.upload_file(
