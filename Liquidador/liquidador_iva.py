@@ -137,19 +137,24 @@ class ValidadorIVA:
         if not datos.rut_disponible:
             observaciones.append("RUT no disponible en los documentos")
 
-        # VALIDACIÓN 2: Responsabilidad IVA identificada
-        if datos.es_responsable_iva is None:
-            return ResultadoValidacionIVA(
-                es_valido=False,
-                estado="preliquidacion_sin_finalizar",
-                observaciones=["No se identificó responsabilidad de IVA en la documentación, por favor adjuntar el RUT"],
-                warnings=[],
-                valor_iva_calculado=0.0,
-                porcentaje_iva_calculado=0.0
-            )
-
-        # VALIDACIÓN 3: Calcular/validar valor IVA
+        # VALIDACIÓN 2 y 3: Calcular/validar valor IVA e inferir responsabilidad si aplica
         valor_iva_final = self._validar_valor_iva(datos, observaciones)
+
+        if datos.es_responsable_iva is None:
+            if valor_iva_final > 0:
+                datos.es_responsable_iva = True
+                observaciones.append(
+                    f"Responsabilidad de IVA inferida como 'Responsable' debido a la presencia explícita de IVA facturado (${valor_iva_final:,.2f})"
+                )
+            else:
+                return ResultadoValidacionIVA(
+                    es_valido=False,
+                    estado="preliquidacion_sin_finalizar",
+                    observaciones=["No se identificó responsabilidad de IVA en la documentación, por favor adjuntar el RUT"],
+                    warnings=[],
+                    valor_iva_calculado=0.0,
+                    porcentaje_iva_calculado=0.0
+                )
 
         # VALIDACIÓN 4: Calcular/validar porcentaje IVA (solo si valor > 0)
         porcentaje_iva_final = 0.0
